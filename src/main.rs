@@ -4,6 +4,7 @@ use tonic::{
     transport::Channel,
     Request
 };
+use yup_oauth2::{InstalledFlowAuthenticator, InstalledFlowReturnMethod};
 
 use gapi_grpc::google::ads::googleads::v10::services::{
     SearchGoogleAdsStreamRequest,
@@ -11,24 +12,45 @@ use gapi_grpc::google::ads::googleads::v10::services::{
 };
 
 const ENDPOINT: &str = "https://googleads.googleapis.com:443";
+const DEV_TOKEN: &str = "NDfdEk-vsUJPk7SLTH3Knw";
+// MCC Test Account 838-081-7587
+const MCC_CUSTOMER_ID: &str = "8380817587";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
-    println!("GAQL2CSV");
+    let customer_id = std::env::args()
+        .nth(1)
+        .ok_or_else(|| "Expected Google Account CustomerID as the first argument.".to_string())?;
 
-    let auth_token = std::env::var("GOOGLEADS_AUTH_TOKEN").map_err(|_| {
-        "Pass a valid 0Auth bearer token via `GOOGLEADS_AUTH_TOKEN` environment variable.".to_string()
-    })?;
-    let bearer_token = format!("Bearer {}", auth_token);
+    let app_secret = yup_oauth2::read_application_secret("clientsecret.json")
+        .await
+        .expect("clientsecret.json");
+
+    let auth =
+        InstalledFlowAuthenticator::builder(app_secret, InstalledFlowReturnMethod::HTTPRedirect)
+            .persist_tokens_to_disk("tokencache.json")
+            .build()
+            .await
+            .unwrap();
+    let scopes = &["https://www.googleapis.com/auth/adwords"];
+
+    let access_token = match auth.token(scopes).await {
+        Err(e) => {
+            panic!("error: {:?}", e);
+        }
+        Ok(t) => {
+            println!("The token is {:?}", t);
+            t.as_str().to_owned()
+        }
+    };
+
+
+    let bearer_token = format!("Bearer {}", access_token);
     let header_value_auth_token = MetadataValue::from_str(&bearer_token)?;
-
-    let dev_token = std::env::var("GOOGLEADS_DEV_TOKEN").map_err(|_| {
-        "Pass a valid Google Ads dev token via `GOOGLEADS_DEV_TOKEN` environment variable.".to_string()
-    })?;
-    let header_value_dev_token = MetadataValue::from_str(&dev_token)?;
-
-
+    let header_value_dev_token = MetadataValue::from_str(DEV_TOKEN)?;
+    let header_value_login_customer = MetadataValue::from_str(MCC_CUSTOMER_ID)?;
+    
     let channel = Channel::from_static(ENDPOINT)
         .connect()
         .await?;
@@ -38,24 +60,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .insert("authorization", header_value_auth_token.clone());
         req.metadata_mut()
             .insert("developer-token", header_value_dev_token.clone());
-
+        req.metadata_mut()
+            .insert("login-customer-id", header_value_login_customer.clone());
         Ok(req)
     });
 
     let mut stream = client
         .search_stream(SearchGoogleAdsStreamRequest {
-            customer_id: "123".to_string(),
+            customer_id: customer_id.to_string(),
             query: "SELECT
                         campaign.name,
-                        campaign.status,
-                        segments.device,
-                        metrics.impressions,
-                        metrics.clicks,
-                        metrics.ctr,
-                        metrics.average_cpc,
-                        metrics.cost_micros
+                        campaign.status
                     FROM campaign
-                    WHERE segments.date DURING LAST_7_DAYS".to_string(),
+                    WHERE segments.date DURING YESTERDAY
+                    ORDER by campaign.name
+            ".to_string(),
             summary_row_setting: 0
         })
         .await

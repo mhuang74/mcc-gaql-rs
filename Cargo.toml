@@ -12,3 +12,4 @@ tokio = { version = "1.0", features = [ "rt-multi-thread", "time", "fs", "macros
 tokio-stream = { version = "0.1", features = ["net"] }
 tonic = { version = "0.6.2", features = ["tls", "tls-roots"] }
 gapi_grpc = { path = "../gapi-grpc-rs" }
+yup-oauth2 = "6.3.1"
