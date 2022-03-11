@@ -1,2 +1,2 @@
-# gaql-cli-rs
-Google Ads GAQL CLI written in Rust, inspired by Python [gaql-cli](https://github.com/getyourguide/gaql-cli).
+# mcc-find-rs
+CLI to find qualityfing Google Ads Account over entire MCC Account Tree Hiearchy. Inspired by [gaql-cli](https://github.com/getyourguide/gaql-cli).
