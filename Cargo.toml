@@ -10,7 +10,7 @@ edition = "2021"
 [dependencies]
 docopt = "1.1.1"
 futures = { version = "0.3", default-features = false, features = ["alloc"] }
-gapi_grpc = { path = "../gapi-grpc-rs" }
+googleads-rs = { path = "../googleads-rs" }
 itertools = "0.10"
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1.0", features = [ "rt-multi-thread", "time", "fs", "macros", "net",] }

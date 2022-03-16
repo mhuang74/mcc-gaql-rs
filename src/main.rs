@@ -10,10 +10,9 @@ use tonic::{
 };
 use yup_oauth2::{InstalledFlowAuthenticator, InstalledFlowReturnMethod};
 
-use gapi_grpc::google::ads::googleads::v10::services::{
+use googleads_rs::google::ads::googleads::v10::services::{
     SearchGoogleAdsStreamRequest,
     SearchGoogleAdsStreamResponse,
-    // GoogleAdsRow,
     google_ads_service_client::GoogleAdsServiceClient,
     SearchGoogleAdsFieldsRequest,
     SearchGoogleAdsFieldsResponse,
