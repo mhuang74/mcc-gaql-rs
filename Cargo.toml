@@ -1,5 +1,6 @@
 [package]
-name = "gaql-cli"
+name = "mccfind"
+description = "Find account with matching criteria within entire Google MCC Manager Account Tree Hiearchy"
 version = "0.1.0"
 authors = ["Michael S. Huang <mhuang74@gmail.com>"]
 edition = "2021"
@@ -7,9 +8,13 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+docopt = "1.1.1"
 futures = { version = "0.3", default-features = false, features = ["alloc"] }
+gapi_grpc = { path = "../gapi-grpc-rs" }
+itertools = "0.10"
+serde = { version = "1", features = ["derive"] }
 tokio = { version = "1.0", features = [ "rt-multi-thread", "time", "fs", "macros", "net",] }
 tokio-stream = { version = "0.1", features = ["net"] }
 tonic = { version = "0.6.2", features = ["tls", "tls-roots"] }
-gapi_grpc = { path = "../gapi-grpc-rs" }
+serde_json = "1.0.79"
 yup-oauth2 = "6.3.1"
