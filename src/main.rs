@@ -1,28 +1,23 @@
-
 use docopt::Docopt;
+use itertools::Itertools;
 use serde::Deserialize;
 use tokio_stream::StreamExt;
 use tonic::{
-    metadata::{MetadataValue, Ascii},
+    codec::Streaming,
+    metadata::{Ascii, MetadataValue},
     transport::Channel,
     Request,
-    codec::Streaming
 };
 use yup_oauth2::{InstalledFlowAuthenticator, InstalledFlowReturnMethod};
 
 use googleads_rs::google::ads::googleads::v10::services::{
-    SearchGoogleAdsStreamRequest,
-    SearchGoogleAdsStreamResponse,
-    google_ads_service_client::GoogleAdsServiceClient,
-    SearchGoogleAdsFieldsRequest,
-    SearchGoogleAdsFieldsResponse,
-    google_ads_field_service_client::GoogleAdsFieldServiceClient
+    google_ads_field_service_client::GoogleAdsFieldServiceClient,
+    google_ads_service_client::GoogleAdsServiceClient, SearchGoogleAdsFieldsRequest,
+    SearchGoogleAdsFieldsResponse, SearchGoogleAdsStreamRequest, SearchGoogleAdsStreamResponse,
 };
 
-use itertools::Itertools;
-
 const ENDPOINT: &str = "https://googleads.googleapis.com:443";
-// from https://github.com/selesnow/rgoogleads/blob/master/R/gads_auth.R
+// dev token borrowed from https://github.com/selesnow/rgoogleads/blob/master/R/gads_auth.R
 const DEV_TOKEN: &str = "EBkkx-znu2cZcEY7e74smg";
 
 // const SUB_ACCOUNT_QUERY: &str = "
@@ -38,7 +33,6 @@ const DEV_TOKEN: &str = "EBkkx-znu2cZcEY7e74smg";
 // WHERE
 //     customer_client.level <= 2
 // ";
-
 
 static USAGE: &str = "
 Find Google Ads accounts that match condition.
@@ -58,7 +52,7 @@ struct Args {
     flag_google_ads_field_service: Option<bool>,
     arg_mcc_customer_id: String,
     arg_customer_id: String,
-    arg_query: String
+    arg_query: String,
 }
 
 struct GoogleAdsAPIContext {
@@ -70,7 +64,6 @@ struct GoogleAdsAPIContext {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-
     let args: Args = Docopt::new(USAGE)
         .unwrap_or_else(|e| e.exit())
         .parse()
@@ -94,9 +87,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(e) => {
             panic!("error: {:?}", e);
         }
-        Ok(t) => {
-            t.as_str().to_owned()
-        }
+        Ok(t) => t.as_str().to_owned(),
     };
 
     let bearer_token = format!("Bearer {}", access_token);
@@ -104,92 +95,76 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let header_value_dev_token = MetadataValue::from_str(DEV_TOKEN)?;
     let header_value_login_customer = MetadataValue::from_str(&args.arg_mcc_customer_id)?;
 
-    let channel: Channel = Channel::from_static(ENDPOINT)
-        .connect()
-        .await?;
+    let channel: Channel = Channel::from_static(ENDPOINT).connect().await?;
 
     let api_context: GoogleAdsAPIContext = GoogleAdsAPIContext {
-        channel: channel,
+        channel,
         auth_token: header_value_auth_token,
         dev_token: header_value_dev_token,
-        login_customer: header_value_login_customer
+        login_customer: header_value_login_customer,
     };
 
     let field_flag = args.flag_google_ads_field_service.unwrap_or(false);
 
-    if  field_flag {
-
-            fields_query(&api_context, &args.arg_query).await;
-
+    if field_flag {
+        fields_query(&api_context, &args.arg_query).await;
     } else {
-
-        gaql_query(
-            &api_context,
-            &args.arg_customer_id,
-            &args.arg_query
-        ).await;
-
+        gaql_query(&api_context, &args.arg_customer_id, &args.arg_query).await;
     }
 
     Ok(())
 }
 
-
-async fn fields_query(
-    api_context: &GoogleAdsAPIContext,
-    query: &str
-) {
-
-    let mut client = GoogleAdsFieldServiceClient::with_interceptor(api_context.channel.clone(), move |mut req: Request<()>| {
-        req.metadata_mut()
-            .insert("authorization", api_context.auth_token.clone());
-        req.metadata_mut()
-            .insert("developer-token", api_context.dev_token.clone());
-        req.metadata_mut()
-            .insert("login-customer-id", api_context.login_customer.clone());
-        Ok(req)
-    });
+/// Run query via GoogleAdsFieldService to obtain field metadata
+async fn fields_query(api_context: &GoogleAdsAPIContext, query: &str) {
+    let mut client = GoogleAdsFieldServiceClient::with_interceptor(
+        api_context.channel.clone(),
+        move |mut req: Request<()>| {
+            req.metadata_mut()
+                .insert("authorization", api_context.auth_token.clone());
+            req.metadata_mut()
+                .insert("developer-token", api_context.dev_token.clone());
+            req.metadata_mut()
+                .insert("login-customer-id", api_context.login_customer.clone());
+            Ok(req)
+        },
+    );
 
     let response: SearchGoogleAdsFieldsResponse = client
         .search_google_ads_fields(SearchGoogleAdsFieldsRequest {
             query: query.to_owned(),
             page_token: String::new(),
-            page_size: 10000
+            page_size: 10000,
         })
         .await
         .unwrap()
         .into_inner();
 
     for field in response.results {
-
-        println!("{:?}",
-            &field
-        );
-
+        println!("{:?}", &field);
     }
 }
 
-async fn gaql_query(
-    api_context: &GoogleAdsAPIContext,
-    customer_id: &str,
-    query: &str
-) {
-
-    let mut client = GoogleAdsServiceClient::with_interceptor(api_context.channel.clone(), move |mut req: Request<()>| {
-        req.metadata_mut()
-            .insert("authorization", api_context.auth_token.clone());
-        req.metadata_mut()
-            .insert("developer-token", api_context.dev_token.clone());
-        req.metadata_mut()
-            .insert("login-customer-id", api_context.login_customer.clone());
-        Ok(req)
-    });
+/// Run query via GoogleAdsServiceClient to get performance data
+async fn gaql_query(api_context: &GoogleAdsAPIContext, customer_id: &str, query: &str) {
+    let mut client = GoogleAdsServiceClient::with_interceptor(
+        api_context.channel.clone(),
+        move |mut req: Request<()>| {
+            req.metadata_mut()
+                .insert("authorization", api_context.auth_token.clone());
+            req.metadata_mut()
+                .insert("developer-token", api_context.dev_token.clone());
+            req.metadata_mut()
+                .insert("login-customer-id", api_context.login_customer.clone());
+            Ok(req)
+        },
+    );
 
     let mut stream: Streaming<SearchGoogleAdsStreamResponse> = client
         .search_stream(SearchGoogleAdsStreamRequest {
             customer_id: customer_id.to_owned(),
             query: query.to_owned(),
-            summary_row_setting: 0
+            summary_row_setting: 0,
         })
         .await
         .unwrap()
@@ -201,23 +176,17 @@ async fn gaql_query(
 
         let field_mask = response.field_mask.unwrap();
 
-        let headers = &field_mask.paths
-            .iter()
-            .map(ToString::to_string)
-            .join("\t");
+        let headers = &field_mask.paths.iter().map(ToString::to_string).join("\t");
         println!("Headers: {headers}");
 
-        let mut i=0;
+        let mut i = 0;
         for row in response.results {
             i += 1;
             print!("{i}: ");
             for path in &field_mask.paths {
-                print!("{}\t", row.get(&path));
+                print!("{}\t", row.get(path));
             }
-            print!("\n");
+            println!();
         }
-
     }
 }
-
-

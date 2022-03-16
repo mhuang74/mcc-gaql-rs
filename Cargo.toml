@@ -1,6 +1,6 @@
 [package]
 name = "mccfind"
-description = "Find account with matching criteria within entire Google MCC Manager Account Tree Hiearchy"
+description = "Find Google Ads accounts with matching criteria within Google MCC Manager Account"
 version = "0.1.0"
 authors = ["Michael S. Huang <mhuang74@gmail.com>"]
 edition = "2021"
