@@ -23,13 +23,14 @@ const SUB_ACCOUNT_QUERY: &str = "
 SELECT
     customer_client.id,
     customer_client.level,
-    customer_client.manager,
     customer_client.currency_code,
     customer_client.time_zone,
     customer_client.descriptive_name
 FROM customer_client
 WHERE
     customer_client.level <= 2
+    and customer_client.manager = false
+    and customer_client.status in ('ENABLED')
 ORDER BY customer_client.level, customer_client.descriptive_name
 ";
 
@@ -200,6 +201,7 @@ async fn gaql_query(api_context: &GoogleAdsAPIContext, customer_id: &str, query:
         .unwrap()
         .into_inner();
 
+    let mut i = 0;
     while let Some(batch) = stream.next().await {
         let response: SearchGoogleAdsStreamResponse = batch.unwrap();
         // println!("response: {:?}", &response);
@@ -209,7 +211,6 @@ async fn gaql_query(api_context: &GoogleAdsAPIContext, customer_id: &str, query:
         let headers = &field_mask.paths.iter().map(ToString::to_string).join("\t");
         println!("Headers: {headers}");
 
-        let mut i = 0;
         for row in response.results {
             i += 1;
             print!("{i}: ");
