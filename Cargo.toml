@@ -8,7 +8,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-docopt = "1.1.1"
+clap = { version = "3.1.6", features = ["derive", "cargo"] }
 futures = { version = "0.3", default-features = false, features = ["alloc"] }
 googleads-rs = { path = "../googleads-rs" }
 itertools = "0.10"

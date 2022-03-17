@@ -1,6 +1,5 @@
-use docopt::Docopt;
+use clap::Parser;
 use itertools::Itertools;
-use serde::Deserialize;
 use tokio_stream::StreamExt;
 use tonic::{
     codec::Streaming,
@@ -20,39 +19,47 @@ const ENDPOINT: &str = "https://googleads.googleapis.com:443";
 // dev token borrowed from https://github.com/selesnow/rgoogleads/blob/master/R/gads_auth.R
 const DEV_TOKEN: &str = "EBkkx-znu2cZcEY7e74smg";
 
-// const SUB_ACCOUNT_QUERY: &str = "
-// SELECT
-//     customer_client.client_customer,
-//     customer_client.level,
-//     customer_client.manager,
-//     customer_client.descriptive_name,
-//     customer_client.currency_code,
-//     customer_client.time_zone,
-//     customer_client.id
-// FROM customer_client
-// WHERE
-//     customer_client.level <= 2
-// ";
+const SUB_ACCOUNT_QUERY: &str = "
+SELECT
+    customer_client.id,
+    customer_client.level,
+    customer_client.manager,
+    customer_client.currency_code,
+    customer_client.time_zone,
+    customer_client.descriptive_name
+FROM customer_client
+WHERE
+    customer_client.level <= 2
+ORDER BY customer_client.level, customer_client.descriptive_name
+";
 
 static USAGE: &str = "
 Find Google Ads accounts that match condition.
 
 Runs GAQL queries against MCC account tree structure and return accounts that returned results.
 
-Usage:
-    mccfind [options] <mcc-customer-id> <customer-id> <query>
+If only <mcc-customer-id> is given, lists all accessible accounts under mcc account.
 
-Options:
-    -f, --google-ads-field-service  Run queries via GoogleAdsFieldService to retrieve available fields
-    -h, --help                      Display this message
 ";
 
-#[derive(Deserialize, Debug)]
-struct Args {
-    flag_google_ads_field_service: Option<bool>,
-    arg_mcc_customer_id: String,
-    arg_customer_id: String,
-    arg_query: String,
+/// Find Google Ads accounts that match condition.
+/// If only <mcc-customer-id> is given, lists all accessible accounts under mcc account.
+#[derive(Parser, Debug)]
+#[clap(author, version, about, long_about = USAGE)]
+struct Cli {
+    /// Query GoogleAdsFieldService to retrieve available fields
+    #[clap(short, long)]
+    field_service: bool,
+
+    /// CustomerID of Google Ads MCC Manager Account matching OAuth login
+    mcc_customer_id: String,
+
+    /// CustomerID of Google Ads Account to query
+    #[clap(short, long)]
+    customer_id: Option<String>,
+
+    /// Google Ads GAQL query to run
+    gaql_query: Option<String>,
 }
 
 struct GoogleAdsAPIContext {
@@ -64,12 +71,7 @@ struct GoogleAdsAPIContext {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args: Args = Docopt::new(USAGE)
-        .unwrap_or_else(|e| e.exit())
-        .parse()
-        .unwrap_or_else(|e| e.exit())
-        .deserialize()
-        .unwrap_or_else(|e| e.exit());
+    let args = Cli::parse();
 
     let app_secret = yup_oauth2::read_application_secret("clientsecret.json")
         .await
@@ -93,7 +95,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bearer_token = format!("Bearer {}", access_token);
     let header_value_auth_token = MetadataValue::from_str(&bearer_token)?;
     let header_value_dev_token = MetadataValue::from_str(DEV_TOKEN)?;
-    let header_value_login_customer = MetadataValue::from_str(&args.arg_mcc_customer_id)?;
+    let header_value_login_customer = MetadataValue::from_str(&args.mcc_customer_id)?;
 
     let channel: Channel = Channel::from_static(ENDPOINT).connect().await?;
 
@@ -104,12 +106,40 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         login_customer: header_value_login_customer,
     };
 
-    let field_flag = args.flag_google_ads_field_service.unwrap_or(false);
-
-    if field_flag {
-        fields_query(&api_context, &args.arg_query).await;
+    if args.field_service {
+        fields_query(
+            &api_context,
+            &args.gaql_query.expect("valid Field Service query"),
+        )
+        .await;
+    } else if args.gaql_query.is_some() {
+        // run provided GAQL query
+        if args.customer_id.is_some() {
+            // query only specificied customer_id account
+            gaql_query(
+                &api_context,
+                &args.customer_id.expect("valid customer_id"),
+                &args.gaql_query.expect("valid GAQL query"),
+            )
+            .await;
+        } else {
+            // query all accounts under MCC
+            println!("Querying all accounts under MCC not yet supported!");
+        }
     } else {
-        gaql_query(&api_context, &args.arg_customer_id, &args.arg_query).await;
+        // run Account listing query
+        if args.customer_id.is_some() {
+            // query accounts under specificied customer_id account
+            gaql_query(
+                &api_context,
+                &args.customer_id.expect("valid customer_id"),
+                SUB_ACCOUNT_QUERY,
+            )
+            .await;
+        } else {
+            // query accounts under MCC
+            gaql_query(&api_context, &args.mcc_customer_id, SUB_ACCOUNT_QUERY).await;
+        }
     }
 
     Ok(())
