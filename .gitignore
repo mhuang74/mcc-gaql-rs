@@ -12,3 +12,8 @@ Cargo.lock
 *.code-workspace
 *.json*
 *.md
+*.txt
+*.tsv
+*.csv
+*.log
+.mccfind/*
