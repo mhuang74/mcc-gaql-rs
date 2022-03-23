@@ -1,4 +1,6 @@
 use anyhow::{Context, Result};
+use googleads_rs::google::ads::googleads::v10::services::google_ads_service_client::GoogleAdsServiceClient;
+use tonic::{codegen::InterceptedService, transport::Channel};
 
 mod args;
 mod config;
@@ -29,7 +31,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let customer_id = &args.customer_id.expect("Valid customer_id required.");
             log::info!("Listing child accounts under {customer_id}");
             googleads::gaql_query(
-                &mut api_context,
+                &api_context,
                 customer_id,
                 googleads::SUB_ACCOUNTS_QUERY,
                 googleads::print_to_stdout,
@@ -42,7 +44,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &config.mcc_customerid
             );
             googleads::gaql_query(
-                &mut api_context,
+                &api_context,
                 &config.mcc_customerid,
                 googleads::SUB_ACCOUNTS_QUERY,
                 googleads::print_to_stdout,
@@ -62,12 +64,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let query = &args.gaql_query.expect("Valid GAQL query required.");
             let customer_id = &args.customer_id.expect("Valid customer_id required.");
             log::info!("Running GAQL query for {customer_id}: {query}");
-            googleads::gaql_query(&mut api_context, customer_id, query, googleads::print_to_stdout)
+            googleads::gaql_query(&api_context, customer_id, query, googleads::print_to_stdout)
                 .await;
         } else {
             let customer_ids: Option<Vec<String>> = if args.all_current_child_accounts {
                 // generate new list of child accounts
-                match googleads::get_child_account_ids(&mut api_context, &config.mcc_customerid).await {
+                match googleads::get_child_account_ids(&mut api_context, &config.mcc_customerid)
+                    .await
+                {
                     Ok(customer_ids) => Some(customer_ids),
                     Err(_e) => None,
                 }
@@ -96,11 +100,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     query
                 );
 
+                let mut google_ads_client: Option<
+                    GoogleAdsServiceClient<
+                        InterceptedService<Channel, googleads::GoogleAdsAPIAccess>,
+                    >,
+                > = None;
+
                 for customer_id in customer_id_vector.iter() {
+                    // keep reusing same GoogleAdsServiceClient unless token is expired
+                    if google_ads_client.is_none() || api_context.renew_token().await? {
+                        log::debug!("Token renewed. Constructing new GoogleAdsServiceClient.");
+                        google_ads_client = Some(GoogleAdsServiceClient::with_interceptor(
+                            api_context.channel.clone(),
+                            googleads::GoogleAdsAPIAccess {
+                                auth_token: api_context.auth_token.clone(),
+                                dev_token: api_context.dev_token.clone(),
+                                login_customer: api_context.login_customer.clone(),
+                                channel: api_context.channel.clone(),
+                                token: api_context.token.clone(),
+                                authenticator: api_context.authenticator.clone(),
+                            },
+                        ));
+                    }
+
                     log::debug!("Querying {customer_id}");
 
-                    googleads::gaql_query(
-                        &mut api_context,
+                    googleads::gaql_query_with_client(
+                        google_ads_client.as_mut().unwrap(),
                         customer_id,
                         query,
                         googleads::print_to_stdout_no_header,

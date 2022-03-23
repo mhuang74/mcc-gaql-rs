@@ -6,7 +6,9 @@ use std::{
     path::Path,
 };
 
+#[allow(dead_code)]
 const CACHE_FILENAME: &str = ".cache";
+#[allow(dead_code)]
 const CACHE_KEY_CHILD_ACCOUNTS: &str = "child-accounts";
 
 /// initialize Flexi Logger via Env Vars
