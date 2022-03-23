@@ -6,7 +6,7 @@ use tonic::{
     transport::Channel,
     Request,
 };
-use yup_oauth2::{InstalledFlowAuthenticator, InstalledFlowReturnMethod};
+use yup_oauth2::{InstalledFlowAuthenticator, InstalledFlowReturnMethod, authenticator::{Authenticator, HyperClientBuilder, DefaultHyperClient}, ApplicationSecret, AccessToken};
 
 use googleads_rs::google::ads::googleads::v10::services::google_ads_field_service_client::GoogleAdsFieldServiceClient;
 use googleads_rs::google::ads::googleads::v10::services::google_ads_service_client::GoogleAdsServiceClient;
@@ -53,13 +53,39 @@ const DEV_TOKEN: &str = "EBkkx-znu2cZcEY7e74smg";
 
 const FILENAME_CLIENT_SECRET: &str = "clientsecret.json";
 // const FILENAME_TOKEN_CACHE: &str = "tokencache.json";
-const GOOGLE_ADS_API_SCOPE: &str = "https://www.googleapis.com/auth/adwords";
+static GOOGLE_ADS_API_SCOPE: &str = "https://www.googleapis.com/auth/adwords";
 
 pub struct GoogleAdsAPIAccess {
     pub channel: Channel,
-    pub auth_token: MetadataValue<Ascii>,
     pub dev_token: MetadataValue<Ascii>,
     pub login_customer: MetadataValue<Ascii>,
+    pub auth_token: Option<MetadataValue<Ascii>>,
+    token: Option<AccessToken>,
+    authenticator: Authenticator<<DefaultHyperClient as HyperClientBuilder>::Connector>,
+}
+
+impl GoogleAdsAPIAccess {
+    pub async fn renew_token(&mut self) -> Result<()> {
+
+        if self.token.is_none() || self.token.as_ref().unwrap().is_expired() {
+            self.token = match self.authenticator.token(&[GOOGLE_ADS_API_SCOPE]).await {
+                Err(e) => {
+                    bail!("failed to get access token: {:?}", e);
+                }
+                Ok(t) => {
+                    log::debug!("Obtained access token: {t:?}");
+
+                    let bearer_token = format!("Bearer {}", t.as_str());
+                    let header_value_auth_token = MetadataValue::from_str(&bearer_token)?;
+                    self.auth_token = Some(header_value_auth_token);
+
+                    Some(t)
+                }
+            };
+        }
+
+        Ok(())
+    }
 }
 
 /// Get access to Google Ads API via OAuth2 flow and return API Credentials
@@ -70,30 +96,19 @@ pub async fn get_api_access(
     let client_secret_path =
         crate::config::config_file_path(FILENAME_CLIENT_SECRET).expect("clientsecret path");
 
-    let app_secret = yup_oauth2::read_application_secret(client_secret_path.as_path())
+    let app_secret: ApplicationSecret = yup_oauth2::read_application_secret(client_secret_path.as_path())
         .await
         .expect("clientsecret.json");
 
     let token_cache_path =
         crate::config::config_file_path(token_cache_filename).expect("token cache path");
 
-    let auth =
+    let auth: Authenticator<<DefaultHyperClient as HyperClientBuilder>::Connector> =
         InstalledFlowAuthenticator::builder(app_secret, InstalledFlowReturnMethod::HTTPRedirect)
             .persist_tokens_to_disk(token_cache_path.as_path())
             .build()
             .await?;
 
-    let scopes = &[GOOGLE_ADS_API_SCOPE];
-
-    let access_token = match auth.token(scopes).await {
-        Err(e) => {
-            bail!("failed to get access token: {:?}", e);
-        }
-        Ok(t) => t.as_str().to_owned(),
-    };
-
-    let bearer_token = format!("Bearer {}", access_token);
-    let header_value_auth_token = MetadataValue::from_str(&bearer_token)?;
     let header_value_dev_token = MetadataValue::from_str(DEV_TOKEN)?;
     let header_value_login_customer = MetadataValue::from_str(mcc_customer_id)?;
 
@@ -101,16 +116,18 @@ pub async fn get_api_access(
 
     Ok(GoogleAdsAPIAccess {
         channel,
-        auth_token: header_value_auth_token,
         dev_token: header_value_dev_token,
         login_customer: header_value_login_customer,
+        auth_token: None,
+        token: None,
+        authenticator: auth,
     })
 }
 
 /// Run query via GoogleAdsServiceClient to get performance data
 /// f: closure called with search Response
 pub async fn gaql_query<F>(
-    api_context: &GoogleAdsAPIAccess,
+    api_context: &mut GoogleAdsAPIAccess,
     customer_id: &str,
     query: &str,
     f: F,
@@ -118,11 +135,13 @@ pub async fn gaql_query<F>(
 where
     F: Fn(SearchGoogleAdsStreamResponse) -> Option<Vec<String>>,
 {
+    api_context.renew_token().await.expect("Unable to refresh token");
+
     let mut client = GoogleAdsServiceClient::with_interceptor(
         api_context.channel.clone(),
-        move |mut req: Request<()>| {
+        |mut req: Request<()>| {
             req.metadata_mut()
-                .insert("authorization", api_context.auth_token.clone());
+                .insert("authorization", api_context.auth_token.as_ref().unwrap().clone());
             req.metadata_mut()
                 .insert("developer-token", api_context.dev_token.clone());
             req.metadata_mut()
@@ -160,12 +179,16 @@ where
 }
 
 /// Run query via GoogleAdsFieldService to obtain field metadata
-pub async fn fields_query(api_context: &GoogleAdsAPIAccess, query: &str) {
+pub async fn fields_query(api_context: &mut GoogleAdsAPIAccess, query: &str) {
+
+    // renew access token in case it's expired
+    api_context.renew_token().await.expect("Unable to refresh token");
+
     let mut client = GoogleAdsFieldServiceClient::with_interceptor(
         api_context.channel.clone(),
-        move |mut req: Request<()>| {
+        |mut req: Request<()>| {
             req.metadata_mut()
-                .insert("authorization", api_context.auth_token.clone());
+                .insert("authorization", api_context.auth_token.as_ref().unwrap().clone());
             req.metadata_mut()
                 .insert("developer-token", api_context.dev_token.clone());
             req.metadata_mut()
@@ -190,7 +213,7 @@ pub async fn fields_query(api_context: &GoogleAdsAPIAccess, query: &str) {
 }
 
 pub async fn get_child_account_ids(
-    api_context: &GoogleAdsAPIAccess,
+    api_context: &mut GoogleAdsAPIAccess,
     mcc_customer_id: &str,
 ) -> Result<Vec<String>> {
     let result: Option<Vec<String>> = gaql_query(
