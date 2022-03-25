@@ -1,12 +1,11 @@
 use anyhow::{bail, Result};
 use tokio_stream::StreamExt;
 use tonic::{
-    codec::Streaming,
     codegen::InterceptedService,
     metadata::{Ascii, MetadataValue},
     service::Interceptor,
     transport::Channel,
-    Status,
+    Response, Status, Streaming,
 };
 use yup_oauth2::{
     authenticator::{Authenticator, DefaultHyperClient, HyperClientBuilder},
@@ -60,6 +59,7 @@ const FILENAME_CLIENT_SECRET: &str = "clientsecret.json";
 // const FILENAME_TOKEN_CACHE: &str = "tokencache.json";
 static GOOGLE_ADS_API_SCOPE: &str = "https://www.googleapis.com/auth/adwords";
 
+#[derive(Clone)]
 pub struct GoogleAdsAPIAccess {
     pub channel: Channel,
     pub dev_token: MetadataValue<Ascii>,
@@ -158,36 +158,51 @@ pub async fn get_api_access(
 /// Run query via GoogleAdsServiceClient to get performance data
 /// f: closure called with search Response
 pub async fn gaql_query_with_client<F>(
-    client: &mut GoogleAdsServiceClient<InterceptedService<Channel, GoogleAdsAPIAccess>>,
-    customer_id: &str,
-    query: &str,
+    mut client: GoogleAdsServiceClient<InterceptedService<Channel, GoogleAdsAPIAccess>>,
+    customer_id: String,
+    query: String,
     f: F,
 ) -> Option<Vec<String>>
 where
     F: Fn(SearchGoogleAdsStreamResponse) -> Option<Vec<String>>,
 {
-    let mut stream: Streaming<SearchGoogleAdsStreamResponse> = client
+    let result: Result<Response<Streaming<SearchGoogleAdsStreamResponse>>, Status> = client
         .search_stream(SearchGoogleAdsStreamRequest {
-            customer_id: customer_id.to_owned(),
-            query: query.to_owned(),
+            customer_id: customer_id.clone(),
+            query: query.clone(),
             summary_row_setting: 0,
         })
-        .await
-        .unwrap()
-        .into_inner();
+        .await;
 
-    let mut results: Vec<String> = Vec::new();
+    let mut results: Vec<String> = Vec::with_capacity(2048);
 
-    while let Some(batch) = stream.next().await {
-        match batch {
-            Ok(response) => {
-                if let Some(mut partial_results) = f(response) {
-                    results.append(&mut partial_results);
+    match result {
+        Ok(response) => {
+            let mut stream = response.into_inner();
+
+            while let Some(item) = stream.next().await {
+                match item {
+                    Ok(stream_response) => {
+                        if let Some(mut partial_results) = f(stream_response) {
+                            results.append(&mut partial_results);
+                        }
+                    }
+                    Err(status) => {
+                        log::error!(
+                            "GoogleAdsClient streaming error. Account: {customer_id}, Message: {}, Details: {}",
+                            status.message(),
+                            String::from_utf8_lossy(status.details()).to_owned()
+                        );
+                    }
                 }
             }
-            Err(e) => {
-                log::error!("GAQL error for account {customer_id}: {}", e.message());
-            }
+        }
+        Err(status) => {
+            log::error!(
+                "GoogleAdsClient request error. Account: {customer_id}, Message: {}, Details: {}",
+                status.message(),
+                String::from_utf8_lossy(status.details()).to_owned()
+            );
         }
     }
 
@@ -197,32 +212,25 @@ where
 /// Run query via GoogleAdsServiceClient to get performance data
 /// f: closure called with search Response
 pub async fn gaql_query<F>(
-    api_context: &GoogleAdsAPIAccess,
-    customer_id: &str,
-    query: &str,
+    api_context: GoogleAdsAPIAccess,
+    customer_id: String,
+    query: String,
     f: F,
 ) -> Option<Vec<String>>
 where
     F: Fn(SearchGoogleAdsStreamResponse) -> Option<Vec<String>>,
 {
-    let mut client: GoogleAdsServiceClient<InterceptedService<Channel, GoogleAdsAPIAccess>> =
+    let client: GoogleAdsServiceClient<InterceptedService<Channel, GoogleAdsAPIAccess>> =
         GoogleAdsServiceClient::with_interceptor(
             api_context.channel.clone(),
-            GoogleAdsAPIAccess {
-                auth_token: api_context.auth_token.clone(),
-                dev_token: api_context.dev_token.clone(),
-                login_customer: api_context.login_customer.clone(),
-                channel: api_context.channel.clone(),
-                token: api_context.token.clone(),
-                authenticator: api_context.authenticator.clone(),
-            },
+            api_context,
         );
 
-    gaql_query_with_client(&mut client, customer_id, query, f).await
+    gaql_query_with_client(client, customer_id, query, f).await
 }
 
 /// Run query via GoogleAdsFieldService to obtain field metadata
-pub async fn fields_query(api_context: &mut GoogleAdsAPIAccess, query: &str) {
+pub async fn fields_query(api_context: GoogleAdsAPIAccess, query: &str) {
     let mut client = GoogleAdsFieldServiceClient::with_interceptor(
         api_context.channel.clone(),
         GoogleAdsAPIAccess {
@@ -251,13 +259,13 @@ pub async fn fields_query(api_context: &mut GoogleAdsAPIAccess, query: &str) {
 }
 
 pub async fn get_child_account_ids(
-    api_context: &mut GoogleAdsAPIAccess,
+    api_context: GoogleAdsAPIAccess,
     mcc_customer_id: &str,
 ) -> Result<Vec<String>> {
     let result: Option<Vec<String>> = gaql_query(
         api_context,
-        mcc_customer_id,
-        SUB_ACCOUNT_IDS_QUERY,
+        mcc_customer_id.to_owned(),
+        SUB_ACCOUNT_IDS_QUERY.to_owned(),
         |response: SearchGoogleAdsStreamResponse| {
             let mut customer_ids: Vec<String> = Vec::new();
 

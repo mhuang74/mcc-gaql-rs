@@ -13,7 +13,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let args = args::parse();
 
-    let profile = &args.profile.unwrap_or_else(|| "test".to_string());
+    let profile = &args.profile.unwrap_or_else(|| "test".to_owned());
 
     let config = config::load(profile).context(format!("Loading config for profile: {profile}"))?;
 
@@ -28,12 +28,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // run Account listing query
         if args.customer_id.is_some() {
             // query accounts under specificied customer_id account
-            let customer_id = &args.customer_id.expect("Valid customer_id required.");
+            let customer_id = args.customer_id.expect("Valid customer_id required.");
             log::info!("Listing child accounts under {customer_id}");
             googleads::gaql_query(
-                &api_context,
+                api_context,
                 customer_id,
-                googleads::SUB_ACCOUNTS_QUERY,
+                googleads::SUB_ACCOUNTS_QUERY.to_owned(),
                 googleads::print_to_stdout,
             )
             .await;
@@ -44,9 +44,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &config.mcc_customerid
             );
             googleads::gaql_query(
-                &api_context,
-                &config.mcc_customerid,
-                googleads::SUB_ACCOUNTS_QUERY,
+                api_context,
+                config.mcc_customerid,
+                googleads::SUB_ACCOUNTS_QUERY.to_owned(),
                 googleads::print_to_stdout,
             )
             .await;
@@ -56,20 +56,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .gaql_query
             .expect("Valid Field Service query required.");
         log::info!("Running Fields Metadata query: {query}");
-        googleads::fields_query(&mut api_context, query).await;
+        googleads::fields_query(api_context, query).await;
     } else if args.gaql_query.is_some() {
         // run provided GAQL query
         if args.customer_id.is_some() {
             // query only specificied customer_id
-            let query = &args.gaql_query.expect("Valid GAQL query required.");
-            let customer_id = &args.customer_id.expect("Valid customer_id required.");
+            let query = args.gaql_query.expect("Valid GAQL query required.");
+            let customer_id = args.customer_id.expect("Valid customer_id required.");
             log::info!("Running GAQL query for {customer_id}: {query}");
-            googleads::gaql_query(&api_context, customer_id, query, googleads::print_to_stdout)
+            googleads::gaql_query(api_context, customer_id, query, googleads::print_to_stdout)
                 .await;
         } else {
             let customer_ids: Option<Vec<String>> = if args.all_current_child_accounts {
                 // generate new list of child accounts
-                match googleads::get_child_account_ids(&mut api_context, &config.mcc_customerid)
+                match googleads::get_child_account_ids(api_context.clone(), &config.mcc_customerid)
                     .await
                 {
                     Ok(customer_ids) => Some(customer_ids),
@@ -93,11 +93,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             // apply query to all child customer_id
             if let Some(customer_id_vector) = customer_ids {
-                let query = &args.gaql_query.as_ref().expect("valid GAQL query");
+                let query: String = args.gaql_query.expect("valid GAQL query");
                 log::info!(
                     "Running GAQL query for {} child accounts: {}",
-                    customer_id_vector.len(),
-                    query
+                    &customer_id_vector.len(),
+                    &query
                 );
 
                 let mut google_ads_client: Option<
@@ -106,10 +106,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     >,
                 > = None;
 
+                let mut handles: Vec<tokio::task::JoinHandle<_>> = Vec::new();
+
                 for customer_id in customer_id_vector.iter() {
                     // keep reusing same GoogleAdsServiceClient unless token is expired
                     if google_ads_client.is_none() || api_context.renew_token().await? {
-                        log::debug!("Token renewed. Constructing new GoogleAdsServiceClient.");
+                        log::debug!("Constructing new GoogleAdsServiceClient with new token.");
                         google_ads_client = Some(GoogleAdsServiceClient::with_interceptor(
                             api_context.channel.clone(),
                             googleads::GoogleAdsAPIAccess {
@@ -123,15 +125,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         ));
                     }
 
+                    // spawn requires captured values to have sufficient lifetime, so just clone them
+                    let my_google_ads_client = google_ads_client.as_ref().unwrap().clone();
+                    let my_customer_id = customer_id.clone();
+                    let my_query: String = query.clone();
+
                     log::debug!("Querying {customer_id}");
 
-                    googleads::gaql_query_with_client(
-                        google_ads_client.as_mut().unwrap(),
-                        customer_id,
-                        query,
-                        googleads::print_to_stdout_no_header,
-                    )
-                    .await;
+                    handles.push(tokio::spawn(async move {
+                        googleads::gaql_query_with_client(
+                            my_google_ads_client,
+                            my_customer_id,
+                            my_query,
+                            googleads::print_to_stdout_no_header,
+                        )
+                        .await;
+                    }));
+                }
+
+                // KB: cannot exit FOR loop until all spawned queries are finished, otherwise Connection may get dropped prematurely
+                // KB: all GoogleAdsServiceClients seem to share single Hyper Connection
+                for handle in handles {
+                    handle.await?;
                 }
             } else {
                 log::error!("Abort GAQL query. Can't find child accounts to run on.");
