@@ -1,3 +1,12 @@
+###
+#
+# GAQL Query Cookbook
+#
+# Michael S. Huang (mhuang74@gmail.com)
+#
+##
+
+# Total Account Traffic Last Week
 account_traffic_yesterday = """
 	SELECT 
 	  customer.id, 
@@ -10,7 +19,8 @@ account_traffic_yesterday = """
 	  segments.date during yesterday
 """
 
-top_10_keywords_last_week = """
+# Top Keywords
+top_keywords_last_week = """
 	SELECT
 	  customer.id,
 	  customer.descriptive_name,
@@ -34,24 +44,112 @@ top_10_keywords_last_week = """
 	LIMIT 10
 """
 
-top_perf_max_campaigns_last_week = """
-SELECT 
-  customer.id, 
-  customer.descriptive_name, 
-  campaign.id, 
-  campaign.advertising_channel_type, 
-  campaign.name, 
-  metrics.impressions, 
-  metrics.clicks, 
-  metrics.cost_micros,
-  customer.currency_code 
+# Accounts with Performance Max Campaigns
+account_perf_max_campaigns_last_week = """
+	SELECT 
+	  customer.id, 
+	  customer.descriptive_name, 
+	  campaign.id, 
+	  campaign.advertising_channel_type, 
+	  campaign.name, 
+	  metrics.impressions, 
+	  metrics.clicks, 
+	  metrics.cost_micros,
+	  customer.currency_code 
+	FROM campaign 
+	WHERE 
+	  segments.date DURING LAST_7_DAYS 
+	  AND campaign.advertising_channel_type IN ('PERFORMANCE_MAX') 
+	  AND metrics.clicks > 100
+	ORDER BY 
+	  metrics.clicks DESC 
+	LIMIT 1
+"""
 
-FROM campaign 
-WHERE 
-  segments.date DURING LAST_7_DAYS 
-  AND campaign.advertising_channel_type IN ('PERFORMANCE_MAX') 
-  AND metrics.clicks > 100
-ORDER BY 
-  metrics.clicks DESC 
-LIMIT 10 
+# Accounts with Smart Campaigns
+account_smart_campaigns_last_week = """
+	SELECT 
+	  customer.id, 
+	  customer.descriptive_name, 
+	  campaign.id, 
+	  campaign.advertising_channel_type, 
+	  campaign.name, 
+	  metrics.impressions, 
+	  metrics.clicks, 
+	  metrics.cost_micros,
+	  customer.currency_code 
+	FROM campaign 
+	WHERE 
+	  segments.date DURING LAST_7_DAYS 
+	  AND campaign.advertising_channel_type IN ('SMART') 
+	  AND metrics.clicks > 100
+	ORDER BY 
+	  metrics.clicks DESC 
+	LIMIT 1
+"""
+
+# Accounts with Local Campaigns
+account_local_campaigns_last_week = """
+	SELECT 
+	  customer.id, 
+	  customer.descriptive_name, 
+	  campaign.id, 
+	  campaign.advertising_channel_type, 
+	  campaign.name, 
+	  metrics.impressions, 
+	  metrics.clicks, 
+	  metrics.cost_micros,
+	  customer.currency_code 
+	FROM campaign 
+	WHERE 
+	  segments.date DURING LAST_7_DAYS 
+	  AND campaign.advertising_channel_type IN ('LOCAL') 
+	  AND metrics.clicks > 100
+	ORDER BY 
+	  metrics.clicks DESC 
+	LIMIT 1
+"""
+
+# Accounts with Shopping Campaigns
+account_shopping_campaigns_last_week = """
+	SELECT 
+	  customer.id, 
+	  customer.descriptive_name, 
+	  campaign.id, 
+	  campaign.advertising_channel_type, 
+	  campaign.name, 
+	  metrics.impressions, 
+	  metrics.clicks, 
+	  metrics.cost_micros,
+	  customer.currency_code 
+	FROM campaign 
+	WHERE 
+	  segments.date DURING LAST_7_DAYS 
+	  AND campaign.advertising_channel_type IN ('SHOPPING') 
+	  AND metrics.clicks > 100
+	ORDER BY 
+	  metrics.clicks DESC 
+	LIMIT 1
+"""
+
+# Accounts with Multi-Channel Campaigns
+account_multichannel_campaigns_last_week = """
+	SELECT 
+	  customer.id, 
+	  customer.descriptive_name, 
+	  campaign.id, 
+	  campaign.advertising_channel_type, 
+	  campaign.name, 
+	  metrics.impressions, 
+	  metrics.clicks, 
+	  metrics.cost_micros,
+	  customer.currency_code 
+	FROM campaign 
+	WHERE 
+	  segments.date DURING LAST_7_DAYS 
+	  AND campaign.advertising_channel_type IN ('MULTI_CHANNEL') 
+	  AND metrics.clicks > 100
+	ORDER BY 
+	  metrics.clicks DESC 
+	LIMIT 1
 """
