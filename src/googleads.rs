@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use anyhow::{bail, Result};
 use tokio_stream::StreamExt;
 use tonic::{
@@ -136,7 +138,11 @@ pub async fn get_api_access(
     let header_value_dev_token = MetadataValue::from_str(DEV_TOKEN)?;
     let header_value_login_customer = MetadataValue::from_str(mcc_customer_id)?;
 
-    let channel: Channel = Channel::from_static(ENDPOINT).connect().await?;
+    let channel: Channel = Channel::from_static(ENDPOINT)
+        .rate_limit(200, Duration::from_secs(1))
+        .concurrency_limit(200)
+        .connect()
+        .await?;
 
     let mut access = GoogleAdsAPIAccess {
         channel,
