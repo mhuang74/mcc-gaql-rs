@@ -2,9 +2,8 @@ use clap::Parser;
 
 /// Efficiently run GAQL or Field Metadata queries against child accounts linked to MCC.
 ///
-/// Required settings set via mccfind.toml or ENV VAR
-///     mcc_customer_id (MCCFIND_MCC_CUSTOMERID) - MCC Manager Account corresponding to OAuth credential
-///     token_cache_filename (MCCFIND_MCC_TOKEN_CACHE_FILENAME) - Filename of OAuth access token cache
+/// Supports profile-based configuration and ENV VAR override.
+///
 #[derive(Parser, Debug)]
 #[clap(author, version, about)]
 pub struct Cli {
