@@ -34,7 +34,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 api_context,
                 customer_id,
                 googleads::SUB_ACCOUNTS_QUERY.to_owned(),
-                googleads::print_to_stdout,
             )
             .await;
         } else {
@@ -47,7 +46,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 api_context,
                 config.mcc_customerid,
                 googleads::SUB_ACCOUNTS_QUERY.to_owned(),
-                googleads::print_to_stdout,
             )
             .await;
         }
@@ -64,12 +62,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let query = args.gaql_query.expect("Valid GAQL query required.");
             let customer_id = args.customer_id.expect("Valid customer_id required.");
             log::info!("Running GAQL query for {customer_id}: {query}");
-            googleads::gaql_query(api_context, customer_id, query, googleads::print_to_stdout)
-                .await;
+            googleads::gaql_query(api_context, customer_id, query).await;
         } else {
             let customer_ids: Option<Vec<String>> = if args.all_current_child_accounts {
                 // generate new list of child accounts
-                match googleads::get_child_account_ids(api_context.clone(), &config.mcc_customerid)
+                match googleads::get_child_account_ids(api_context.clone(), config.mcc_customerid)
                     .await
                 {
                     Ok(customer_ids) => Some(customer_ids),
@@ -137,7 +134,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             my_google_ads_client,
                             my_customer_id,
                             my_query,
-                            googleads::print_to_stdout_no_header,
                         )
                         .await;
                     }));

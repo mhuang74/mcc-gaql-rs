@@ -15,11 +15,11 @@ use yup_oauth2::{
 use googleads_rs::google::ads::googleads::v10::services::google_ads_field_service_client::GoogleAdsFieldServiceClient;
 use googleads_rs::google::ads::googleads::v10::services::google_ads_service_client::GoogleAdsServiceClient;
 use googleads_rs::google::ads::googleads::v10::services::{
-    SearchGoogleAdsFieldsRequest, SearchGoogleAdsFieldsResponse, SearchGoogleAdsStreamRequest,
-    SearchGoogleAdsStreamResponse,
+    GoogleAdsRow, SearchGoogleAdsFieldsRequest, SearchGoogleAdsFieldsResponse,
+    SearchGoogleAdsStreamRequest, SearchGoogleAdsStreamResponse,
 };
 
-use itertools::Itertools;
+use async_std::io::WriteExt;
 
 pub const SUB_ACCOUNTS_QUERY: &str = "
 SELECT
@@ -156,16 +156,11 @@ pub async fn get_api_access(
 }
 
 /// Run query via GoogleAdsServiceClient to get performance data
-/// f: closure called with search Response
-pub async fn gaql_query_with_client<F>(
+pub async fn gaql_query_with_client(
     mut client: GoogleAdsServiceClient<InterceptedService<Channel, GoogleAdsAPIAccess>>,
     customer_id: String,
     query: String,
-    f: F,
-) -> Option<Vec<String>>
-where
-    F: Fn(SearchGoogleAdsStreamResponse) -> Option<Vec<String>>,
-{
+) {
     let result: Result<Response<Streaming<SearchGoogleAdsStreamResponse>>, Status> = client
         .search_stream(SearchGoogleAdsStreamRequest {
             customer_id: customer_id.clone(),
@@ -174,17 +169,29 @@ where
         })
         .await;
 
-    let mut results: Vec<String> = Vec::with_capacity(2048);
-
     match result {
         Ok(response) => {
             let mut stream = response.into_inner();
-
+            let mut stdout = async_std::io::stdout();
             while let Some(item) = stream.next().await {
                 match item {
                     Ok(stream_response) => {
-                        if let Some(mut partial_results) = f(stream_response) {
-                            results.append(&mut partial_results);
+                        let field_mask = stream_response.field_mask.unwrap();
+                        for r in stream_response.results {
+                            let row: GoogleAdsRow = r;
+                            let mut buffer: Vec<u8> = Vec::with_capacity(1024);
+                            let mut paths_iter = field_mask.paths.iter().peekable();
+                            while let Some(path) = &paths_iter.next() {
+                                let string_val: String = row.get(path);
+                                for byte_val in string_val.bytes() {
+                                    buffer.push(byte_val);
+                                }
+                                if paths_iter.peek().is_some() {
+                                    buffer.push(b'\t');
+                                }
+                            }
+                            buffer.push(b'\n');
+                            stdout.write_all(&buffer).await.unwrap();
                         }
                     }
                     Err(status) => {
@@ -205,28 +212,14 @@ where
             );
         }
     }
-
-    Some(results)
 }
 
 /// Run query via GoogleAdsServiceClient to get performance data
-/// f: closure called with search Response
-pub async fn gaql_query<F>(
-    api_context: GoogleAdsAPIAccess,
-    customer_id: String,
-    query: String,
-    f: F,
-) -> Option<Vec<String>>
-where
-    F: Fn(SearchGoogleAdsStreamResponse) -> Option<Vec<String>>,
-{
+pub async fn gaql_query(api_context: GoogleAdsAPIAccess, customer_id: String, query: String) {
     let client: GoogleAdsServiceClient<InterceptedService<Channel, GoogleAdsAPIAccess>> =
-        GoogleAdsServiceClient::with_interceptor(
-            api_context.channel.clone(),
-            api_context,
-        );
+        GoogleAdsServiceClient::with_interceptor(api_context.channel.clone(), api_context);
 
-    gaql_query_with_client(client, customer_id, query, f).await
+    gaql_query_with_client(client, customer_id, query).await
 }
 
 /// Run query via GoogleAdsFieldService to obtain field metadata
@@ -253,69 +246,59 @@ pub async fn fields_query(api_context: GoogleAdsAPIAccess, query: &str) {
         .unwrap()
         .into_inner();
 
+    let mut stdout = async_std::io::stdout();
     for field in response.results {
-        println!("{:?}", &field);
+        let val = format!("{:?}", &field);
+        stdout.write_all(val.as_bytes()).await.unwrap();
     }
 }
 
 pub async fn get_child_account_ids(
     api_context: GoogleAdsAPIAccess,
-    mcc_customer_id: &str,
+    mcc_customer_id: String,
 ) -> Result<Vec<String>> {
-    let result: Option<Vec<String>> = gaql_query(
-        api_context,
-        mcc_customer_id.to_owned(),
-        SUB_ACCOUNT_IDS_QUERY.to_owned(),
-        |response: SearchGoogleAdsStreamResponse| {
-            let mut customer_ids: Vec<String> = Vec::new();
+    let mut client: GoogleAdsServiceClient<InterceptedService<Channel, GoogleAdsAPIAccess>> =
+        GoogleAdsServiceClient::with_interceptor(api_context.channel.clone(), api_context);
 
-            for row in response.results {
-                let customer_id = row.get("customer_client.id");
-                customer_ids.push(customer_id);
+    let result: Result<Response<Streaming<SearchGoogleAdsStreamResponse>>, Status> = client
+        .search_stream(SearchGoogleAdsStreamRequest {
+            customer_id: mcc_customer_id.clone(),
+            query: SUB_ACCOUNT_IDS_QUERY.to_string(),
+            summary_row_setting: 0,
+        })
+        .await;
+
+    let customer_ids: Option<Vec<String>> = match result {
+        Ok(response) => {
+            let mut stream = response.into_inner();
+
+            let mut v: Vec<String> = Vec::with_capacity(2048);
+
+            while let Some(item) = stream.next().await {
+                match item {
+                    Ok(stream_response) => {
+                        for row in stream_response.results {
+                            v.push(row.get("customer_client.id"));
+                        }
+                    }
+                    Err(status) => {
+                        bail!(format!(
+                            "Unable to query for child account ids: {}",
+                            status.message()
+                        ));
+                    }
+                }
             }
 
-            log::debug!(
-                "Retrieved {} customer_ids via MCC query: {}",
-                customer_ids.len(),
-                SUB_ACCOUNT_IDS_QUERY
-            );
-
-            Some(customer_ids)
-        },
-    )
-    .await;
-
-    if let Some(customer_ids) = result {
-        Ok(customer_ids)
-    } else {
-        bail!("Unable to query for child account ids");
-    }
-}
-
-pub fn print_to_stdout(response: SearchGoogleAdsStreamResponse) -> Option<Vec<String>> {
-    let field_mask = response.field_mask.unwrap();
-    let headers = &field_mask.paths.iter().map(ToString::to_string).join("\t");
-    println!("{headers}");
-
-    for row in response.results {
-        for path in &field_mask.paths {
-            print!("{}\t", row.get(path));
+            Some(v)
         }
-        println!();
-    }
-
-    None
-}
-
-pub fn print_to_stdout_no_header(response: SearchGoogleAdsStreamResponse) -> Option<Vec<String>> {
-    let field_mask = response.field_mask.unwrap();
-
-    for row in response.results {
-        for path in &field_mask.paths {
-            print!("{}\t", row.get(path));
+        Err(status) => {
+            bail!(format!(
+                "Unable to query for child account ids: {}",
+                status.message()
+            ));
         }
-        println!();
-    }
+    };
 
-    None
+    Ok(customer_ids.unwrap())
 }
