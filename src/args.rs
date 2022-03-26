@@ -12,6 +12,17 @@ pub struct Cli {
     #[clap(short, long)]
     pub profile: Option<String>,
 
+    /// Apply query to CustomerID
+    #[clap(short, long)]
+    pub customer_id: Option<String>,
+
+    /// Load named query from file
+    #[clap(short, long)]
+    pub stored_query: Option<String>,
+
+    /// Google Ads GAQL query to run
+    pub gaql_query: Option<String>,
+
     /// List all child accounts under MCC
     #[clap(short, long)]
     pub list_child_accounts: bool,
@@ -24,12 +35,9 @@ pub struct Cli {
     #[clap(short, long)]
     pub all_current_child_accounts: bool,
 
-    /// Apply query to CustomerID
-    #[clap(short, long)]
-    pub customer_id: Option<String>,
-
-    /// Google Ads GAQL query to run
-    pub gaql_query: Option<String>,
+    /// Keep going on errors
+    #[clap(long)]
+    pub keep_going: bool,
 }
 
 pub fn parse() -> Cli {

@@ -295,7 +295,7 @@ pub async fn get_child_account_ids(
                 }
             }
 
-            log::info!(
+            log::debug!(
                 "Retrieved {} child account ids from Manager Account {}",
                 &v.len(),
                 &mcc_customer_id

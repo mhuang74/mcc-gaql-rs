@@ -2,9 +2,10 @@ use anyhow::{bail, Result};
 use std::{
     env,
     fs::File,
-    io::{BufRead, BufReader},
+    io::{BufRead, BufReader, Read},
     path::Path,
 };
+use toml::Value;
 
 #[allow(dead_code)]
 const CACHE_FILENAME: &str = ".cache";
@@ -87,7 +88,7 @@ where
 {
     match File::open(filename) {
         Ok(file) => {
-            let mut customer_ids: Vec<String> = Vec::with_capacity(9216);
+            let mut customer_ids: Vec<String> = Vec::with_capacity(2048);
 
             let lines = BufReader::new(&file).lines();
 
@@ -108,6 +109,55 @@ where
                 "Unable to load child account ids from file: {}",
                 e.to_string()
             );
+        }
+    }
+}
+
+/// get named query from file
+pub async fn get_query_from_file<P>(filename: P, query_name: &str) -> Result<String>
+where
+    P: AsRef<Path>,
+{
+    match File::open(filename) {
+        Ok(file) => {
+            let mut buffer = String::new();
+
+            BufReader::new(&file).read_to_string(&mut buffer)?;
+
+            // parse Toml
+            let toml = match buffer.parse::<Value>() {
+                Ok(v) => v,
+                Err(e) => {
+                    bail!(
+                        "Unable to parse stored query toml. Error: {}",
+                        e.to_string()
+                    );
+                }
+            };
+
+            let query = match toml.get(query_name) {
+                Some(v) => match v.as_str() {
+                    Some(s) => s.to_owned(),
+                    _ => {
+                        bail!("Query not valid string: {}", v);
+                    }
+                },
+                _ => {
+                    bail!("Query not found: {query_name}");
+                }
+            };
+
+            log::debug!(
+                "Query '{}' loaded from file {:?}. Query: {}",
+                query_name,
+                &file,
+                query
+            );
+
+            Ok(query)
+        }
+        Err(e) => {
+            bail!("Unable to load named query file. Error: {}", e.to_string());
         }
     }
 }

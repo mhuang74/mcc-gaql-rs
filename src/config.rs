@@ -17,6 +17,8 @@ pub struct MyConfig {
     pub token_cache_filename: String,
     /// Optional file containing child customer_ids to query
     pub customerids_filename: Option<String>,
+    /// Optional TOML file with stored queries
+    pub queries_filename: Option<String>,
 }
 
 pub fn load(profile: &str) -> anyhow::Result<MyConfig> {
@@ -27,7 +29,7 @@ pub fn load(profile: &str) -> anyhow::Result<MyConfig> {
 
     // load from file if present
     if let Some(config_file_path) = config_file_path(TOML_CONFIG_FILENAME) {
-        log::info!("Loading config file: {:?}", config_file_path);
+        log::debug!("Loading config file: {:?}", config_file_path);
         figment = figment.merge(Toml::file(config_file_path).nested());
     }
 

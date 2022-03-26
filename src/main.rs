@@ -1,3 +1,5 @@
+use std::process;
+
 use anyhow::{Context, Result};
 use googleads_rs::google::ads::googleads::v10::services::google_ads_service_client::GoogleAdsServiceClient;
 use tonic::{codegen::InterceptedService, transport::Channel};
@@ -11,13 +13,29 @@ mod util;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     util::init_logger();
 
-    let args = args::parse();
+    let mut args = args::parse();
 
     let profile = &args.profile.unwrap_or_else(|| "test".to_owned());
 
     let config = config::load(profile).context(format!("Loading config for profile: {profile}"))?;
 
-    log::info!("Configuration: {config:?}");
+    log::debug!("Configuration: {config:?}");
+
+    // load stored query
+    if let Some(query_name) = args.stored_query {
+        if let Some(query_filename) = config.queries_filename {
+            let queries_path = crate::config::config_file_path(&query_filename).unwrap();
+            log::debug!("Loading queries file: {queries_path:?}");
+
+            args.gaql_query = match util::get_query_from_file(queries_path, &query_name).await {
+                Ok(s) => Some(s),
+                Err(e) => {
+                    log::error!("Unable to load query: {}", e.to_string());
+                    process::exit(1);
+                }
+            }
+        }
+    }
 
     let mut api_context =
         googleads::get_api_access(&config.mcc_customerid, &config.token_cache_filename)
@@ -29,7 +47,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         if args.customer_id.is_some() {
             // query accounts under specificied customer_id account
             let customer_id = args.customer_id.expect("Valid customer_id required.");
-            log::info!("Listing child accounts under {customer_id}");
+            log::debug!("Listing child accounts under {customer_id}");
             googleads::gaql_query(
                 api_context,
                 customer_id,
@@ -38,7 +56,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .await;
         } else {
             // query child accounts under MCC
-            log::info!(
+            log::debug!(
                 "Listing ALL child accounts under MCC {}",
                 &config.mcc_customerid
             );
@@ -76,9 +94,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // load cild accounts list from file
 
                 let customerids_path =
-                    crate::config::config_file_path(&config.customerids_filename.unwrap())
-                        .expect("customerids path");
-                log::info!("Loading customerids file: {customerids_path:?}");
+                    crate::config::config_file_path(&config.customerids_filename.unwrap()).unwrap();
+                log::debug!("Loading customerids file: {customerids_path:?}");
 
                 match util::get_child_account_ids_from_file(customerids_path.as_path()).await {
                     Ok(customer_ids) => Some(customer_ids),
@@ -127,7 +144,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let my_customer_id = customer_id.clone();
                     let my_query: String = query.clone();
 
-                    log::debug!("Querying {customer_id}");
+                    // log::debug!("Querying {customer_id}");
 
                     handles.push(tokio::spawn(async move {
                         googleads::gaql_query_with_client(
