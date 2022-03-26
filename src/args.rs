@@ -16,7 +16,7 @@ pub struct Cli {
     pub customer_id: Option<String>,
 
     /// Load named query from file
-    #[clap(short, long)]
+    #[clap(short='q', long)]
     pub stored_query: Option<String>,
 
     /// Google Ads GAQL query to run
