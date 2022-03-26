@@ -50,7 +50,6 @@ WHERE
     and customer_client.status in ('ENABLED')
     and customer_client.descriptive_name is not null
 ORDER BY customer_client.level, customer_client.id
-LIMIT 200
 ";
 
 const ENDPOINT: &str = "https://googleads.googleapis.com:443";
@@ -139,8 +138,8 @@ pub async fn get_api_access(
     let header_value_login_customer = MetadataValue::from_str(mcc_customer_id)?;
 
     let channel: Channel = Channel::from_static(ENDPOINT)
-        .rate_limit(200, Duration::from_secs(1))
-        .concurrency_limit(200)
+        .rate_limit(100, Duration::from_secs(1))
+        .concurrency_limit(100)
         .connect()
         .await?;
 
@@ -295,6 +294,8 @@ pub async fn get_child_account_ids(
                     }
                 }
             }
+
+            log::info!("Retrieved {} child account ids from Manager Account {}", &v.len(), &mcc_customer_id);
 
             Some(v)
         }
