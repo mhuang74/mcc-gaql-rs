@@ -166,7 +166,8 @@ SELECT
   asset_field_type_view.field_type, 
   metrics.impressions, 
   metrics.clicks, 
-  metrics.cost_micros 
+  metrics.cost_micros,
+	customer.currency_code  
 FROM asset_field_type_view 
 WHERE 
   segments.date DURING LAST_7_DAYS 
@@ -188,12 +189,13 @@ SELECT
   asset_field_type_view.field_type, 
   metrics.impressions, 
   metrics.clicks, 
-  metrics.cost_micros 
+  metrics.cost_micros,
+	customer.currency_code  
 FROM asset_field_type_view 
 WHERE 
   segments.date DURING LAST_7_DAYS 
   AND asset_field_type_view.field_type IN ('CALL') 
-  AND metrics.impressions > 200
+  AND metrics.impressions > 100
 ORDER BY 
   metrics.impressions DESC 
 LIMIT 1
@@ -210,7 +212,8 @@ SELECT
   asset_field_type_view.field_type, 
   metrics.impressions, 
   metrics.clicks, 
-  metrics.cost_micros 
+  metrics.cost_micros,
+  customer.currency_code  
 FROM asset_field_type_view 
 WHERE 
   segments.date DURING LAST_7_DAYS 
@@ -232,12 +235,13 @@ SELECT
   asset_field_type_view.field_type, 
   metrics.impressions, 
   metrics.clicks, 
-  metrics.cost_micros 
+  metrics.cost_micros,
+	customer.currency_code  
 FROM asset_field_type_view 
 WHERE 
   segments.date DURING LAST_7_DAYS 
   AND asset_field_type_view.field_type IN ('MOBILE_APP') 
-  AND metrics.impressions > 1000
+  AND metrics.impressions > 1
 ORDER BY 
   metrics.impressions DESC 
 LIMIT 1
