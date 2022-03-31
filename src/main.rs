@@ -30,7 +30,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             args.gaql_query = match util::get_query_from_file(queries_path, &query_name).await {
                 Ok(s) => Some(s),
                 Err(e) => {
-                    log::error!("Unable to load query: {}", e.to_string());
+                    let msg = format!("Unable to load query: {}", e.to_string());
+                    log::error!("{msg}");
+                    println!("{msg}");
                     process::exit(1);
                 }
             }
