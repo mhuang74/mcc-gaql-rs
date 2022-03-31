@@ -153,3 +153,92 @@ account_multichannel_campaigns_last_week = """
 	  metrics.clicks DESC 
 	LIMIT 1
 """
+
+
+# Accounts with Asset-based Sitelink Ext
+account_asset_sitelink_last_week = """
+SELECT 
+  customer.id, 
+  customer.descriptive_name, 
+  campaign.id, 
+  campaign.advertising_channel_type, 
+  campaign.name, 
+  asset_field_type_view.field_type, 
+  metrics.impressions, 
+  metrics.clicks, 
+  metrics.cost_micros 
+FROM asset_field_type_view 
+WHERE 
+  segments.date DURING LAST_7_DAYS 
+  AND asset_field_type_view.field_type IN ('SITELINK') 
+  AND metrics.clicks > 20000
+ORDER BY 
+  metrics.impressions DESC 
+LIMIT 1
+"""
+
+# Accounts with Asset-based Call Ext
+account_asset_call_last_week = """
+SELECT 
+  customer.id, 
+  customer.descriptive_name, 
+  campaign.id, 
+  campaign.advertising_channel_type, 
+  campaign.name, 
+  asset_field_type_view.field_type, 
+  metrics.impressions, 
+  metrics.clicks, 
+  metrics.cost_micros 
+FROM asset_field_type_view 
+WHERE 
+  segments.date DURING LAST_7_DAYS 
+  AND asset_field_type_view.field_type IN ('CALL') 
+  AND metrics.impressions > 200
+ORDER BY 
+  metrics.impressions DESC 
+LIMIT 1
+"""
+
+# Accounts with Asset-based Callout Ext
+account_asset_callout_last_week = """
+SELECT 
+  customer.id, 
+  customer.descriptive_name, 
+  campaign.id, 
+  campaign.advertising_channel_type, 
+  campaign.name, 
+  asset_field_type_view.field_type, 
+  metrics.impressions, 
+  metrics.clicks, 
+  metrics.cost_micros 
+FROM asset_field_type_view 
+WHERE 
+  segments.date DURING LAST_7_DAYS 
+  AND asset_field_type_view.field_type IN ('CALLOUT') 
+  AND metrics.clicks > 30000
+ORDER BY 
+  metrics.impressions DESC 
+LIMIT 1
+"""
+
+# Accounts with Asset-based App Ext
+account_asset_app_last_week = """
+SELECT 
+  customer.id, 
+  customer.descriptive_name, 
+  campaign.id, 
+  campaign.advertising_channel_type, 
+  campaign.name, 
+  asset_field_type_view.field_type, 
+  metrics.impressions, 
+  metrics.clicks, 
+  metrics.cost_micros 
+FROM asset_field_type_view 
+WHERE 
+  segments.date DURING LAST_7_DAYS 
+  AND asset_field_type_view.field_type IN ('MOBILE_APP') 
+  AND metrics.impressions > 1000
+ORDER BY 
+  metrics.impressions DESC 
+LIMIT 1
+"""
