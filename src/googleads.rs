@@ -169,7 +169,7 @@ pub async fn gaql_query_with_client(
     let result: Result<Response<Streaming<SearchGoogleAdsStreamResponse>>, Status> = client
         .search_stream(SearchGoogleAdsStreamRequest {
             customer_id: customer_id.clone(),
-            query: query.clone(),
+            query: query,
             summary_row_setting: 0,
         })
         .await;
@@ -231,14 +231,7 @@ pub async fn gaql_query(api_context: GoogleAdsAPIAccess, customer_id: String, qu
 pub async fn fields_query(api_context: GoogleAdsAPIAccess, query: &str) {
     let mut client = GoogleAdsFieldServiceClient::with_interceptor(
         api_context.channel.clone(),
-        GoogleAdsAPIAccess {
-            auth_token: api_context.auth_token.clone(),
-            dev_token: api_context.dev_token.clone(),
-            login_customer: api_context.login_customer.clone(),
-            channel: api_context.channel.clone(),
-            token: api_context.token.clone(),
-            authenticator: api_context.authenticator.clone(),
-        },
+        api_context,
     );
 
     let response: SearchGoogleAdsFieldsResponse = client
