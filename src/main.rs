@@ -1,7 +1,10 @@
 use std::process;
 
 use anyhow::{Context, Result};
+use googleads::GoogleAdsAPIAccess;
 use googleads_rs::google::ads::googleads::v10::services::google_ads_service_client::GoogleAdsServiceClient;
+use polars::prelude::*;
+use tokio::sync::mpsc;
 use tonic::{codegen::InterceptedService, transport::Channel};
 
 mod args;
@@ -39,7 +42,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let mut api_context =
+    let api_context =
         googleads::get_api_access(&config.mcc_customerid, &config.token_cache_filename)
             .await
             .expect("Failed to access Google Ads API.");
@@ -55,7 +58,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 customer_id,
                 googleads::SUB_ACCOUNTS_QUERY.to_owned(),
             )
-            .await;
+            .await.unwrap();
         } else {
             // query child accounts under MCC
             log::debug!(
@@ -67,7 +70,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 config.mcc_customerid,
                 googleads::SUB_ACCOUNTS_QUERY.to_owned(),
             )
-            .await;
+            .await.unwrap();
         }
     } else if args.field_service {
         let query = &args
@@ -82,87 +85,41 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let query = args.gaql_query.expect("Valid GAQL query required.");
             let customer_id = args.customer_id.expect("Valid customer_id required.");
             log::info!("Running GAQL query for {customer_id}: {query}");
-            googleads::gaql_query(api_context, customer_id, query).await;
+            let df = googleads::gaql_query(api_context, customer_id, query).await.unwrap();
+            println!("df: {df}");
         } else {
-            let customer_ids: Option<Vec<String>> = if args.all_current_child_accounts {
-                // generate new list of child accounts
-                match googleads::get_child_account_ids(api_context.clone(), config.mcc_customerid)
-                    .await
-                {
-                    Ok(customer_ids) => Some(customer_ids),
-                    Err(_e) => None,
-                }
-            } else if config.customerids_filename.is_some() {
-                // load cild accounts list from file
+            // get list of child account customer ids to query
+            let customer_ids: Option<Vec<String>> = 
+                if args.all_current_child_accounts {
+                    // generate new list of child accounts
+                    match googleads::get_child_account_ids(api_context.clone(), config.mcc_customerid)
+                        .await
+                    {
+                        Ok(customer_ids) => Some(customer_ids),
+                        Err(_e) => None,
+                    }
+                } else if config.customerids_filename.is_some() {
+                    // load cild accounts list from file
 
-                let customerids_path =
-                    crate::config::config_file_path(&config.customerids_filename.unwrap()).unwrap();
-                log::debug!("Loading customerids file: {customerids_path:?}");
+                    let customerids_path =
+                        crate::config::config_file_path(&config.customerids_filename.unwrap()).unwrap();
+                    log::debug!("Loading customerids file: {customerids_path:?}");
 
-                match util::get_child_account_ids_from_file(customerids_path.as_path()).await {
-                    Ok(customer_ids) => Some(customer_ids),
-                    Err(_e) => None,
-                }
-            } else {
-                None
-            };
+                    match util::get_child_account_ids_from_file(customerids_path.as_path()).await {
+                        Ok(customer_ids) => Some(customer_ids),
+                        Err(_e) => None,
+                    }
+                } else {
+                    None
+                };
 
-            // apply query to all child customer_id
+            // apply query to all child account customer_ids
             if let Some(customer_id_vector) = customer_ids {
                 let query: String = args.gaql_query.expect("valid GAQL query");
-                log::info!(
-                    "Running GAQL query for {} child accounts: {}",
-                    &customer_id_vector.len(),
-                    &query
-                );
 
-                let mut google_ads_client: Option<
-                    GoogleAdsServiceClient<
-                        InterceptedService<Channel, googleads::GoogleAdsAPIAccess>,
-                    >,
-                > = None;
+                // run queries asynchroughly across all customer_ids
+                gaql_query_async(api_context, customer_id_vector, query, args.aggregate_metrics).await?;
 
-                let mut handles: Vec<tokio::task::JoinHandle<_>> = Vec::new();
-
-                for customer_id in customer_id_vector.iter() {
-                    // keep reusing same GoogleAdsServiceClient unless token is expired
-                    if google_ads_client.is_none() || api_context.renew_token().await? {
-                        log::debug!("Constructing new GoogleAdsServiceClient with new token.");
-                        google_ads_client = Some(GoogleAdsServiceClient::with_interceptor(
-                            api_context.channel.clone(),
-                            googleads::GoogleAdsAPIAccess {
-                                auth_token: api_context.auth_token.clone(),
-                                dev_token: api_context.dev_token.clone(),
-                                login_customer: api_context.login_customer.clone(),
-                                channel: api_context.channel.clone(),
-                                token: api_context.token.clone(),
-                                authenticator: api_context.authenticator.clone(),
-                            },
-                        ));
-                    }
-
-                    // spawn requires captured values to have sufficient lifetime, so just clone them
-                    let my_google_ads_client = google_ads_client.as_ref().unwrap().clone();
-                    let my_customer_id = customer_id.clone();
-                    let my_query: String = query.clone();
-
-                    // log::debug!("Querying {customer_id}");
-
-                    handles.push(tokio::spawn(async move {
-                        googleads::gaql_query_with_client(
-                            my_google_ads_client,
-                            my_customer_id,
-                            my_query,
-                        )
-                        .await;
-                    }));
-                }
-
-                // KB: cannot exit FOR loop until all spawned queries are finished, otherwise Connection may get dropped prematurely
-                // KB: all GoogleAdsServiceClients seem to share single Hyper Connection
-                for handle in handles {
-                    handle.await?;
-                }
             } else {
                 log::error!("Abort GAQL query. Can't find child accounts to run on.");
             }
@@ -172,4 +129,99 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+async fn gaql_query_async(mut api_context: GoogleAdsAPIAccess, customer_id_vector: Vec<String>, query: String, aggregate: bool) -> Result<()>
+{
+
+    log::info!(
+        "Running GAQL query for {} child accounts: {}",
+        &customer_id_vector.len(),
+        &query
+    );
+
+    let mut google_ads_client: Option<
+        GoogleAdsServiceClient<
+            InterceptedService<Channel, googleads::GoogleAdsAPIAccess>,
+        >,
+    > = None;
+
+    let mut handles: Vec<tokio::task::JoinHandle<_>> = Vec::new();
+
+    for customer_id in customer_id_vector.iter() {
+        // keep reusing same GoogleAdsServiceClient unless token is expired
+        if google_ads_client.is_none() || api_context.renew_token().await? {
+            log::debug!("Constructing new GoogleAdsServiceClient with new token.");
+            google_ads_client = Some(GoogleAdsServiceClient::with_interceptor(
+                api_context.channel.clone(),
+                googleads::GoogleAdsAPIAccess {
+                    auth_token: api_context.auth_token.clone(),
+                    dev_token: api_context.dev_token.clone(),
+                    login_customer: api_context.login_customer.clone(),
+                    channel: api_context.channel.clone(),
+                    token: api_context.token.clone(),
+                    authenticator: api_context.authenticator.clone(),
+                },
+            ));
+        }
+
+        // log::debug!("Querying {customer_id}");
+
+        let gaql_future = googleads::gaql_query_with_client(
+            google_ads_client.as_ref().unwrap().clone(),
+            customer_id.clone(),
+            query.clone(),
+        );
+
+        // execute gaql query in background thread
+        handles.push(tokio::spawn(gaql_future));
+    }
+
+    let mut dataframe: Option<DataFrame> = None;
+
+    // KB: cannot exit FOR loop until all spawned futures are finished, otherwise Connection may get dropped prematurely
+    // KB: all GoogleAdsServiceClients seem to share single Hyper Connection
+    for handle in handles {
+        match handle.await? {
+            Ok(df) => {
+                if !df.is_empty() {
+                    if dataframe.as_ref().is_none() {
+                        dataframe = Some(df);
+                    } else {
+                        dataframe.as_mut().unwrap().extend(&df)?;
+                    }
+                }
+            }
+            Err(e) => {
+                log::error!("Error: {e}");
+            }      
+        }
+    }
+
+
+
+    if dataframe.is_some() {
+
+        if aggregate {
+            let df = dataframe.as_mut().unwrap();
+            let _ = df.drop_in_place("campaign.id")?;
+            let _ = df.drop_in_place("customer.currency_code")?;
+            let _ = df.drop_in_place("metrics.cost_micros")?;
+            let df_agg = df.groupby(["segments.date"])?
+                                    // .select(["metrics.impressions", "metrics.clicks"])
+                                    .sum()?
+                                    .sort(["segments.date"], true)?;
+
+            dataframe = Some(df_agg);
+
+
+        } 
+        
+        println!("{:?}", dataframe.unwrap());
+        
+    }
+
+
+    Ok(())
+
 }

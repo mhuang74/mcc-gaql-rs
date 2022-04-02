@@ -37,6 +37,10 @@ pub struct Cli {
     /// Keep going on errors
     #[clap(long)]
     pub keep_going: bool,
+
+    /// Aggregate metric columns by segmentation columns
+    #[clap(long)]
+    pub aggregate_metrics: bool,
 }
 
 pub fn parse() -> Cli {
