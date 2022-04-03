@@ -230,7 +230,7 @@ pub async fn gaql_query_with_client(
                 for (i, header) in headers_vec.iter().enumerate() {
 
                     if header.contains("metrics") {
-                        let v: Vec<u32> = columns.get(i).unwrap().iter().map(|x| x.parse::<u32>().unwrap()).collect();
+                        let v: Vec<u64> = columns.get(i).unwrap().iter().map(|x| x.parse::<u64>().unwrap()).collect();
                         series_vec.push(
                             Series::new(header, v)
                         );

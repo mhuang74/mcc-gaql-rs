@@ -275,5 +275,5 @@ campaign_perf_max_campaigns_30_days = """
 	  AND campaign.advertising_channel_type IN ('PERFORMANCE_MAX')
 	  AND metrics.impressions > 1 
 	ORDER BY 
-	  campaign.id, segments.date
+	  segments.date, campaign.id
 """

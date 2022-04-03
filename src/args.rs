@@ -38,9 +38,9 @@ pub struct Cli {
     #[clap(long)]
     pub keep_going: bool,
 
-    /// Aggregate metric columns by segmentation columns
-    #[clap(long)]
-    pub aggregate_metrics: bool,
+    /// Group by columns
+    #[clap(long, multiple_occurrences(true))]
+    pub group_by: Vec<String>,
 }
 
 pub fn parse() -> Cli {

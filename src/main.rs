@@ -118,7 +118,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let query: String = args.gaql_query.expect("valid GAQL query");
 
                 // run queries asynchroughly across all customer_ids
-                gaql_query_async(api_context, customer_id_vector, query, args.aggregate_metrics).await?;
+                gaql_query_async(api_context, customer_id_vector, query, args.group_by).await?;
 
             } else {
                 log::error!("Abort GAQL query. Can't find child accounts to run on.");
@@ -131,7 +131,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn gaql_query_async(mut api_context: GoogleAdsAPIAccess, customer_id_vector: Vec<String>, query: String, aggregate: bool) -> Result<()>
+async fn gaql_query_async(mut api_context: GoogleAdsAPIAccess, customer_id_vector: Vec<String>, query: String, groupby: Vec<String>) -> Result<()>
 {
 
     log::info!(
@@ -202,18 +202,18 @@ async fn gaql_query_async(mut api_context: GoogleAdsAPIAccess, customer_id_vecto
 
     if dataframe.is_some() {
 
-        if aggregate {
+        if groupby.len() > 0 {
             let df = dataframe.as_mut().unwrap();
-            let _ = df.drop_in_place("campaign.id")?;
-            let _ = df.drop_in_place("customer.currency_code")?;
-            let _ = df.drop_in_place("metrics.cost_micros")?;
-            let df_agg = df.groupby(["segments.date"])?
-                                    // .select(["metrics.impressions", "metrics.clicks"])
+
+            // get list of metrics columns for SELECT
+            let metric_cols: Vec<&str> = df.get_column_names().into_iter().filter(|c| c.contains("metrics")).collect();
+
+            let df_agg = df.groupby(&groupby)?
+                                    .select(&metric_cols)
                                     .sum()?
-                                    .sort(["segments.date"], true)?;
+                                    .sort(&groupby, false)?;
 
             dataframe = Some(df_agg);
-
 
         } 
         
