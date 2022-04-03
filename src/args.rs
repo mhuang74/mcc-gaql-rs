@@ -41,6 +41,11 @@ pub struct Cli {
     /// Group by columns
     #[clap(long, multiple_occurrences(true))]
     pub group_by: Vec<String>,
+
+    /// GAQL output filename
+    #[clap(short, long)]
+    pub output: Option<String>,
+
 }
 
 pub fn parse() -> Cli {

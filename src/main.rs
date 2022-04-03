@@ -1,10 +1,9 @@
-use std::process;
+use std::{process, fs::{metadata, File}};
 
 use anyhow::{Context, Result};
 use googleads::GoogleAdsAPIAccess;
 use googleads_rs::google::ads::googleads::v10::services::google_ads_service_client::GoogleAdsServiceClient;
 use polars::prelude::*;
-use tokio::sync::mpsc;
 use tonic::{codegen::InterceptedService, transport::Channel};
 
 mod args;
@@ -85,8 +84,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let query = args.gaql_query.expect("Valid GAQL query required.");
             let customer_id = args.customer_id.expect("Valid customer_id required.");
             log::info!("Running GAQL query for {customer_id}: {query}");
-            let df = googleads::gaql_query(api_context, customer_id, query).await.unwrap();
-            println!("df: {df}");
+            let mut df = googleads::gaql_query(api_context, customer_id, query).await.unwrap();
+            if args.output.is_some() {
+                write_csv(&mut df, args.output.as_ref().unwrap())?;
+            } else {
+                println!("{:?}", &df);
+            }
         } else {
             // get list of child account customer ids to query
             let customer_ids: Option<Vec<String>> = 
@@ -118,7 +121,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let query: String = args.gaql_query.expect("valid GAQL query");
 
                 // run queries asynchroughly across all customer_ids
-                gaql_query_async(api_context, customer_id_vector, query, args.group_by).await?;
+                gaql_query_async(api_context, customer_id_vector, query, args.group_by, args.output).await?;
 
             } else {
                 log::error!("Abort GAQL query. Can't find child accounts to run on.");
@@ -131,7 +134,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn gaql_query_async(mut api_context: GoogleAdsAPIAccess, customer_id_vector: Vec<String>, query: String, groupby: Vec<String>) -> Result<()>
+async fn gaql_query_async(mut api_context: GoogleAdsAPIAccess, customer_id_vector: Vec<String>, query: String, groupby: Vec<String>, outfile: Option<String>) -> Result<()>
 {
 
     log::info!(
@@ -215,13 +218,26 @@ async fn gaql_query_async(mut api_context: GoogleAdsAPIAccess, customer_id_vecto
 
             dataframe = Some(df_agg);
 
-        } 
+        }
+
+        if outfile.is_some() {
+            write_csv(&mut dataframe.as_mut().unwrap(), outfile.as_ref().unwrap())?;
+        } else {
+            println!("{:?}", dataframe.as_ref().unwrap());
+        }
         
-        println!("{:?}", dataframe.unwrap());
         
     }
 
 
     Ok(())
 
+}
+
+fn write_csv(df: &mut DataFrame, outfile: &str) -> Result<()> {
+
+    let f = File::create(outfile)?;
+    CsvWriter::new(f).finish(df)?;
+
+    Ok(())
 }

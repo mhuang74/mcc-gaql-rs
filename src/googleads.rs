@@ -1,7 +1,6 @@
-use std::{time::Duration, collections::{HashMap, BTreeMap}};
+use std::{time::Duration};
 
 use anyhow::{bail, Result};
-use itertools::Itertools;
 use polars::prelude::*;
 use tokio_stream::StreamExt;
 use tonic::{
