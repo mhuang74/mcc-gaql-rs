@@ -1,4 +1,4 @@
-use std::{process, fs::{File}};
+use std::{fs::File, process};
 
 use anyhow::{Context, Result};
 use googleads::GoogleAdsAPIAccess;
@@ -32,7 +32,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             args.gaql_query = match util::get_query_from_file(queries_path, &query_name).await {
                 Ok(s) => Some(s),
                 Err(e) => {
-                    let msg = format!("Unable to load query: {}", e.to_string());
+                    let msg = format!("Unable to load query: {e}");
                     log::error!("{msg}");
                     println!("{msg}");
                     process::exit(1);
@@ -57,7 +57,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 customer_id,
                 googleads::SUB_ACCOUNTS_QUERY.to_owned(),
             )
-            .await.unwrap();
+            .await
+            .unwrap();
         } else {
             // query child accounts under MCC
             log::debug!(
@@ -69,7 +70,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 config.mcc_customerid,
                 googleads::SUB_ACCOUNTS_QUERY.to_owned(),
             )
-            .await.unwrap();
+            .await
+            .unwrap();
         }
     } else if args.field_service {
         let query = &args
@@ -84,7 +86,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let query = args.gaql_query.expect("Valid GAQL query required.");
             let customer_id = args.customer_id.expect("Valid customer_id required.");
             log::info!("Running GAQL query for {customer_id}: {query}");
-            let mut df = googleads::gaql_query(api_context, customer_id, query).await.unwrap();
+            let mut df = googleads::gaql_query(api_context, customer_id, query)
+                .await
+                .unwrap();
             if args.output.is_some() {
                 write_csv(&mut df, args.output.as_ref().unwrap())?;
             } else {
@@ -92,37 +96,42 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         } else {
             // get list of child account customer ids to query
-            let customer_ids: Option<Vec<String>> = 
-                if args.all_current_child_accounts {
-                    // generate new list of child accounts
-                    match googleads::get_child_account_ids(api_context.clone(), config.mcc_customerid)
-                        .await
-                    {
-                        Ok(customer_ids) => Some(customer_ids),
-                        Err(_e) => None,
-                    }
-                } else if config.customerids_filename.is_some() {
-                    // load cild accounts list from file
+            let customer_ids: Option<Vec<String>> = if args.all_current_child_accounts {
+                // generate new list of child accounts
+                match googleads::get_child_account_ids(api_context.clone(), config.mcc_customerid)
+                    .await
+                {
+                    Ok(customer_ids) => Some(customer_ids),
+                    Err(_e) => None,
+                }
+            } else if config.customerids_filename.is_some() {
+                // load cild accounts list from file
 
-                    let customerids_path =
-                        crate::config::config_file_path(&config.customerids_filename.unwrap()).unwrap();
-                    log::debug!("Loading customerids file: {customerids_path:?}");
+                let customerids_path =
+                    crate::config::config_file_path(&config.customerids_filename.unwrap()).unwrap();
+                log::debug!("Loading customerids file: {customerids_path:?}");
 
-                    match util::get_child_account_ids_from_file(customerids_path.as_path()).await {
-                        Ok(customer_ids) => Some(customer_ids),
-                        Err(_e) => None,
-                    }
-                } else {
-                    None
-                };
+                match util::get_child_account_ids_from_file(customerids_path.as_path()).await {
+                    Ok(customer_ids) => Some(customer_ids),
+                    Err(_e) => None,
+                }
+            } else {
+                None
+            };
 
             // apply query to all child account customer_ids
             if let Some(customer_id_vector) = customer_ids {
                 let query: String = args.gaql_query.expect("valid GAQL query");
 
                 // run queries asynchroughly across all customer_ids
-                gaql_query_async(api_context, customer_id_vector, query, args.groupby, args.output).await?;
-
+                gaql_query_async(
+                    api_context,
+                    customer_id_vector,
+                    query,
+                    args.groupby,
+                    args.output,
+                )
+                .await?;
             } else {
                 log::error!("Abort GAQL query. Can't find child accounts to run on.");
             }
@@ -134,9 +143,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn gaql_query_async(mut api_context: GoogleAdsAPIAccess, customer_id_vector: Vec<String>, query: String, groupby: Vec<String>, outfile: Option<String>) -> Result<()>
-{
-
+async fn gaql_query_async(
+    mut api_context: GoogleAdsAPIAccess,
+    customer_id_vector: Vec<String>,
+    query: String,
+    groupby: Vec<String>,
+    outfile: Option<String>,
+) -> Result<()> {
     log::info!(
         "Running GAQL query for {} child accounts: {}",
         &customer_id_vector.len(),
@@ -144,9 +157,7 @@ async fn gaql_query_async(mut api_context: GoogleAdsAPIAccess, customer_id_vecto
     );
 
     let mut google_ads_client: Option<
-        GoogleAdsServiceClient<
-            InterceptedService<Channel, googleads::GoogleAdsAPIAccess>,
-        >,
+        GoogleAdsServiceClient<InterceptedService<Channel, googleads::GoogleAdsAPIAccess>>,
     > = None;
 
     let mut handles: Vec<tokio::task::JoinHandle<_>> = Vec::new();
@@ -197,45 +208,41 @@ async fn gaql_query_async(mut api_context: GoogleAdsAPIAccess, customer_id_vecto
             }
             Err(e) => {
                 log::error!("Error: {e}");
-            }      
+            }
         }
     }
 
-
-
     if dataframe.is_some() {
-
-        if groupby.len() > 0 {
+        if !groupby.is_empty() {
             let df = dataframe.as_mut().unwrap();
 
             // get list of metrics columns for SELECT
-            let metric_cols: Vec<&str> = df.get_column_names().into_iter().filter(|c| c.contains("metrics")).collect();
+            let metric_cols: Vec<&str> = df
+                .get_column_names()
+                .into_iter()
+                .filter(|c| c.contains("metrics"))
+                .collect();
 
-            let df_agg = df.groupby(&groupby)?
-                                    .select(&metric_cols)
-                                    .sum()?
-                                    .sort(&groupby, false)?;
+            let df_agg = df
+                .groupby(&groupby)?
+                .select(&metric_cols)
+                .sum()?
+                .sort(&groupby, false)?;
 
             dataframe = Some(df_agg);
-
         }
 
         if outfile.is_some() {
-            write_csv(&mut dataframe.as_mut().unwrap(), outfile.as_ref().unwrap())?;
+            write_csv(dataframe.as_mut().unwrap(), outfile.as_ref().unwrap())?;
         } else {
             println!("{:?}", dataframe.as_ref().unwrap());
         }
-        
-        
     }
 
-
     Ok(())
-
 }
 
 fn write_csv(df: &mut DataFrame, outfile: &str) -> Result<()> {
-
     let f = File::create(outfile)?;
     CsvWriter::new(f).finish(df)?;
 

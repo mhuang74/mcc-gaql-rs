@@ -1,4 +1,4 @@
-use std::{time::Duration};
+use std::time::Duration;
 
 use anyhow::{bail, Result};
 use polars::prelude::*;
@@ -166,12 +166,11 @@ pub async fn gaql_query_with_client(
     mut client: GoogleAdsServiceClient<InterceptedService<Channel, GoogleAdsAPIAccess>>,
     customer_id: String,
     query: String,
-) -> Result<DataFrame>
-{
+) -> Result<DataFrame> {
     let result: Result<Response<Streaming<SearchGoogleAdsStreamResponse>>, Status> = client
         .search_stream(SearchGoogleAdsStreamRequest {
             customer_id: customer_id.clone(),
-            query: query,
+            query,
             summary_row_setting: 0,
         })
         .await;
@@ -193,22 +192,19 @@ pub async fn gaql_query_with_client(
                         for r in stream_response.results {
                             let row: GoogleAdsRow = r;
 
-                            for i in 0..headers.as_ref().unwrap().len(){
+                            for i in 0..headers.as_ref().unwrap().len() {
                                 let path = &headers.as_ref().unwrap()[i];
                                 let string_val: String = row.get(path);
                                 match columns.get_mut(i) {
                                     Some(v) => {
                                         v.push(string_val);
-
                                     }
-                                    None => { 
-                                        let mut v: Vec<String> = Vec::new();
-                                        v.push(string_val);
+                                    None => {
+                                        let v: Vec<String> = vec![string_val];
                                         columns.insert(i, v);
                                     }
                                 }
                             }
-
                         }
                     }
                     Err(status) => {
@@ -221,31 +217,26 @@ pub async fn gaql_query_with_client(
                 }
             }
 
-
             let mut series_vec: Vec<Series> = Vec::new();
-            
-            if let Some(headers_vec) = headers{
 
+            if let Some(headers_vec) = headers {
                 for (i, header) in headers_vec.iter().enumerate() {
-
                     if header.contains("metrics") {
-                        let v: Vec<u64> = columns.get(i).unwrap().iter().map(|x| x.parse::<u64>().unwrap()).collect();
-                        series_vec.push(
-                            Series::new(header, v)
-                        );
+                        let v: Vec<u64> = columns
+                            .get(i)
+                            .unwrap()
+                            .iter()
+                            .map(|x| x.parse::<u64>().unwrap())
+                            .collect();
+                        series_vec.push(Series::new(header, v));
                     } else {
                         let v: &Vec<String> = columns.get(i).unwrap();
-                        series_vec.push(
-                            Series::new(header, v)
-                        );
+                        series_vec.push(Series::new(header, v));
                     };
-
                 }
-
             }
 
             DataFrame::new(series_vec).unwrap()
-
         }
         Err(status) => {
             bail!(
@@ -260,9 +251,11 @@ pub async fn gaql_query_with_client(
 }
 
 /// Run query via GoogleAdsServiceClient to get performance data
-pub async fn gaql_query(api_context: GoogleAdsAPIAccess, customer_id: String, query: String) ->
-Result<DataFrame>
-{
+pub async fn gaql_query(
+    api_context: GoogleAdsAPIAccess,
+    customer_id: String,
+    query: String,
+) -> Result<DataFrame> {
     let client: GoogleAdsServiceClient<InterceptedService<Channel, GoogleAdsAPIAccess>> =
         GoogleAdsServiceClient::with_interceptor(api_context.channel.clone(), api_context);
 
@@ -271,10 +264,8 @@ Result<DataFrame>
 
 /// Run query via GoogleAdsFieldService to obtain field metadata
 pub async fn fields_query(api_context: GoogleAdsAPIAccess, query: &str) {
-    let mut client = GoogleAdsFieldServiceClient::with_interceptor(
-        api_context.channel.clone(),
-        api_context,
-    );
+    let mut client =
+        GoogleAdsFieldServiceClient::with_interceptor(api_context.channel.clone(), api_context);
 
     let response: SearchGoogleAdsFieldsResponse = client
         .search_google_ads_fields(SearchGoogleAdsFieldsRequest {
