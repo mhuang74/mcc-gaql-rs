@@ -1,4 +1,4 @@
-use std::{process, fs::{metadata, File}};
+use std::{process, fs::{File}};
 
 use anyhow::{Context, Result};
 use googleads::GoogleAdsAPIAccess;
@@ -121,7 +121,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let query: String = args.gaql_query.expect("valid GAQL query");
 
                 // run queries asynchroughly across all customer_ids
-                gaql_query_async(api_context, customer_id_vector, query, args.group_by, args.output).await?;
+                gaql_query_async(api_context, customer_id_vector, query, args.groupby, args.output).await?;
 
             } else {
                 log::error!("Abort GAQL query. Can't find child accounts to run on.");
