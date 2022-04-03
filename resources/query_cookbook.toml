@@ -6,6 +6,19 @@
 #
 ##
 
+# Accessible Trafficking Accounts
+account_accessible = """
+	SELECT 
+	  customer.id, 
+	  metrics.clicks 
+	FROM customer 
+	WHERE 
+	  segments.date during yesterday
+	  and metrics.impresisons > 1
+	ORDER BY
+		customer.id
+"""
+
 # Total Account Traffic Last Week
 account_traffic_yesterday = """
 	SELECT 
@@ -104,7 +117,7 @@ account_local_campaigns_last_week = """
 	WHERE 
 	  segments.date DURING LAST_7_DAYS 
 	  AND campaign.advertising_channel_type IN ('LOCAL') 
-	  AND metrics.clicks > 100
+	  AND metrics.clicks > 500
 	ORDER BY 
 	  metrics.clicks DESC 
 	LIMIT 1
@@ -157,92 +170,110 @@ account_multichannel_campaigns_last_week = """
 
 # Accounts with Asset-based Sitelink Ext
 account_asset_sitelink_last_week = """
-SELECT 
-  customer.id, 
-  customer.descriptive_name, 
-  campaign.id, 
-  campaign.advertising_channel_type, 
-  campaign.name, 
-  asset_field_type_view.field_type, 
-  metrics.impressions, 
-  metrics.clicks, 
-  metrics.cost_micros,
-	customer.currency_code  
-FROM asset_field_type_view 
-WHERE 
-  segments.date DURING LAST_7_DAYS 
-  AND asset_field_type_view.field_type IN ('SITELINK') 
-  AND metrics.clicks > 20000
-ORDER BY 
-  metrics.impressions DESC 
-LIMIT 1
+	SELECT 
+	  customer.id, 
+	  customer.descriptive_name, 
+	  campaign.id, 
+	  campaign.advertising_channel_type, 
+	  campaign.name, 
+	  asset_field_type_view.field_type, 
+	  metrics.impressions, 
+	  metrics.clicks, 
+	  metrics.cost_micros,
+		customer.currency_code  
+	FROM asset_field_type_view 
+	WHERE 
+	  segments.date DURING LAST_7_DAYS 
+	  AND asset_field_type_view.field_type IN ('SITELINK') 
+	  AND metrics.clicks > 20000
+	ORDER BY 
+	  metrics.impressions DESC 
+	LIMIT 1
 """
 
 # Accounts with Asset-based Call Ext
 account_asset_call_last_week = """
-SELECT 
-  customer.id, 
-  customer.descriptive_name, 
-  campaign.id, 
-  campaign.advertising_channel_type, 
-  campaign.name, 
-  asset_field_type_view.field_type, 
-  metrics.impressions, 
-  metrics.clicks, 
-  metrics.cost_micros,
-	customer.currency_code  
-FROM asset_field_type_view 
-WHERE 
-  segments.date DURING LAST_7_DAYS 
-  AND asset_field_type_view.field_type IN ('CALL') 
-  AND metrics.impressions > 100
-ORDER BY 
-  metrics.impressions DESC 
-LIMIT 1
+	SELECT 
+	  customer.id, 
+	  customer.descriptive_name, 
+	  campaign.id, 
+	  campaign.advertising_channel_type, 
+	  campaign.name, 
+	  asset_field_type_view.field_type, 
+	  metrics.impressions, 
+	  metrics.clicks, 
+	  metrics.cost_micros,
+		customer.currency_code  
+	FROM asset_field_type_view 
+	WHERE 
+	  segments.date DURING LAST_7_DAYS 
+	  AND asset_field_type_view.field_type IN ('CALL') 
+	  AND metrics.impressions > 100
+	ORDER BY 
+	  metrics.impressions DESC 
+	LIMIT 1
 """
 
 # Accounts with Asset-based Callout Ext
 account_asset_callout_last_week = """
-SELECT 
-  customer.id, 
-  customer.descriptive_name, 
-  campaign.id, 
-  campaign.advertising_channel_type, 
-  campaign.name, 
-  asset_field_type_view.field_type, 
-  metrics.impressions, 
-  metrics.clicks, 
-  metrics.cost_micros,
-  customer.currency_code  
-FROM asset_field_type_view 
-WHERE 
-  segments.date DURING LAST_7_DAYS 
-  AND asset_field_type_view.field_type IN ('CALLOUT') 
-  AND metrics.clicks > 30000
-ORDER BY 
-  metrics.impressions DESC 
-LIMIT 1
+	SELECT 
+	  customer.id, 
+	  customer.descriptive_name, 
+	  campaign.id, 
+	  campaign.advertising_channel_type, 
+	  campaign.name, 
+	  asset_field_type_view.field_type, 
+	  metrics.impressions, 
+	  metrics.clicks, 
+	  metrics.cost_micros,
+	  customer.currency_code  
+	FROM asset_field_type_view 
+	WHERE 
+	  segments.date DURING LAST_7_DAYS 
+	  AND asset_field_type_view.field_type IN ('CALLOUT') 
+	  AND metrics.clicks > 30000
+	ORDER BY 
+	  metrics.impressions DESC 
+	LIMIT 1
 """
 
 # Accounts with Asset-based App Ext
 account_asset_app_last_week = """
-SELECT 
-  customer.id, 
-  customer.descriptive_name, 
-  campaign.id, 
-  campaign.advertising_channel_type, 
-  campaign.name, 
-  asset_field_type_view.field_type, 
-  metrics.impressions, 
-  metrics.clicks, 
-  metrics.cost_micros,
-	customer.currency_code  
-FROM asset_field_type_view 
-WHERE 
-  segments.date DURING LAST_7_DAYS 
-  AND asset_field_type_view.field_type IN ('MOBILE_APP') 
-  AND metrics.impressions > 1
-ORDER BY 
-  metrics.impressions DESC 
-LIMIT 1
+	SELECT 
+	  customer.id, 
+	  customer.descriptive_name, 
+	  campaign.id, 
+	  campaign.advertising_channel_type, 
+	  campaign.name, 
+	  asset_field_type_view.field_type, 
+	  metrics.impressions, 
+	  metrics.clicks, 
+	  metrics.cost_micros,
+		customer.currency_code  
+	FROM asset_field_type_view 
+	WHERE 
+	  segments.date DURING LAST_7_DAYS 
+	  AND asset_field_type_view.field_type IN ('MOBILE_APP') 
+	  AND metrics.impressions > 1
+	ORDER BY 
+	  metrics.impressions DESC 
+	LIMIT 1
+"""
+
+# Last 30-day Traffic from Performance Max Campaigns
+campaign_perf_max_campaigns_30_days = """
+	SELECT 
+	  campaign.id, 
+	  segments.date,
+	  metrics.impressions, 
+	  metrics.clicks, 
+	  metrics.cost_micros,
+	  customer.currency_code 
+	FROM campaign 
+	WHERE 
+	  segments.date DURING LAST_30_DAYS 
+	  AND campaign.advertising_channel_type IN ('PERFORMANCE_MAX')
+	  AND metrics.impressions > 1 
+	ORDER BY 
+	  segments.date, campaign.id
 """

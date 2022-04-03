@@ -16,7 +16,7 @@ pub struct Cli {
     pub customer_id: Option<String>,
 
     /// Load named query from file
-    #[clap(short='q', long)]
+    #[clap(short = 'q', long)]
     pub stored_query: Option<String>,
 
     /// Google Ads GAQL query to run
@@ -37,6 +37,14 @@ pub struct Cli {
     /// Keep going on errors
     #[clap(long)]
     pub keep_going: bool,
+
+    /// Group by columns
+    #[clap(long, multiple_occurrences(true))]
+    pub groupby: Vec<String>,
+
+    /// GAQL output filename
+    #[clap(short, long)]
+    pub output: Option<String>,
 }
 
 pub fn parse() -> Cli {

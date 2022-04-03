@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use anyhow::{bail, Result};
+use polars::prelude::*;
 use tokio_stream::StreamExt;
 use tonic::{
     codegen::InterceptedService,
@@ -165,42 +166,49 @@ pub async fn gaql_query_with_client(
     mut client: GoogleAdsServiceClient<InterceptedService<Channel, GoogleAdsAPIAccess>>,
     customer_id: String,
     query: String,
-) {
+) -> Result<DataFrame> {
     let result: Result<Response<Streaming<SearchGoogleAdsStreamResponse>>, Status> = client
         .search_stream(SearchGoogleAdsStreamRequest {
             customer_id: customer_id.clone(),
-            query: query.clone(),
+            query,
             summary_row_setting: 0,
         })
         .await;
 
-    match result {
+    let df = match result {
         Ok(response) => {
             let mut stream = response.into_inner();
-            let mut stdout = async_std::io::stdout();
+
+            let mut columns: Vec<Vec<String>> = Vec::new();
+            let mut headers: Option<Vec<String>> = None;
+
             while let Some(item) = stream.next().await {
                 match item {
                     Ok(stream_response) => {
                         let field_mask = stream_response.field_mask.unwrap();
+                        if headers.is_none() {
+                            headers = Some(field_mask.paths.clone());
+                        }
                         for r in stream_response.results {
                             let row: GoogleAdsRow = r;
-                            let mut buffer: Vec<u8> = Vec::with_capacity(1024);
-                            let mut paths_iter = field_mask.paths.iter().peekable();
-                            while let Some(path) = &paths_iter.next() {
+
+                            for i in 0..headers.as_ref().unwrap().len() {
+                                let path = &headers.as_ref().unwrap()[i];
                                 let string_val: String = row.get(path);
-                                for byte_val in string_val.bytes() {
-                                    buffer.push(byte_val);
-                                }
-                                if paths_iter.peek().is_some() {
-                                    buffer.push(b'\t');
+                                match columns.get_mut(i) {
+                                    Some(v) => {
+                                        v.push(string_val);
+                                    }
+                                    None => {
+                                        let v: Vec<String> = vec![string_val];
+                                        columns.insert(i, v);
+                                    }
                                 }
                             }
-                            buffer.push(b'\n');
-                            stdout.write_all(&buffer).await.unwrap();
                         }
                     }
                     Err(status) => {
-                        log::error!(
+                        bail!(
                             "GoogleAdsClient streaming error. Account: {customer_id}, Message: {}, Details: {}",
                             status.message(),
                             String::from_utf8_lossy(status.details()).to_owned()
@@ -208,19 +216,46 @@ pub async fn gaql_query_with_client(
                     }
                 }
             }
+
+            let mut series_vec: Vec<Series> = Vec::new();
+
+            if let Some(headers_vec) = headers {
+                for (i, header) in headers_vec.iter().enumerate() {
+                    if header.contains("metrics") {
+                        let v: Vec<u64> = columns
+                            .get(i)
+                            .unwrap()
+                            .iter()
+                            .map(|x| x.parse::<u64>().unwrap())
+                            .collect();
+                        series_vec.push(Series::new(header, v));
+                    } else {
+                        let v: &Vec<String> = columns.get(i).unwrap();
+                        series_vec.push(Series::new(header, v));
+                    };
+                }
+            }
+
+            DataFrame::new(series_vec).unwrap()
         }
         Err(status) => {
-            log::error!(
+            bail!(
                 "GoogleAdsClient request error. Account: {customer_id}, Message: {}, Details: {}",
                 status.message(),
                 String::from_utf8_lossy(status.details()).to_owned()
             );
         }
-    }
+    };
+
+    Ok(df)
 }
 
 /// Run query via GoogleAdsServiceClient to get performance data
-pub async fn gaql_query(api_context: GoogleAdsAPIAccess, customer_id: String, query: String) {
+pub async fn gaql_query(
+    api_context: GoogleAdsAPIAccess,
+    customer_id: String,
+    query: String,
+) -> Result<DataFrame> {
     let client: GoogleAdsServiceClient<InterceptedService<Channel, GoogleAdsAPIAccess>> =
         GoogleAdsServiceClient::with_interceptor(api_context.channel.clone(), api_context);
 
@@ -229,17 +264,8 @@ pub async fn gaql_query(api_context: GoogleAdsAPIAccess, customer_id: String, qu
 
 /// Run query via GoogleAdsFieldService to obtain field metadata
 pub async fn fields_query(api_context: GoogleAdsAPIAccess, query: &str) {
-    let mut client = GoogleAdsFieldServiceClient::with_interceptor(
-        api_context.channel.clone(),
-        GoogleAdsAPIAccess {
-            auth_token: api_context.auth_token.clone(),
-            dev_token: api_context.dev_token.clone(),
-            login_customer: api_context.login_customer.clone(),
-            channel: api_context.channel.clone(),
-            token: api_context.token.clone(),
-            authenticator: api_context.authenticator.clone(),
-        },
-    );
+    let mut client =
+        GoogleAdsFieldServiceClient::with_interceptor(api_context.channel.clone(), api_context);
 
     let response: SearchGoogleAdsFieldsResponse = client
         .search_google_ads_fields(SearchGoogleAdsFieldsRequest {

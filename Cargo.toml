@@ -20,6 +20,7 @@ futures = { version = "0.3", default-features = false, features = ["alloc"] }
 googleads-rs = { path = "../googleads-rs" }
 itertools = "0.10"
 log = "0.4"
+polars = "0.20.0"
 serde = { version = "1.0.136", features = ["derive"] }
 tokio = { version = "1.0", features = [ "rt-multi-thread", "time", "fs", "macros", "net",] }
 tokio-stream = { version = "0.1", features = ["net"] }
