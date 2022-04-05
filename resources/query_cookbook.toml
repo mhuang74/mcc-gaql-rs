@@ -277,3 +277,22 @@ campaign_perf_max_campaigns_30_days = """
 	ORDER BY 
 	  segments.date, campaign.id
 """
+
+# Last 30-day Traffic from Asset-based Ad Extensions
+campaign_asset_ad_extensions_30_days = """
+	SELECT 
+	  campaign.id,
+	  segments.date,
+	  asset_field_type_view.field_type, 
+	  metrics.impressions, 
+	  metrics.clicks, 
+	  metrics.cost_micros,
+	  customer.currency_code  
+	FROM asset_field_type_view 
+	WHERE 
+	  segments.date DURING LAST_30_DAYS 
+	  AND asset_field_type_view.field_type IN ('SITELINK', 'CALL', 'CALLOUT', 'MOBILE_APP') 
+	  AND metrics.impressions > 1
+	ORDER BY 
+	  segments.date, campaign.id
+"""

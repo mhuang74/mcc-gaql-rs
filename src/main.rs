@@ -86,14 +86,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let query = args.gaql_query.expect("Valid GAQL query required.");
             let customer_id = args.customer_id.expect("Valid customer_id required.");
             log::info!("Running GAQL query for {customer_id}: {query}");
-            let mut df = googleads::gaql_query(api_context, customer_id, query)
-                .await
-                .unwrap();
-            if args.output.is_some() {
-                write_csv(&mut df, args.output.as_ref().unwrap())?;
-            } else {
-                println!("{:?}", &df);
+            
+            let dataframe: Option<DataFrame> = match googleads::gaql_query(api_context, customer_id, query).await {
+                Ok(df) => {
+                    if !args.groupby.is_empty() {
+                        let agg_df = apply_groupby(&df, args.groupby)?;
+                        Some(agg_df)
+                    } else {
+                        Some(df)
+                    }
+                }
+                Err(e) => {
+                    let msg = format!("Error: {e}");
+                    println!("{msg}");
+                    None
+                }
+            };
+
+            if dataframe.is_some() {
+                if args.output.is_some() {
+                    write_csv(&mut dataframe.unwrap(), args.output.as_ref().unwrap())?;
+                } else {
+                    println!("{:?}", &dataframe);
+                }
             }
+
         } else {
             // get list of child account customer ids to query
             let customer_ids: Option<Vec<String>> = if args.all_current_child_accounts {
@@ -202,8 +219,11 @@ async fn gaql_query_async(
                     if dataframe.as_ref().is_none() {
                         dataframe = Some(df);
                     } else {
+                        log::debug!("A future returned non-empty query results");
                         dataframe.as_mut().unwrap().extend(&df)?;
                     }
+                } else {
+                    log::debug!("A future returned empty query results");
                 }
             }
             Err(e) => {
@@ -214,22 +234,9 @@ async fn gaql_query_async(
 
     if dataframe.is_some() {
         if !groupby.is_empty() {
-            let df = dataframe.as_mut().unwrap();
+            let agg_df = apply_groupby(dataframe.as_ref().unwrap(), groupby)?;
+            dataframe = Some(agg_df);
 
-            // get list of metrics columns for SELECT
-            let metric_cols: Vec<&str> = df
-                .get_column_names()
-                .into_iter()
-                .filter(|c| c.contains("metrics"))
-                .collect();
-
-            let df_agg = df
-                .groupby(&groupby)?
-                .select(&metric_cols)
-                .sum()?
-                .sort(&groupby, false)?;
-
-            dataframe = Some(df_agg);
         }
 
         if outfile.is_some() {
@@ -240,6 +247,27 @@ async fn gaql_query_async(
     }
 
     Ok(())
+}
+
+fn apply_groupby(df: &DataFrame, groupby: Vec<String>) -> Result<DataFrame>
+{
+    // get list of metrics columns for SELECT
+    let metric_cols: Vec<&str> = df
+        .get_column_names()
+        .into_iter()
+        .filter(|c| c.contains("metrics"))
+        .collect();
+
+    log::debug!("applying group by columns: {:?}", &groupby);
+    log::debug!("summing selected metric columns: {:?}", &metric_cols);
+
+    let df_agg = df
+        .groupby(&groupby)?
+        .select(&metric_cols)
+        .sum()?
+        .sort(&groupby, false)?;
+
+    Ok(df_agg)
 }
 
 fn write_csv(df: &mut DataFrame, outfile: &str) -> Result<()> {
