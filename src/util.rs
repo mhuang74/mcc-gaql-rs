@@ -86,7 +86,7 @@ pub async fn get_child_account_ids_from_file<P>(filename: P) -> Result<Vec<Strin
 where
     P: AsRef<Path>,
 {
-    match File::open(filename) {
+    match File::open(&filename) {
         Ok(file) => {
             let mut customer_ids: Vec<String> = Vec::with_capacity(2048);
 
@@ -97,9 +97,9 @@ where
             }
 
             log::debug!(
-                "Loaded {} customer_ids from file {:?}",
+                "Loaded {} customer_ids from file {}",
                 customer_ids.len(),
-                &file
+                filename.as_ref().display()
             );
 
             Ok(customer_ids)
@@ -118,7 +118,7 @@ pub async fn get_query_from_file<P>(filename: P, query_name: &str) -> Result<Str
 where
     P: AsRef<Path>,
 {
-    match File::open(filename) {
+    match File::open(&filename) {
         Ok(file) => {
             let mut buffer = String::new();
 
@@ -148,9 +148,9 @@ where
             };
 
             log::debug!(
-                "Query '{}' loaded from file {:?}. Query: {}",
+                "Query '{}' loaded from file {}. Query: {}",
                 query_name,
-                &file,
+                filename.as_ref().display(),
                 query
             );
 

@@ -1,6 +1,7 @@
-use std::{fs::File, process};
+use std::{fs::File, process, time::Instant};
 
 use anyhow::{Context, Result};
+use futures::{stream::FuturesUnordered, StreamExt};
 use googleads::GoogleAdsAPIAccess;
 use googleads_rs::google::ads::googleads::v10::services::google_ads_service_client::GoogleAdsServiceClient;
 use polars::prelude::*;
@@ -27,7 +28,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(query_name) = args.stored_query {
         if let Some(query_filename) = config.queries_filename {
             let queries_path = crate::config::config_file_path(&query_filename).unwrap();
-            log::debug!("Loading queries file: {queries_path:?}");
 
             args.gaql_query = match util::get_query_from_file(queries_path, &query_name).await {
                 Ok(s) => Some(s),
@@ -86,22 +86,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let query = args.gaql_query.expect("Valid GAQL query required.");
             let customer_id = args.customer_id.expect("Valid customer_id required.");
             log::info!("Running GAQL query for {customer_id}: {query}");
-            
-            let dataframe: Option<DataFrame> = match googleads::gaql_query(api_context, customer_id, query).await {
-                Ok(df) => {
-                    if !args.groupby.is_empty() {
-                        let agg_df = apply_groupby(&df, args.groupby)?;
-                        Some(agg_df)
-                    } else {
-                        Some(df)
+
+            let dataframe: Option<DataFrame> =
+                match googleads::gaql_query(api_context, customer_id, query).await {
+                    Ok(df) => {
+                        if !args.groupby.is_empty() {
+                            let agg_df = apply_groupby(df, args.groupby)?;
+                            Some(agg_df)
+                        } else {
+                            Some(df)
+                        }
                     }
-                }
-                Err(e) => {
-                    let msg = format!("Error: {e}");
-                    println!("{msg}");
-                    None
-                }
-            };
+                    Err(e) => {
+                        let msg = format!("Error: {e}");
+                        println!("{msg}");
+                        None
+                    }
+                };
 
             if dataframe.is_some() {
                 if args.output.is_some() {
@@ -110,7 +111,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("{:?}", &dataframe);
                 }
             }
-
         } else {
             // get list of child account customer ids to query
             let customer_ids: Option<Vec<String>> = if args.all_current_child_accounts {
@@ -126,7 +126,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 let customerids_path =
                     crate::config::config_file_path(&config.customerids_filename.unwrap()).unwrap();
-                log::debug!("Loading customerids file: {customerids_path:?}");
 
                 match util::get_child_account_ids_from_file(customerids_path.as_path()).await {
                     Ok(customer_ids) => Some(customer_ids),
@@ -161,7 +160,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn gaql_query_async(
-    mut api_context: GoogleAdsAPIAccess,
+    api_context: GoogleAdsAPIAccess,
     customer_id_vector: Vec<String>,
     query: String,
     groupby: Vec<String>,
@@ -173,33 +172,16 @@ async fn gaql_query_async(
         &query
     );
 
-    let mut google_ads_client: Option<
-        GoogleAdsServiceClient<InterceptedService<Channel, googleads::GoogleAdsAPIAccess>>,
-    > = None;
+    let google_ads_client: GoogleAdsServiceClient<InterceptedService<Channel, GoogleAdsAPIAccess>> =
+        GoogleAdsServiceClient::with_interceptor(api_context.channel.clone(), api_context);
 
-    let mut handles: Vec<tokio::task::JoinHandle<_>> = Vec::new();
+    let mut handles = FuturesUnordered::new();
 
     for customer_id in customer_id_vector.iter() {
-        // keep reusing same GoogleAdsServiceClient unless token is expired
-        if google_ads_client.is_none() || api_context.renew_token().await? {
-            log::debug!("Constructing new GoogleAdsServiceClient with new token.");
-            google_ads_client = Some(GoogleAdsServiceClient::with_interceptor(
-                api_context.channel.clone(),
-                googleads::GoogleAdsAPIAccess {
-                    auth_token: api_context.auth_token.clone(),
-                    dev_token: api_context.dev_token.clone(),
-                    login_customer: api_context.login_customer.clone(),
-                    channel: api_context.channel.clone(),
-                    token: api_context.token.clone(),
-                    authenticator: api_context.authenticator.clone(),
-                },
-            ));
-        }
-
         // log::debug!("Querying {customer_id}");
 
         let gaql_future = googleads::gaql_query_with_client(
-            google_ads_client.as_ref().unwrap().clone(),
+            google_ads_client.clone(),
             customer_id.clone(),
             query.clone(),
         );
@@ -208,49 +190,77 @@ async fn gaql_query_async(
         handles.push(tokio::spawn(gaql_future));
     }
 
-    let mut dataframe: Option<DataFrame> = None;
+    let mut dataframes: Vec<DataFrame> = Vec::new();
+
+    let start = Instant::now();
 
     // KB: cannot exit FOR loop until all spawned futures are finished, otherwise Connection may get dropped prematurely
     // KB: all GoogleAdsServiceClients seem to share single Hyper Connection
-    for handle in handles {
-        match handle.await? {
-            Ok(df) => {
-                if !df.is_empty() {
-                    if dataframe.as_ref().is_none() {
-                        dataframe = Some(df);
-                    } else {
-                        log::debug!("A future returned non-empty query results");
-                        dataframe.as_mut().unwrap().extend(&df)?;
+    while let Some(result) = handles.next().await {
+        match result {
+            Ok(result) => {
+                match result {
+                    Ok(df) => {
+                        if !df.is_empty() {
+                            // log::debug!("A future returned non-empty query results");
+                            dataframes.push(df);
+                        } else {
+                            // log::debug!("A future returned empty query results");
+                        }
                     }
-                } else {
-                    log::debug!("A future returned empty query results");
+                    Err(e) => {
+                        log::error!("Error: {e}");
+                    }
                 }
             }
             Err(e) => {
-                log::error!("Error: {e}");
+                log::error!("Thread JOIN Error: {e}");
             }
         }
     }
 
-    if dataframe.is_some() {
-        if !groupby.is_empty() {
-            let agg_df = apply_groupby(dataframe.as_ref().unwrap(), groupby)?;
-            dataframe = Some(agg_df);
+    let duration = start.elapsed();
+    log::debug!("All queries returned in {} msec", duration.as_millis());
 
+    if !dataframes.is_empty() {
+        let start = Instant::now();
+        let len = &dataframes.len();
+
+        // merge dataframes
+        let mut df_iter = dataframes.into_iter();
+        let mut dataframe: DataFrame = df_iter.next().unwrap();
+        for df in df_iter.by_ref() {
+            dataframe = dataframe.vstack(&df)?;
+        }
+
+        let duration = start.elapsed();
+        log::debug!("merged {} dataframes in {} msec", len, duration.as_millis());
+
+        if !groupby.is_empty() {
+            let start = Instant::now();
+
+            dataframe = apply_groupby(dataframe, groupby)?;
+
+            let duration = start.elapsed();
+            log::debug!("applied groupby in {} msec", duration.as_millis());
         }
 
         if outfile.is_some() {
-            write_csv(dataframe.as_mut().unwrap(), outfile.as_ref().unwrap())?;
+            let start = Instant::now();
+
+            write_csv(&mut dataframe, &outfile.unwrap())?;
+
+            let duration = start.elapsed();
+            log::debug!("csv written in {} msec", duration.as_millis());
         } else {
-            println!("{:?}", dataframe.as_ref().unwrap());
+            println!("{:?}", dataframe);
         }
     }
 
     Ok(())
 }
 
-fn apply_groupby(df: &DataFrame, groupby: Vec<String>) -> Result<DataFrame>
-{
+fn apply_groupby(df: DataFrame, groupby: Vec<String>) -> Result<DataFrame> {
     // get list of metrics columns for SELECT
     let metric_cols: Vec<&str> = df
         .get_column_names()
