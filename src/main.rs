@@ -2,6 +2,7 @@ use std::{fs::File, process, time::Instant};
 
 use anyhow::{Context, Result};
 use futures::{stream::FuturesUnordered, StreamExt};
+
 use googleads::GoogleAdsAPIAccess;
 use googleads_rs::google::ads::googleads::v10::services::google_ads_service_client::GoogleAdsServiceClient;
 use polars::prelude::*;
@@ -91,7 +92,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 match googleads::gaql_query(api_context, customer_id, query).await {
                     Ok(df) => {
                         if !args.groupby.is_empty() {
-                            let agg_df = apply_groupby(df, args.groupby)?;
+                            let agg_df = apply_groupby(df, args.groupby).await?;
                             Some(agg_df)
                         } else {
                             Some(df)
@@ -175,7 +176,7 @@ async fn gaql_query_async(
     let google_ads_client: GoogleAdsServiceClient<InterceptedService<Channel, GoogleAdsAPIAccess>> =
         GoogleAdsServiceClient::with_interceptor(api_context.channel.clone(), api_context);
 
-    let mut handles = FuturesUnordered::new();
+    let mut gaql_handles = FuturesUnordered::new();
 
     for customer_id in customer_id_vector.iter() {
         // log::debug!("Querying {customer_id}");
@@ -187,29 +188,37 @@ async fn gaql_query_async(
         );
 
         // execute gaql query in background thread
-        handles.push(tokio::spawn(gaql_future));
+        gaql_handles.push(tokio::spawn(gaql_future));
     }
 
     let mut dataframes: Vec<DataFrame> = Vec::new();
+    let mut groupby_handles = FuturesUnordered::new();
 
     let start = Instant::now();
 
-    // KB: cannot exit FOR loop until all spawned futures are finished, otherwise Connection may get dropped prematurely
-    // KB: all GoogleAdsServiceClients seem to share single Hyper Connection
-    while let Some(result) = handles.next().await {
+    // collect asynchronous query results
+    while let Some(result) = gaql_handles.next().await {
         match result {
             Ok(result) => {
                 match result {
                     Ok(df) => {
                         if !df.is_empty() {
-                            // log::debug!("A future returned non-empty query results");
-                            dataframes.push(df);
+                            // log::debug!("Future returned non-empty GAQL results");
+                            if !&groupby.is_empty() {
+                                let my_groupby = groupby.clone();
+                                // execute groupby in dedicated non-yielding thread
+                                groupby_handles.push(tokio::task::spawn_blocking(|| {
+                                    apply_groupby(df, my_groupby)
+                                }));
+                            } else {
+                                dataframes.push(df);
+                            }
                         } else {
                             // log::debug!("A future returned empty query results");
                         }
                     }
                     Err(e) => {
-                        log::error!("Error: {e}");
+                        log::error!("GAQL Error: {e}");
                     }
                 }
             }
@@ -222,6 +231,34 @@ async fn gaql_query_async(
     let duration = start.elapsed();
     log::debug!("All queries returned in {} msec", duration.as_millis());
 
+    // collect 1st pass groupby results
+    let groupby_start = Instant::now();
+    while let Some(result) = groupby_handles.next().await {
+        match result {
+            Ok(future) => {
+                match future.await {
+                    Ok(df) => {
+                        if !df.is_empty() {
+                            // log::debug!("Future returned GROUPBY results");
+                            dataframes.push(df);
+                        }
+                    }
+                    Err(e) => {
+                        log::error!("GROUPBY Error: {e}");
+                    }
+                }
+            }
+            Err(e) => {
+                log::error!("Thread JOIN Error: {e}");
+            }
+        }
+    }
+    let groupby_duration = groupby_start.elapsed();
+    log::debug!(
+        "1st pass groupby used additional foreground time of {} msec",
+        groupby_duration.as_millis()
+    );
+
     if !dataframes.is_empty() {
         let start = Instant::now();
         let len = &dataframes.len();
@@ -229,21 +266,26 @@ async fn gaql_query_async(
         // merge dataframes
         let mut df_iter = dataframes.into_iter();
         let mut dataframe: DataFrame = df_iter.next().unwrap();
-        for df in df_iter.by_ref() {
+
+        #[allow(clippy::while_let_on_iterator)]
+        while let Some(df) = df_iter.next() {
             dataframe = dataframe.vstack(&df)?;
         }
 
         let duration = start.elapsed();
         log::debug!("merged {} dataframes in {} msec", len, duration.as_millis());
 
+        // apply 2nd pass gropuby
         if !groupby.is_empty() {
             let start = Instant::now();
 
-            dataframe = apply_groupby(dataframe, groupby)?;
+            dataframe = apply_groupby(dataframe, groupby).await?;
 
             let duration = start.elapsed();
-            log::debug!("applied groupby in {} msec", duration.as_millis());
+            log::debug!("applied 2nd pass groupby in {} msec", duration.as_millis());
         }
+
+        log::debug!("final dataframe shape: {:?}", dataframe.shape());
 
         if outfile.is_some() {
             let start = Instant::now();
@@ -260,7 +302,7 @@ async fn gaql_query_async(
     Ok(())
 }
 
-fn apply_groupby(df: DataFrame, groupby: Vec<String>) -> Result<DataFrame> {
+async fn apply_groupby(df: DataFrame, groupby: Vec<String>) -> Result<DataFrame> {
     // get list of metrics columns for SELECT
     let metric_cols: Vec<&str> = df
         .get_column_names()
@@ -268,8 +310,7 @@ fn apply_groupby(df: DataFrame, groupby: Vec<String>) -> Result<DataFrame> {
         .filter(|c| c.contains("metrics"))
         .collect();
 
-    log::debug!("applying group by columns: {:?}", &groupby);
-    log::debug!("summing selected metric columns: {:?}", &metric_cols);
+    // log::debug!("summing selected metric columns: {:?}", &metric_cols);
 
     let df_agg = df
         .groupby(&groupby)?
