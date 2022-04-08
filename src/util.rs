@@ -148,10 +148,9 @@ where
             };
 
             log::debug!(
-                "Query '{}' loaded from file {}. Query: {}",
+                "Query '{}' loaded from file {}.",
                 query_name,
-                filename.as_ref().display(),
-                query
+                filename.as_ref().display()
             );
 
             Ok(query)
