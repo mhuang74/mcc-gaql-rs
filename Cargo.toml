@@ -22,6 +22,7 @@ itertools = "0.10"
 log = "0.4"
 polars = "0.20.0"
 serde = { version = "1.0.136", features = ["derive"] }
+thousands = "0.2.0"
 tokio = { version = "1.0", features = [ "rt-multi-thread", "time", "fs", "macros", "net",] }
 tokio-stream = { version = "0.1", features = ["net"] }
 toml = "0.5.8"

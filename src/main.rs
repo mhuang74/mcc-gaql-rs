@@ -1,4 +1,8 @@
-use std::{fs::File, process, time::Instant};
+use std::{
+    fs::{self, File},
+    process,
+    time::Instant,
+};
 
 use anyhow::{Context, Result};
 use futures::{stream::FuturesUnordered, StreamExt};
@@ -6,6 +10,7 @@ use futures::{stream::FuturesUnordered, StreamExt};
 use googleads::GoogleAdsAPIAccess;
 use googleads_rs::google::ads::googleads::v10::services::google_ads_service_client::GoogleAdsServiceClient;
 use polars::prelude::*;
+use thousands::Separable;
 use tonic::{codegen::InterceptedService, transport::Channel};
 
 mod args;
@@ -43,9 +48,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let api_context =
-        googleads::get_api_access(&config.mcc_customerid, &config.token_cache_filename)
-            .await
-            .expect("Failed to access Google Ads API.");
+        match googleads::get_api_access(&config.mcc_customerid, &config.token_cache_filename).await
+        {
+            Ok(a) => a,
+            Err(_e) => {
+                log::info!(
+                    "Refresh token became invalid. Clearing token cache and forcing re-auth"
+                );
+                // remove cached token to force re-auth and try again
+                let token_cache_path =
+                    crate::config::config_file_path(&config.token_cache_filename)
+                        .expect("token cache path");
+                fs::remove_file(token_cache_path)
+                    .expect("Failed to remove token cache file to force re-auth");
+                googleads::get_api_access(&config.mcc_customerid, &config.token_cache_filename)
+                    .await
+                    .expect("Refresh token expired and failed to kick off re-auth.")
+            }
+        };
 
     if args.list_child_accounts {
         // run Account listing query
@@ -196,6 +216,8 @@ async fn gaql_query_async(
 
     let start = Instant::now();
 
+    let mut total_rows: usize = 0;
+
     // collect asynchronous query results
     while let Some(result) = gaql_handles.next().await {
         match result {
@@ -203,6 +225,8 @@ async fn gaql_query_async(
                 match result {
                     Ok(df) => {
                         if !df.is_empty() {
+                            total_rows += df.height();
+
                             // log::debug!("Future returned non-empty GAQL results");
                             if !&groupby.is_empty() {
                                 let my_groupby = groupby.clone();
@@ -229,7 +253,11 @@ async fn gaql_query_async(
     }
 
     let duration = start.elapsed();
-    log::debug!("All queries returned in {} msec", duration.as_millis());
+    log::debug!(
+        "All queries returned {} rows in {} msec",
+        total_rows.separate_with_commas(),
+        duration.as_millis().separate_with_commas()
+    );
 
     // collect 1st pass groupby results
     let groupby_start = Instant::now();
@@ -256,7 +284,7 @@ async fn gaql_query_async(
     let groupby_duration = groupby_start.elapsed();
     log::debug!(
         "1st pass groupby used additional foreground time of {} msec",
-        groupby_duration.as_millis()
+        groupby_duration.as_millis().separate_with_commas()
     );
 
     if !dataframes.is_empty() {
@@ -273,7 +301,11 @@ async fn gaql_query_async(
         }
 
         let duration = start.elapsed();
-        log::debug!("merged {} dataframes in {} msec", len, duration.as_millis());
+        log::debug!(
+            "merged {:#} dataframes in {} msec",
+            len,
+            duration.as_millis().separate_with_commas()
+        );
 
         // apply 2nd pass gropuby
         if !groupby.is_empty() {
@@ -282,7 +314,10 @@ async fn gaql_query_async(
             dataframe = apply_groupby(dataframe, groupby).await?;
 
             let duration = start.elapsed();
-            log::debug!("applied 2nd pass groupby in {} msec", duration.as_millis());
+            log::debug!(
+                "applied 2nd pass groupby in {} msec",
+                duration.as_millis().separate_with_commas()
+            );
         }
 
         log::debug!("final dataframe shape: {:?}", dataframe.shape());
@@ -293,7 +328,10 @@ async fn gaql_query_async(
             write_csv(&mut dataframe, &outfile.unwrap())?;
 
             let duration = start.elapsed();
-            log::debug!("csv written in {} msec", duration.as_millis());
+            log::debug!(
+                "csv written in {} msec",
+                duration.as_millis().separate_with_commas()
+            );
         } else {
             println!("{:?}", dataframe);
         }

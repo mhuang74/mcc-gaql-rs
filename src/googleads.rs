@@ -77,7 +77,11 @@ impl GoogleAdsAPIAccess {
     pub async fn renew_token(&mut self) -> Result<bool> {
         let mut renewed: bool = false;
         if self.token.is_none() || self.token.as_ref().unwrap().is_expired() {
-            self.token = match self.authenticator.token(&[GOOGLE_ADS_API_SCOPE]).await {
+            self.token = match self
+                .authenticator
+                .force_refreshed_token(&[GOOGLE_ADS_API_SCOPE])
+                .await
+            {
                 Err(e) => {
                     bail!("failed to get access token: {:?}", e);
                 }
@@ -153,10 +157,7 @@ pub async fn get_api_access(
         authenticator: auth,
     };
 
-    access
-        .renew_token()
-        .await
-        .expect("Failed to refresh access token");
+    access.renew_token().await?;
 
     Ok(access)
 }
