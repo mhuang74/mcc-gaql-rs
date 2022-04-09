@@ -278,8 +278,8 @@ campaign_perf_max_campaigns_30_days = """
 	  segments.date, campaign.id
 """
 
-# Last 30-day Traffic from Asset-based Ad Extensions
-campaign_asset_ad_extensions_30_days = """
+# YTD Traffic from Asset-based Ad Extensions
+campaign_asset_ad_extensions_ytd = """
 	SELECT 
 	  campaign.id,
 	  segments.date,
@@ -290,7 +290,7 @@ campaign_asset_ad_extensions_30_days = """
 	  customer.currency_code  
 	FROM asset_field_type_view 
 	WHERE 
-	  segments.date DURING LAST_30_DAYS 
+	  segments.year IN (2022)
 	  AND asset_field_type_view.field_type IN ('SITELINK', 'CALL', 'CALLOUT', 'MOBILE_APP') 
 	  AND metrics.impressions > 1
 	ORDER BY 
