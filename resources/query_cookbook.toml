@@ -278,12 +278,11 @@ campaign_perf_max_campaigns_30_days = """
 	  segments.date, campaign.id
 """
 
-# YTD Traffic from Asset-based Ad Extensions
-campaign_asset_ad_extensions_ytd = """
+# YTD Traffic from asset_field_type_view resource
+asset_field_type_view_ytd = """
 	SELECT 
-	  campaign.id,
-	  segments.date,
 	  asset_field_type_view.field_type, 
+	  segments.date,
 	  metrics.impressions, 
 	  metrics.clicks, 
 	  metrics.cost_micros,
@@ -291,8 +290,41 @@ campaign_asset_ad_extensions_ytd = """
 	FROM asset_field_type_view 
 	WHERE 
 	  segments.year IN (2022)
-	  AND asset_field_type_view.field_type IN ('SITELINK', 'CALL', 'CALLOUT', 'MOBILE_APP') 
 	  AND metrics.impressions > 1
 	ORDER BY 
-	  segments.date, campaign.id
+	  asset_field_type_view.field_type, segments.date
+"""
+
+# YTD Trafic from extension_feed_item resource
+extension_feed_item_ytd = """
+	SELECT
+	  extension_feed_item.extension_type,
+	  segments.date,
+	  metrics.impressions,
+	  metrics.clicks,
+	  metrics.cost_micros,
+	  customer.currency_code
+	FROM extension_feed_item
+	WHERE
+	  segments.year IN (2022)
+	  AND metrics.impressions > 1
+	ORDER BY 
+	  extension_feed_item.extension_type, segments.date
+"""
+
+# YTD Trafic from feed_placeholder_view resource
+feed_placeholder_view_ytd = """
+	SELECT
+	  feed_placeholder_view.placeholder_type,
+	  segments.date,
+	  metrics.impressions,
+	  metrics.clicks,
+	  metrics.cost_micros,
+	  customer.currency_code
+	FROM feed_placeholder_view
+	WHERE
+	  segments.year IN (2022) 
+	  AND metrics.impressions > 1
+	ORDER BY 
+	  feed_placeholder_view.placeholder_type, segments.date
 """
