@@ -13,20 +13,22 @@ const CACHE_FILENAME: &str = ".cache";
 const CACHE_KEY_CHILD_ACCOUNTS: &str = "child-accounts";
 
 /// initialize Flexi Logger via Env Vars
-/// MCCFIND_LOG_LEVEL sets logging level
-/// MCCFIND_LOG_DIR sets log file path
+/// <prefix>_LOG_LEVEL sets logging level
+/// <prefix>_LOG_DIR sets log file path
 pub fn init_logger() {
     use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
 
-    let mccfind_log_env = env::var("MCCFIND_LOG_LEVEL").unwrap_or_else(|_| "off".to_string());
-    let mccfind_log_dir = env::var("MCCFIND_LOG_DIR").unwrap_or_else(|_| ".".to_string());
+    let my_log_env = env::var(format!("{}{}", crate::config::ENV_VAR_PREFIX, "LOG_LEVEL"))
+        .unwrap_or_else(|_| "off".to_string());
+    let my_log_dir = env::var(format!("{}{}", crate::config::ENV_VAR_PREFIX, "LOG_DIR"))
+        .unwrap_or_else(|_| ".".to_string());
 
-    Logger::try_with_env_or_str(mccfind_log_env)
+    Logger::try_with_env_or_str(my_log_env)
         .unwrap()
         .use_utc()
         .log_to_file(
             FileSpec::default()
-                .directory(mccfind_log_dir)
+                .directory(my_log_dir)
                 .suppress_timestamp(),
         )
         .format_for_files(flexi_logger::detailed_format)

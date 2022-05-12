@@ -14,7 +14,7 @@ account_accessible = """
 	FROM customer 
 	WHERE 
 	  segments.date during yesterday
-	  and metrics.impresisons > 1
+	  and metrics.impressions > 1
 	ORDER BY
 		customer.id
 """

@@ -16,6 +16,5 @@ Cargo.lock
 *.tsv
 *.csv
 *.log
-.mccfind/*
 *.svg
 perf.data*

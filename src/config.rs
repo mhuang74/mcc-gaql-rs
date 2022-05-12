@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 const CRATE_NAME: &str = env!("CARGO_PKG_NAME");
 const TOML_CONFIG_FILENAME: &str = "config.toml";
-const ENV_VAR_PREFIX: &str = "MCCFIND_";
+pub const ENV_VAR_PREFIX: &str = "MCC_GAQL_";
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct MyConfig {
