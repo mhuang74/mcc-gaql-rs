@@ -1,6 +1,6 @@
-# mcc-find-rs
-Command line tool to find qualifying Google Ads Account over entire MCC Account Tree Hierarchy. Inspired by [gaql-cli](https://github.com/getyourguide/gaql-cli).
+# mcc-gaql-rs
+Command line tool to execute GAQL over MCC Account Tree Hierarchy. Inspired by [gaql-cli](https://github.com/getyourguide/gaql-cli).
 
 ## Example Usecases
 
-* Find accounts that have traffic from Asset-based Ad Extensions
+* Query for Asset-based Ad Extensions traffic to see which accounts use them
