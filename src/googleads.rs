@@ -61,6 +61,23 @@ const FILENAME_CLIENT_SECRET: &str = "clientsecret.json";
 // const FILENAME_TOKEN_CACHE: &str = "tokencache.json";
 static GOOGLE_ADS_API_SCOPE: &str = "https://www.googleapis.com/auth/adwords";
 
+// incomplete. Only what I need for the moment.
+const GOOGLE_ADS_METRICS_INTEGER_FIELDS: &[&str] = &[
+    "clicks",
+    "cost_micros",
+    "engagements",
+    "historical_creative_quality_score",
+    "historical_quality_score",
+    "impressions",
+    "interactions",
+    "invalid_clicks",
+    "organic_clicks",
+    "organic_impressions",
+    "organic_queries",
+    "video_views",
+    "view_through_conversions"
+];
+
 #[derive(Clone)]
 pub struct GoogleAdsAPIAccess {
     pub channel: Channel,
@@ -193,6 +210,7 @@ pub async fn gaql_query_with_client(
                         for r in stream_response.results {
                             let row: GoogleAdsRow = r;
 
+                            // go through all columns specified in query, pull out string value, and insert into columns
                             for i in 0..headers.as_ref().unwrap().len() {
                                 let path = &headers.as_ref().unwrap()[i];
                                 let string_val: String = row.get(path);
@@ -220,16 +238,29 @@ pub async fn gaql_query_with_client(
 
             let mut series_vec: Vec<Series> = Vec::new();
 
+            // convert columnar values (String) into Polars Series with right datatype
+            //  - metric columns could be Integer or Float
+            //  - other columns are String
             if let Some(headers_vec) = headers {
                 for (i, header) in headers_vec.iter().enumerate() {
-                    if header.contains("metrics") {
-                        let v: Vec<u64> = columns
-                            .get(i)
-                            .unwrap()
-                            .iter()
-                            .map(|x| x.parse::<u64>().unwrap())
-                            .collect();
-                        series_vec.push(Series::new(header, v));
+                    if header.starts_with("metrics") {
+                        if GOOGLE_ADS_METRICS_INTEGER_FIELDS.iter().any(|f| f==header) {
+                            let v: Vec<u64> = columns
+                                .get(i)
+                                .unwrap()
+                                .iter()
+                                .map(|x| x.parse::<u64>().unwrap())
+                                .collect();
+                            series_vec.push(Series::new(header, v));
+                        } else {
+                            let v: Vec<f64> = columns
+                                .get(i)
+                                .unwrap()
+                                .iter()
+                                .map(|x| x.parse::<f64>().unwrap())
+                                .collect();
+                            series_vec.push(Series::new(header, v));
+                        }
                     } else {
                         let v: &Vec<String> = columns.get(i).unwrap();
                         series_vec.push(Series::new(header, v));

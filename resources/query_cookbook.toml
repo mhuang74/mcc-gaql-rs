@@ -328,3 +328,26 @@ feed_placeholder_view_ytd = """
 	ORDER BY 
 	  feed_placeholder_view.placeholder_type, segments.date
 """
+
+# Top Budgeted Smart Bidding Campaigns
+top_smart_bidding_campaigns_by_budget = """
+	SELECT 
+	  customer.id, 
+	  customer.currency_code,
+	  campaign.id, 
+	  campaign.name, 
+	  campaign.bidding_strategy_type,
+	  campaign_budget.amount_micros,
+	  metrics.conversions,
+	  metrics.average_cpc,
+	  metrics.clicks, 
+	  metrics.cost_micros,
+	  metrics.cost_per_conversion
+	FROM campaign
+	WHERE
+	  campaign.bidding_strategy_type IN ('MAXIMIZE_CONVERSIONS', 'MAXIMIZE_CONVERSION_VALUE', 'TARGET_CPA', 'TARGET_ROAS') 
+	  AND campaign.status IN ('ENABLED') 
+	  AND segments.date DURING LAST_7_DAYS 
+	  AND metrics.cost_micros > 100000000
+	ORDER by metrics.cost_micros DESC
+"""

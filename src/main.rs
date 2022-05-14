@@ -69,30 +69,41 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if args.list_child_accounts {
         // run Account listing query
-        if args.customer_id.is_some() {
-            // query accounts under specificied customer_id account
-            let customer_id = args.customer_id.expect("Valid customer_id required.");
-            log::debug!("Listing child accounts under {customer_id}");
-            googleads::gaql_query(
-                api_context,
-                customer_id,
-                googleads::SUB_ACCOUNTS_QUERY.to_owned(),
-            )
-            .await
-            .unwrap();
-        } else {
-            // query child accounts under MCC
-            log::debug!(
-                "Listing ALL child accounts under MCC {}",
-                &config.mcc_customerid
-            );
-            googleads::gaql_query(
-                api_context,
-                config.mcc_customerid,
-                googleads::SUB_ACCOUNTS_QUERY.to_owned(),
-            )
-            .await
-            .unwrap();
+
+        let (customer_id, query) = 
+            if args.customer_id.is_some() {
+                // query accounts under specificied customer_id account
+                let customer_id = args.customer_id.expect("Valid customer_id required.");
+                let query: String = googleads::SUB_ACCOUNTS_QUERY.to_owned();
+                log::debug!("Listing child accounts under {customer_id}");
+                (customer_id, query)
+            } else {
+                // query child accounts under MCC
+                log::debug!(
+                    "Listing ALL child accounts under MCC {}",
+                    &config.mcc_customerid
+                );
+                (config.mcc_customerid, googleads::SUB_ACCOUNTS_QUERY.to_owned())
+            };
+
+        let dataframe: Option<DataFrame> =
+            match googleads::gaql_query(api_context, customer_id, query).await {
+                Ok(df) => {
+                    Some(df)
+                }
+                Err(e) => {
+                    let msg = format!("Error: {e}");
+                    println!("{msg}");
+                    None
+                }
+            };
+
+        if dataframe.is_some() {
+            if args.output.is_some() {
+                write_csv(&mut dataframe.unwrap(), args.output.as_ref().unwrap())?;
+            } else {
+                println!("{:?}", &dataframe);
+            }
         }
     } else if args.field_service {
         let query = &args
