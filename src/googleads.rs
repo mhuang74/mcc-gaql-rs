@@ -17,6 +17,9 @@ use yup_oauth2::{
 
 use googleads_rs::google::ads::googleads::v10::services::google_ads_field_service_client::GoogleAdsFieldServiceClient;
 use googleads_rs::google::ads::googleads::v10::services::google_ads_service_client::GoogleAdsServiceClient;
+use googleads_rs::google::ads::googleads::v10::resources::{
+    GoogleAdsField
+};
 use googleads_rs::google::ads::googleads::v10::services::{
     GoogleAdsRow, SearchGoogleAdsFieldsRequest, SearchGoogleAdsFieldsResponse,
     SearchGoogleAdsStreamRequest, SearchGoogleAdsStreamResponse,
@@ -310,8 +313,9 @@ pub async fn fields_query(api_context: GoogleAdsAPIAccess, query: &str) {
         .into_inner();
 
     let mut stdout = async_std::io::stdout();
-    for field in response.results {
-        let val = format!("{:?}", &field);
+    for r in response.results {
+        let row: GoogleAdsField = r;
+        let val = format!("{}\t{:?}\t{:?}\t{}\n", row.name, row.data_type(), row.category(), row.resource_name);
         stdout.write_all(val.as_bytes()).await.unwrap();
     }
 }
