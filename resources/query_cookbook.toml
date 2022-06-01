@@ -4,36 +4,40 @@
 #
 # Michael S. Huang (mhuang74@gmail.com)
 #
+#
+#
+# Naming Convention = <grain>_with_<description>, e.g. accounts_with_traffic_last_week
+#
+#
 ##
 
-# Accessible Trafficking Accounts
-account_accessible = """
+
+# Account IDs Accessible
+account_ids_with_access = """
 	SELECT 
-	  customer.id, 
-	  metrics.clicks 
+	  customer.id
 	FROM customer 
 	WHERE 
 	  segments.date during yesterday
-	  and metrics.impressions > 1
-	ORDER BY
-		customer.id
 """
 
-# Total Account Traffic Last Week
-account_traffic_yesterday = """
+# Accounts with Traffic Last Week
+accounts_with_traffic_last_week = """
 	SELECT 
 	  customer.id, 
 	  customer.descriptive_name, 
 	  metrics.impressions, 
 	  metrics.clicks, 
-	  metrics.cost_micros 
+	  metrics.cost_micros,
+	  customer.currency_code 
 	FROM customer 
 	WHERE 
-	  segments.date during yesterday
+	  segments.date during LAST_7_DAYS
+	  AND metrics.impressions > 1
 """
 
 # Top Keywords
-top_keywords_last_week = """
+keywords_with_top_traffic_last_week = """
 	SELECT
 	  customer.id,
 	  customer.descriptive_name,
@@ -47,7 +51,8 @@ top_keywords_last_week = """
 	  ad_group_criterion.keyword.text,
 	  metrics.impressions,
 	  metrics.clicks,
-	  metrics.cost_micros
+	  metrics.cost_micros,
+	  customer.currency_code 
 	FROM keyword_view
 	WHERE
 	  segments.date DURING LAST_7_DAYS
@@ -58,7 +63,7 @@ top_keywords_last_week = """
 """
 
 # Accounts with Performance Max Campaigns
-account_perf_max_campaigns_last_week = """
+accounts_with_perf_max_campaigns_last_week = """
 	SELECT 
 	  customer.id, 
 	  customer.descriptive_name, 
@@ -80,7 +85,7 @@ account_perf_max_campaigns_last_week = """
 """
 
 # Accounts with Smart Campaigns
-account_smart_campaigns_last_week = """
+accounts_with_smart_campaigns_last_week = """
 	SELECT 
 	  customer.id, 
 	  customer.descriptive_name, 
@@ -102,7 +107,7 @@ account_smart_campaigns_last_week = """
 """
 
 # Accounts with Local Campaigns
-account_local_campaigns_last_week = """
+accounts_with_local_campaigns_last_week = """
 	SELECT 
 	  customer.id, 
 	  customer.descriptive_name, 
@@ -124,7 +129,7 @@ account_local_campaigns_last_week = """
 """
 
 # Accounts with Shopping Campaigns
-account_shopping_campaigns_last_week = """
+accounts_with_shopping_campaigns_last_week = """
 	SELECT 
 	  customer.id, 
 	  customer.descriptive_name, 
@@ -146,7 +151,7 @@ account_shopping_campaigns_last_week = """
 """
 
 # Accounts with Multi-Channel Campaigns
-account_multichannel_campaigns_last_week = """
+accounts_with_multichannel_campaigns_last_week = """
 	SELECT 
 	  customer.id, 
 	  customer.descriptive_name, 
@@ -169,7 +174,7 @@ account_multichannel_campaigns_last_week = """
 
 
 # Accounts with Asset-based Sitelink Ext
-account_asset_sitelink_last_week = """
+accounts_with_asset_sitelink_last_week = """
 	SELECT 
 	  customer.id, 
 	  customer.descriptive_name, 
@@ -192,7 +197,7 @@ account_asset_sitelink_last_week = """
 """
 
 # Accounts with Asset-based Call Ext
-account_asset_call_last_week = """
+accounts_with_asset_call_last_week = """
 	SELECT 
 	  customer.id, 
 	  customer.descriptive_name, 
@@ -215,7 +220,7 @@ account_asset_call_last_week = """
 """
 
 # Accounts with Asset-based Callout Ext
-account_asset_callout_last_week = """
+accounts_with_asset_callout_last_week = """
 	SELECT 
 	  customer.id, 
 	  customer.descriptive_name, 
@@ -238,7 +243,7 @@ account_asset_callout_last_week = """
 """
 
 # Accounts with Asset-based App Ext
-account_asset_app_last_week = """
+accounts_with_asset_app_last_week = """
 	SELECT 
 	  customer.id, 
 	  customer.descriptive_name, 
@@ -261,7 +266,7 @@ account_asset_app_last_week = """
 """
 
 # Last 30-day Traffic from Performance Max Campaigns
-campaign_perf_max_campaigns_30_days = """
+perf_max_campaigns_with_traffic_last_30_days = """
 	SELECT 
 	  campaign.id, 
 	  segments.date,
@@ -279,7 +284,7 @@ campaign_perf_max_campaigns_30_days = """
 """
 
 # YTD Traffic from asset_field_type_view resource
-asset_field_type_view_ytd = """
+asset_fields_with_traffic_ytd = """
 	SELECT 
 	  asset_field_type_view.field_type, 
 	  segments.date,
@@ -296,7 +301,7 @@ asset_field_type_view_ytd = """
 """
 
 # YTD Trafic from extension_feed_item resource
-extension_feed_item_ytd = """
+extension_feed_items_with_traffic_ytd = """
 	SELECT
 	  extension_feed_item.extension_type,
 	  segments.date,
@@ -313,7 +318,7 @@ extension_feed_item_ytd = """
 """
 
 # YTD Trafic from feed_placeholder_view resource
-feed_placeholder_view_ytd = """
+feed_placeholders_with_traffic_ytd = """
 	SELECT
 	  feed_placeholder_view.placeholder_type,
 	  segments.date,
@@ -330,7 +335,7 @@ feed_placeholder_view_ytd = """
 """
 
 # Top Budgeted Smart Bidding Campaigns
-top_smart_bidding_campaigns_by_budget = """
+campaigns_with_top_smart_bidding_campaigns_by_budget = """
 	SELECT 
 	  customer.id, 
 	  customer.currency_code,
@@ -350,4 +355,58 @@ top_smart_bidding_campaigns_by_budget = """
 	  AND segments.date DURING LAST_7_DAYS 
 	  AND metrics.cost_micros > 100000000
 	ORDER by metrics.cost_micros DESC
+"""
+
+# Search Term Top CPA
+search_terms_with_top_cpa = """
+	SELECT 
+	  customer.id, 
+	  customer.descriptive_name,
+	  customer.currency_code,
+	  search_term_view.search_term, 
+	  segments.search_term_match_type, 
+	  segments.device, 
+	  search_term_view.status, 
+	  metrics.impressions, 
+	  metrics.clicks, 
+	  metrics.cost_micros, 
+	  metrics.conversions, 
+	  metrics.cost_per_conversion, 
+	  metrics.conversions_value, 
+	  metrics.conversions_value_per_cost 
+	FROM search_term_view 
+	WHERE 
+	  segments.date DURING LAST_30_DAYS
+	  AND metrics.cost_per_conversion > 200000000
+	  AND metrics.cost_micros > 1000000000
+	ORDER BY
+	  metrics.cost_micros desc
+	LIMIT 50 
+"""
+
+# Search Term Low ROAS
+search_terms_with_low_roas = """
+	SELECT 
+	  customer.id, 
+	  customer.descriptive_name,
+	  customer.currency_code, 
+	  search_term_view.search_term, 
+	  segments.search_term_match_type, 
+	  segments.device, 
+	  search_term_view.status, 
+	  metrics.impressions, 
+	  metrics.clicks, 
+	  metrics.cost_micros, 
+	  metrics.conversions, 
+	  metrics.cost_per_conversion, 
+	  metrics.conversions_value, 
+	  metrics.conversions_value_per_cost 
+	FROM search_term_view 
+	WHERE 
+	  segments.date DURING LAST_30_DAYS
+	  AND metrics.conversions_value_per_cost < 0.25
+	  AND metrics.cost_micros > 1000000000
+	ORDER BY
+	  metrics.cost_micros desc
+	LIMIT 50 
 """
