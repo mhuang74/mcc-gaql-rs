@@ -357,6 +357,54 @@ campaigns_with_top_smart_bidding_campaigns_by_budget = """
 	ORDER by metrics.cost_micros DESC
 """
 
+# Search Term Top CPA for Smart Campaigns
+smart_campaign_search_terms_with_top_spend = """
+	SELECT 
+	  customer.id, 
+	  customer.descriptive_name, 
+	  campaign.id, 
+	  campaign.advertising_channel_type, 
+	  campaign.name, 
+	  smart_campaign_search_term_view.search_term,
+	  metrics.impressions, 
+	  metrics.clicks, 
+	  metrics.cost_micros,
+	  customer.currency_code 
+	FROM smart_campaign_search_term_view 
+	WHERE 
+	  segments.date DURING LAST_30_DAYS 
+	  AND campaign.advertising_channel_type IN ('SMART') 
+	  AND metrics.clicks > 0
+	ORDER BY 
+	  metrics.cost_micros DESC 
+	LIMIT 100
+"""
+
+# Search Terms with Clicks
+all_search_terms_with_clicks = """
+	SELECT 
+	  customer.id, 
+	  customer.descriptive_name,
+	  customer.currency_code,
+	  search_term_view.search_term, 
+	  segments.search_term_match_type, 
+	  segments.device, 
+	  search_term_view.status, 
+	  metrics.impressions, 
+	  metrics.clicks, 
+	  metrics.cost_micros, 
+	  metrics.conversions, 
+	  metrics.cost_per_conversion, 
+	  metrics.conversions_value, 
+	  metrics.conversions_value_per_cost 
+	FROM search_term_view 
+	WHERE 
+	  segments.date DURING LAST_30_DAYS
+	  AND metrics.clicks > 0
+	ORDER BY
+	  metrics.cost_micros desc
+"""
+
 # Search Term Top CPA
 search_terms_with_top_cpa = """
 	SELECT 
