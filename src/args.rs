@@ -1,6 +1,6 @@
 use clap::Parser;
 
-/// Efficiently run GAQL or Field Metadata queries against child accounts linked to MCC.
+/// Efficiently run Google Ads GAQL query across one or more child accounts linked to MCC.
 ///
 /// Supports profile-based configuration and ENV VAR override.
 ///
