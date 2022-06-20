@@ -18,7 +18,7 @@ dirs = "4.0.0"
 figment = { version = "0.10.6", features = ["toml", "env"] }
 flexi_logger = { version = "0.22", features = ["compress"] }
 futures = { version = "0.3", default-features = false, features = ["alloc"] }
-googleads-rs = { version = "0.3.0", path="/home/mhuang/Projects/rust/googleads/googleads-rs" }
+googleads-rs = { version = "0.3.0", path="../googleads-rs" }
 itertools = "0.10"
 log = "0.4"
 polars = "0.20.0"
