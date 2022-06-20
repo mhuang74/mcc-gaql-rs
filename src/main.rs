@@ -47,6 +47,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    // if query doens't contain PARAMETERS clause, then include one with omit_unselected_resource_names set to TRUE
+    if let Some(query) = &args.gaql_query {
+        if !query.contains("PARAMETERS") {
+            let new_query = format!("{query} PARAMETERS omit_unselected_resource_names = true");
+            args.gaql_query = Some(new_query);
+        }
+    }
+
     let api_context =
         match googleads::get_api_access(&config.mcc_customerid, &config.token_cache_filename).await
         {
