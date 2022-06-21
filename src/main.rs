@@ -47,9 +47,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // if query doens't contain PARAMETERS clause, then include one with omit_unselected_resource_names set to TRUE
+    // for non-FieldService queries, reduce network traffic by excluding resource_name by default
     if let Some(query) = &args.gaql_query {
-        if !query.contains("PARAMETERS") {
+        if !args.field_service && !query.contains("PARAMETERS") {
             let new_query = format!("{query} PARAMETERS omit_unselected_resource_names = true");
             args.gaql_query = Some(new_query);
         }
