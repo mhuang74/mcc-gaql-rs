@@ -216,7 +216,7 @@ pub async fn gaql_query_with_client(
                             // go through all columns specified in query, pull out string value, and insert into columns
                             for i in 0..headers.as_ref().unwrap().len() {
                                 let path = &headers.as_ref().unwrap()[i];
-                                let string_val: String = row.get(path);
+                                let string_val: String = row.get(path).trim_matches('"').to_string();
                                 match columns.get_mut(i) {
                                     Some(v) => {
                                         v.push(string_val);
