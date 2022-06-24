@@ -334,27 +334,32 @@ feed_placeholders_with_traffic_ytd = """
 	  feed_placeholder_view.placeholder_type, segments.date
 """
 
-# Top Budgeted Smart Bidding Campaigns
-campaigns_with_top_smart_bidding_campaigns_by_budget = """
+# Top Spending Smart Bidding Campaigns
+campaigns_with_smart_bidding_by_spend = """
 	SELECT 
 	  customer.id, 
+	  customer.descriptive_name,
 	  customer.currency_code,
 	  campaign.id, 
-	  campaign.name, 
+	  campaign.name,
+	  campaign.advertising_channel_type,
 	  campaign.bidding_strategy_type,
 	  campaign_budget.amount_micros,
-	  metrics.conversions,
 	  metrics.average_cpc,
 	  metrics.clicks, 
 	  metrics.cost_micros,
-	  metrics.cost_per_conversion
+	  metrics.conversions,
+	  metrics.cost_per_conversion,
+ 	  metrics.conversions_value, 
+	  metrics.conversions_value_per_cost 
 	FROM campaign
 	WHERE
 	  campaign.bidding_strategy_type IN ('MAXIMIZE_CONVERSIONS', 'MAXIMIZE_CONVERSION_VALUE', 'TARGET_CPA', 'TARGET_ROAS') 
 	  AND campaign.status IN ('ENABLED') 
 	  AND segments.date DURING LAST_7_DAYS 
-	  AND metrics.cost_micros > 100000000
+	  AND metrics.cost_micros > 1000000000
 	ORDER by metrics.cost_micros DESC
+	LIMIT 25
 """
 
 # Search Term Top CPA for Smart Campaigns
