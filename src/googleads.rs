@@ -109,7 +109,7 @@ impl GoogleAdsAPIAccess {
                     log::debug!("Obtained access token: {t:?}");
 
                     let bearer_token = format!("Bearer {}", t.as_str());
-                    let header_value_auth_token = MetadataValue::from_str(&bearer_token)?;
+                    let header_value_auth_token = MetadataValue::try_from(&bearer_token)?;
                     self.auth_token = Some(header_value_auth_token);
 
                     renewed = true;
@@ -159,8 +159,8 @@ pub async fn get_api_access(
             .build()
             .await?;
 
-    let header_value_dev_token = MetadataValue::from_str(DEV_TOKEN)?;
-    let header_value_login_customer = MetadataValue::from_str(mcc_customer_id)?;
+    let header_value_dev_token = MetadataValue::try_from(DEV_TOKEN)?;
+    let header_value_login_customer = MetadataValue::try_from(mcc_customer_id)?;
 
     let channel: Channel = Channel::from_static(ENDPOINT)
         .rate_limit(100, Duration::from_secs(1))
