@@ -21,7 +21,7 @@ futures = { version = "0.3", default-features = false, features = ["alloc"] }
 googleads-rs = { version = "0.3.0", path="../googleads-rs" }
 itertools = "0.10"
 log = "0.4"
-polars = "0.21.1"
+polars = "0.22.8"
 serde = { version = "1.0.136", features = ["derive"] }
 thousands = "0.2.0"
 tokio = { version = "1.0", features = [ "rt-multi-thread", "time", "fs", "macros", "net",] }
