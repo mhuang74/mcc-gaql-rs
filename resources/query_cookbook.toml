@@ -350,8 +350,7 @@ campaigns_with_smart_bidding_by_spend = """
 	  metrics.cost_micros,
 	  metrics.conversions,
 	  metrics.cost_per_conversion,
- 	  metrics.conversions_value, 
-	  metrics.conversions_value_per_cost 
+ 	  metrics.conversions_value
 	FROM campaign
 	WHERE
 	  campaign.bidding_strategy_type IN ('MAXIMIZE_CONVERSIONS', 'MAXIMIZE_CONVERSION_VALUE', 'TARGET_CPA', 'TARGET_ROAS') 
