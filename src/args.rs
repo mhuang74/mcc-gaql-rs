@@ -11,7 +11,7 @@ pub struct Cli {
     #[clap(short, long)]
     pub profile: Option<String>,
 
-    /// Apply query to CustomerID
+    /// Apply query to CustomerID. Use in conjunction with MCC to query all child accounts.
     #[clap(short, long)]
     pub customer_id: Option<String>,
 
@@ -30,7 +30,7 @@ pub struct Cli {
     #[clap(short, long)]
     pub field_service: bool,
 
-    /// Apply query to all current MCC Child Accounts
+    /// Apply query to all Child Accounts
     #[clap(short, long)]
     pub all_current_child_accounts: bool,
 
