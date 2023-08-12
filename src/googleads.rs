@@ -233,7 +233,7 @@ pub async fn gaql_query_with_client(
                         bail!(
                             "GoogleAdsClient streaming error. Account: {customer_id}, Message: {}, Details: {}",
                             status.message(),
-                            String::from_utf8_lossy(status.details()).to_owned()
+                            String::from_utf8_lossy(status.details()).into_owned()
                         );
                     }
                 }
@@ -277,7 +277,7 @@ pub async fn gaql_query_with_client(
             bail!(
                 "GoogleAdsClient request error. Account: {customer_id}, Message: {}, Details: {}",
                 status.message(),
-                String::from_utf8_lossy(status.details()).to_owned()
+                String::from_utf8_lossy(status.details()).into_owned()
             );
         }
     };
