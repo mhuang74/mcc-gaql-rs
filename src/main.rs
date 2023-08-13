@@ -121,77 +121,71 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         googleads::fields_query(api_context, query).await;
     } else if args.gaql_query.is_some() {
         // run provided GAQL query
-        if args.customer_id.is_some() {
-            // query only specificied customer_id
-            let query = args.gaql_query.expect("Valid GAQL query required.");
-            let customer_id = args.customer_id.expect("Valid customer_id required.");
-            log::info!("Running GAQL query for {customer_id}: {query}");
 
-            let dataframe: Option<DataFrame> =
-                match googleads::gaql_query(api_context, customer_id, query).await {
-                    Ok(df) => {
-                        if !args.groupby.is_empty() {
-                            let agg_df = apply_groupby(df, args.groupby).await?;
-                            Some(agg_df)
-                        } else {
-                            Some(df)
-                        }
-                    }
-                    Err(e) => {
-                        let msg = format!("Error: {e}");
-                        println!("{msg}");
-                        None
-                    }
-                };
+        let mut customer_ids: Option<Vec<String>> = None;
 
-            if dataframe.is_some() {
-                if args.output.is_some() {
-                    write_csv(&mut dataframe.unwrap(), args.output.as_ref().unwrap())?;
-                } else {
-                    println!("{:?}", &dataframe);
-                }
-            }
-        } else {
+        // query across child accounts
+        if args.all_current_child_accounts  {
             // get list of child account customer ids to query
-            let customer_ids: Option<Vec<String>> = if args.all_current_child_accounts {
+            if args.all_current_child_accounts {
+                // if customer_id provided use it, else use mcc account in config
+
+                let mcc_customer_id = 
+                    if args.customer_id.is_some() {
+                        // query accounts under specificied customer_id account
+                        let customer_id = args.customer_id.expect("Valid customer_id required.");
+                        log::debug!("Querying child accounts under MCC: {customer_id}");
+                        customer_id
+                    } else {
+                        // query child accounts under MCC
+                        log::debug!(
+                            "Querying child accounts under MCC in config: {}",
+                            &config.mcc_customerid
+                        );
+                        config.mcc_customerid
+                    };
+
                 // generate new list of child accounts
-                match googleads::get_child_account_ids(api_context.clone(), config.mcc_customerid)
+                customer_ids = match googleads::get_child_account_ids(api_context.clone(), mcc_customer_id)
                     .await
                 {
                     Ok(customer_ids) => Some(customer_ids),
                     Err(_e) => None,
                 }
             } else if config.customerids_filename.is_some() {
-                // load cild accounts list from file
+                // load child accounts list from file
 
                 let customerids_path =
                     crate::config::config_file_path(&config.customerids_filename.unwrap()).unwrap();
 
-                match util::get_child_account_ids_from_file(customerids_path.as_path()).await {
+                customer_ids = match util::get_child_account_ids_from_file(customerids_path.as_path()).await {
                     Ok(customer_ids) => Some(customer_ids),
                     Err(_e) => None,
                 }
-            } else {
-                None
-            };
-
-            // apply query to all child account customer_ids
-            if let Some(customer_id_vector) = customer_ids {
-                let query: String = args.gaql_query.expect("valid GAQL query");
-
-                // run queries asynchroughly across all customer_ids
-                gaql_query_async(
-                    api_context,
-                    customer_id_vector,
-                    query,
-                    args.groupby,
-                    args.output,
-                )
-                .await?;
-            } else {
-                log::error!("Abort GAQL query. Can't find child accounts to run on.");
             }
+        } else {
+            // just query specfied account
+            let customer_id = args.customer_id.expect("Valid customer_id required.");
+            customer_ids = Some(vec![customer_id])
+        };
+
+        // apply query to all child account customer_ids
+        if let Some(customer_id_vector) = customer_ids {
+            let query: String = args.gaql_query.expect("valid GAQL query");
+
+            // run queries asynchroughly across all customer_ids
+            gaql_query_async(
+                api_context,
+                customer_id_vector,
+                query,
+                args.groupby,
+                args.output,
+            )
+            .await?;
+        } else {
+            log::error!("Abort GAQL query. Can't find child accounts to run on.");
         }
+        
     } else {
         println!("Nothing to do.");
     }
