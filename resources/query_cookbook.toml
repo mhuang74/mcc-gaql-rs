@@ -12,13 +12,14 @@
 ##
 
 
-# Account IDs Accessible
-account_ids_with_access = """
+# Account IDs Accessible and Trafficking
+account_ids_with_access_and_traffic_last_week = """
 	SELECT 
 	  customer.id
 	FROM customer 
 	WHERE 
-	  segments.date during yesterday
+	  segments.date during LAST_7_DAYS
+	  AND metrics.clicks > 1
 """
 
 # Accounts with Traffic Last Week
