@@ -7,11 +7,11 @@ use clap::Parser;
 #[derive(Parser, Debug)]
 #[clap(author, version, about)]
 pub struct Cli {
-    /// Profile to load from Config file
+    /// Query using default MCC and Child CustomerIDs file specified for this profile
     #[clap(short, long)]
     pub profile: Option<String>,
 
-    /// Apply query to CustomerID. Use in conjunction with MCC to query all child accounts.
+    /// Apply query to a single CustomerID. Or use with `--all-linked-child-accounts` to query all child accounts.
     #[clap(short, long)]
     pub customer_id: Option<String>,
 
@@ -30,9 +30,9 @@ pub struct Cli {
     #[clap(short, long)]
     pub field_service: bool,
 
-    /// Apply query to all Child Accounts
+    /// Force query to run across all linked child accounts (some may not be accessible)
     #[clap(short, long)]
-    pub all_current_child_accounts: bool,
+    pub all_linked_child_accounts: bool,
 
     /// Keep going on errors
     #[clap(long)]

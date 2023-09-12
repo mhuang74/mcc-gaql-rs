@@ -119,59 +119,73 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .expect("Valid Field Service query required.");
         log::info!("Running Fields Metadata query: {query}");
         googleads::fields_query(api_context, query).await;
+
+    // run provided GAQL query
     } else if args.gaql_query.is_some() {
-        // run provided GAQL query
 
-        let mut customer_ids: Option<Vec<String>> = None;
+        // figure out which customerids to query for
+        let customer_ids: Option<Vec<String>> = 
 
-        // query across child accounts
-        if args.all_current_child_accounts  {
-            // get list of child account customer ids to query
-            if args.all_current_child_accounts {
-                // if customer_id provided use it, else use mcc account in config
-
-                let mcc_customer_id = 
-                    if args.customer_id.is_some() {
-                        // query accounts under specificied customer_id account
-                        let customer_id = args.customer_id.expect("Valid customer_id required.");
-                        log::debug!("Querying child accounts under MCC: {customer_id}");
-                        customer_id
-                    } else {
-                        // query child accounts under MCC
-                        log::debug!(
-                            "Querying child accounts under MCC in config: {}",
-                            &config.mcc_customerid
-                        );
-                        config.mcc_customerid
-                    };
+            // if provided customerid and querying all child accounts, 
+            // then query all linked accounts under provided customerid
+            if args.customer_id.is_some() & args.all_linked_child_accounts {
+                let customer_id = args.customer_id.expect("Valid customer_id required.");
+                log::debug!("Querying child accounts under MCC: {}", &customer_id);
 
                 // generate new list of child accounts
-                customer_ids = match googleads::get_child_account_ids(api_context.clone(), mcc_customer_id)
-                    .await
-                {
-                    Ok(customer_ids) => Some(customer_ids),
-                    Err(_e) => None,
-                }
-            } else if config.customerids_filename.is_some() {
-                // load child accounts list from file
+                match googleads::get_child_account_ids(api_context.clone(), customer_id).await
+                    {
+                        Ok(customer_ids) => Some(customer_ids),
+                        Err(_e) => None,
+                    }
+            } 
+            // if provided customerid and not querying all child accounts, 
+            // then just query one account
+            else if args.customer_id.is_some() & !args.all_linked_child_accounts {
+                let customer_id = args.customer_id.expect("Valid customer_id required.");
+                log::debug!("Querying account: {customer_id}");
 
-                let customerids_path =
-                    crate::config::config_file_path(&config.customerids_filename.unwrap()).unwrap();
-
-                customer_ids = match util::get_child_account_ids_from_file(customerids_path.as_path()).await {
-                    Ok(customer_ids) => Some(customer_ids),
-                    Err(_e) => None,
-                }
+                Some(vec![customer_id])
             }
-        } else {
-            // just query specfied account
-            let customer_id = args.customer_id.expect("Valid customer_id required.");
-            customer_ids = Some(vec![customer_id])
-        };
+            // if using default profile MCC and querying all child accounts,
+            // then query all linked accounts under profile mcc
+            else if args.customer_id.is_none() & args.all_linked_child_accounts {
+                let customer_id = config.mcc_customerid;
+                log::debug!("Querying all linked child accounts under profile MCC: {}", &customer_id);
 
-        // apply query to all child account customer_ids
+                // generate new list of child accounts
+                match googleads::get_child_account_ids(api_context.clone(), customer_id).await
+                    {
+                        Ok(customer_ids) => Some(customer_ids),
+                        Err(_e) => None,
+                    }
+            }
+            // if using default profile MCC and NOT querying all child accounts, 
+            // then look for customerids file and use it
+            else if args.customer_id.is_none() & !args.all_linked_child_accounts {
+                if config.customerids_filename.is_some() {
+                    let customerids_path =
+                    crate::config::config_file_path(&config.customerids_filename.unwrap()).unwrap();
+                    log::debug!("Querying accounts listed in file: {}", customerids_path.display());
+
+                    match util::get_child_account_ids_from_file(customerids_path.as_path()).await 
+                        {
+                            Ok(customer_ids) => Some(customer_ids),
+                            Err(_e) => None,
+                        }
+                } else {
+                    log::warn!("Expecting customerids file but none found in config");
+                    None
+                }
+            } else {
+                log::warn!("Not supposed to get here.");
+                None
+            };
+
+
+        // apply query to all customer_ids
         if let Some(customer_id_vector) = customer_ids {
-            let query: String = args.gaql_query.expect("valid GAQL query");
+            let query: String = args.gaql_query.expect("Expected GAQL query");
 
             // run queries asynchroughly across all customer_ids
             gaql_query_async(

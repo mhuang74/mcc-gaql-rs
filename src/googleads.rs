@@ -17,9 +17,7 @@ use yup_oauth2::{
 
 use googleads_rs::google::ads::googleads::v14::services::google_ads_field_service_client::GoogleAdsFieldServiceClient;
 use googleads_rs::google::ads::googleads::v14::services::google_ads_service_client::GoogleAdsServiceClient;
-use googleads_rs::google::ads::googleads::v14::resources::{
-    GoogleAdsField
-};
+use googleads_rs::google::ads::googleads::v14::resources::GoogleAdsField;
 use googleads_rs::google::ads::googleads::v14::services::{
     GoogleAdsRow, SearchGoogleAdsFieldsRequest, SearchGoogleAdsFieldsResponse,
     SearchGoogleAdsStreamRequest, SearchGoogleAdsStreamResponse,
