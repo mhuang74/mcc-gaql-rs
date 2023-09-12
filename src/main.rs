@@ -122,7 +122,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // run provided GAQL query
     } else if args.gaql_query.is_some() {
-
         // figure out which customerids to query for
         let customer_ids: Option<Vec<String>> = 
 
