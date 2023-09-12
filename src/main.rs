@@ -1,3 +1,7 @@
+//
+// Author: Michael S. Huang (mhuang74@gmail.com)
+// 
+
 use std::{
     fs::{self, File},
     process,
