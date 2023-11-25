@@ -15,10 +15,10 @@ use yup_oauth2::{
     AccessToken, ApplicationSecret, InstalledFlowAuthenticator, InstalledFlowReturnMethod,
 };
 
-use googleads_rs::google::ads::googleads::v14::services::google_ads_field_service_client::GoogleAdsFieldServiceClient;
-use googleads_rs::google::ads::googleads::v14::services::google_ads_service_client::GoogleAdsServiceClient;
-use googleads_rs::google::ads::googleads::v14::resources::GoogleAdsField;
-use googleads_rs::google::ads::googleads::v14::services::{
+use googleads_rs::google::ads::googleads::v15::services::google_ads_field_service_client::GoogleAdsFieldServiceClient;
+use googleads_rs::google::ads::googleads::v15::services::google_ads_service_client::GoogleAdsServiceClient;
+use googleads_rs::google::ads::googleads::v15::resources::GoogleAdsField;
+use googleads_rs::google::ads::googleads::v15::services::{
     GoogleAdsRow, SearchGoogleAdsFieldsRequest, SearchGoogleAdsFieldsResponse,
     SearchGoogleAdsStreamRequest, SearchGoogleAdsStreamResponse,
 };
