@@ -185,7 +185,7 @@ pub async fn gaql_query_with_client(
     mut client: GoogleAdsServiceClient<InterceptedService<Channel, GoogleAdsAPIAccess>>,
     customer_id: String,
     query: String,
-) -> Result<DataFrame> {
+) -> Result<(DataFrame, i64)> {
     let result: Result<Response<Streaming<SearchGoogleAdsStreamResponse>>, Status> = client
         .search_stream(SearchGoogleAdsStreamRequest {
             customer_id: customer_id.clone(),
@@ -194,16 +194,20 @@ pub async fn gaql_query_with_client(
         })
         .await;
 
-    let df = match result {
+    let (df, total_api_consumption) = match result {
         Ok(response) => {
             let mut stream = response.into_inner();
 
             let mut columns: Vec<Vec<String>> = Vec::new();
             let mut headers: Option<Vec<String>> = None;
+            let mut api_consumption: i64 = 0;
 
             while let Some(item) = stream.next().await {
                 match item {
                     Ok(stream_response) => {
+                        // aggregate api consumption
+                        api_consumption += stream_response.query_resource_consumption;
+
                         let field_mask = stream_response.field_mask.unwrap();
                         if headers.is_none() {
                             headers = Some(field_mask.paths.clone());
@@ -269,7 +273,9 @@ pub async fn gaql_query_with_client(
                 }
             }
 
-            DataFrame::new(series_vec).unwrap()
+            let df = DataFrame::new(series_vec).unwrap();
+
+            (df, api_consumption)
         }
         Err(status) => {
             bail!(
@@ -280,7 +286,7 @@ pub async fn gaql_query_with_client(
         }
     };
 
-    Ok(df)
+    Ok((df, total_api_consumption))
 }
 
 /// Run query via GoogleAdsServiceClient to get performance data
@@ -288,7 +294,7 @@ pub async fn gaql_query(
     api_context: GoogleAdsAPIAccess,
     customer_id: String,
     query: String,
-) -> Result<DataFrame> {
+) -> Result<(DataFrame, i64)> {
     let client: GoogleAdsServiceClient<InterceptedService<Channel, GoogleAdsAPIAccess>> =
         GoogleAdsServiceClient::with_interceptor(api_context.channel.clone(), api_context);
 
