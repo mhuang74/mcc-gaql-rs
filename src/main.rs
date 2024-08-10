@@ -100,7 +100,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let dataframe: Option<DataFrame> =
             match googleads::gaql_query(api_context, customer_id, query).await {
-                Ok(df) => {
+                Ok((df, _api_consumption)) => {
                     Some(df)
                 }
                 Err(e) => {
@@ -247,15 +247,17 @@ async fn gaql_query_async(
     let start = Instant::now();
 
     let mut total_rows: usize = 0;
+    let mut total_api_consumption: i64 = 0;
 
     // collect asynchronous query results
     while let Some(result) = gaql_handles.next().await {
         match result {
             Ok(result) => {
                 match result {
-                    Ok(df) => {
+                    Ok((df, api_consumption)) => {
                         if !df.is_empty() {
                             total_rows += df.height();
+                            total_api_consumption += api_consumption;
 
                             // log::debug!("Future returned non-empty GAQL results");
                             if !&groupby.is_empty() {
@@ -283,10 +285,12 @@ async fn gaql_query_async(
     }
 
     let duration = start.elapsed();
-    log::debug!(
-        "All queries returned {} rows in {} msec",
+    log::info!(
+        "GAQL returned {} rows in {} msec across {} accounts using {} API units",
         total_rows.separate_with_commas(),
-        duration.as_millis().separate_with_commas()
+        duration.as_millis().separate_with_commas(),
+        customer_id_vector.len().separate_with_commas(),
+        total_api_consumption.separate_with_commas()
     );
 
     // collect 1st pass groupby results
