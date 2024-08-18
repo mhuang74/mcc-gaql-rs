@@ -1,4 +1,5 @@
 use clap::Parser;
+use std::io::{self, Read};
 
 /// Efficiently run Google Ads GAQL query across one or more child accounts linked to MCC.
 ///
@@ -48,5 +49,15 @@ pub struct Cli {
 }
 
 pub fn parse() -> Cli {
-    Cli::parse()
+    let mut cli = Cli::parse();
+
+    if cli.gaql_query.is_none() {
+        let mut buffer = String::new();
+        io::stdin().read_to_string(&mut buffer).expect("Failed to read from stdin");
+        if !buffer.trim().is_empty() {
+            cli.gaql_query = Some(buffer);
+        }
+    }
+
+    cli
 }
