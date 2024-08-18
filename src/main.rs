@@ -114,7 +114,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if args.output.is_some() {
                 write_csv(&mut dataframe.unwrap(), args.output.as_ref().unwrap())?;
             } else {
-                println!("{:?}", &dataframe);
+                println!("{}", dataframe.unwrap());
             }
         }
     } else if args.field_service {
@@ -367,7 +367,7 @@ async fn gaql_query_async(
                 duration.as_millis().separate_with_commas()
             );
         } else {
-            println!("{:?}", dataframe);
+            println!("{}", dataframe);
         }
     }
 
@@ -385,10 +385,10 @@ async fn apply_groupby(df: DataFrame, groupby: Vec<String>) -> Result<DataFrame>
     // log::debug!("summing selected metric columns: {:?}", &metric_cols);
 
     let df_agg = df
-        .groupby(&groupby)?
+        .group_by(&groupby)?
         .select(&metric_cols)
         .sum()?
-        .sort(&groupby, false)?;
+        .sort(&groupby, SortMultipleOptions::default())?;
 
     Ok(df_agg)
 }
