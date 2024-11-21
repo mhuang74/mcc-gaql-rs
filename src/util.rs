@@ -94,7 +94,7 @@ where
 
             let lines = BufReader::new(&file).lines();
 
-            for line in lines.flatten() {
+            for line in lines.map_while(Result::ok) {
                 customer_ids.push(line);
             }
 
