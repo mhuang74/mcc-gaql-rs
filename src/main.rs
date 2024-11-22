@@ -243,6 +243,7 @@ async fn gaql_query_async(
 
     let mut dataframes: Vec<DataFrame> = Vec::new();
     let mut groupby_handles = FuturesUnordered::new();
+    let mut metrics_cols: Option<Vec<String>> = None;
 
     let start = Instant::now();
 
@@ -259,12 +260,36 @@ async fn gaql_query_async(
                             total_rows += df.height();
                             total_api_consumption += api_consumption;
 
+                            // get list of metrics columns
+                            if metrics_cols.is_none() {
+                                let cols:Vec<String> = df
+                                    .get_column_names()
+                                    .into_iter()
+                                    .filter(|c|c.contains("metrics"))
+                                    .map(|c| c.to_string()) 
+                                    .collect();
+
+                                log::debug!("Metric cols: {:?}", cols);
+
+                                metrics_cols = Some(cols.clone());
+                            }
+
+                            // check if groupby columns are in metrics columns
+                            for col in &groupby {
+                                if metrics_cols.as_ref().unwrap().contains(&col) {
+                                    let msg = format!("Groupby column cannot be a metric column: '{}'", col);
+                                    log::error!("{msg}");
+                                    return Err(anyhow::anyhow!(msg));
+                                }
+                            }
+
                             // log::debug!("Future returned non-empty GAQL results");
                             if !&groupby.is_empty() {
-                                let my_groupby = groupby.clone();
                                 // execute groupby in dedicated non-yielding thread
+                                let my_groupby = groupby.clone();
+                                let my_metrics_cols = metrics_cols.clone().unwrap();
                                 groupby_handles.push(tokio::task::spawn_blocking(|| {
-                                    apply_groupby(df, my_groupby)
+                                    apply_groupby(df, my_groupby, my_metrics_cols)
                                 }));
                             } else {
                                 dataframes.push(df);
@@ -345,7 +370,7 @@ async fn gaql_query_async(
         if !groupby.is_empty() {
             let start = Instant::now();
 
-            dataframe = apply_groupby(dataframe, groupby).await?;
+            dataframe = apply_groupby(dataframe, groupby.clone(), metrics_cols.clone().unwrap()).await?;
 
             let duration = start.elapsed();
             log::debug!(
@@ -374,21 +399,18 @@ async fn gaql_query_async(
     Ok(())
 }
 
-async fn apply_groupby(df: DataFrame, groupby: Vec<String>) -> Result<DataFrame> {
-    // get list of metrics columns for SELECT
-    let metric_cols: Vec<&str> = df
-        .get_column_names()
-        .into_iter()
-        .filter(|c| c.contains("metrics"))
-        .collect();
-
-    // log::debug!("summing selected metric columns: {:?}", &metric_cols);
+/// Apply groupby and aggregation to dataframe
+/// groupby_cols: columns to group by; cannot be a subset of agg_cols
+/// agg_cols: columns to aggregate
+async fn apply_groupby(df: DataFrame, groupby_cols: Vec<String>, agg_cols: Vec<String>) -> Result<DataFrame> {
 
     let df_agg = df
-        .group_by(&groupby)?
-        .select(&metric_cols)
-        .sum()?
-        .sort(&groupby, SortMultipleOptions::default())?;
+        .lazy()
+        // .group_by(&groupby)
+        .group_by(&groupby_cols.iter().map(String::as_str).collect::<Vec<_>>())
+        .agg(&agg_cols.iter().map(|col_name| col(col_name).sum()).collect::<Vec<_>>())
+        .sort(&groupby_cols, SortMultipleOptions::default())
+        .collect()?;
 
     Ok(df_agg)
 }
