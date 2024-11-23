@@ -196,6 +196,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 customer_id_vector,
                 query,
                 args.groupby,
+                args.sortby,
                 args.output,
             )
             .await?;
@@ -215,6 +216,7 @@ async fn gaql_query_async(
     customer_id_vector: Vec<String>,
     query: String,
     groupby: Vec<String>,
+    sortby: Vec<String>,
     outfile: Option<String>,
 ) -> Result<()> {
     log::info!(
@@ -287,9 +289,10 @@ async fn gaql_query_async(
                             if !&groupby.is_empty() {
                                 // execute groupby in dedicated non-yielding thread
                                 let my_groupby = groupby.clone();
+                                let my_sortby = sortby.clone();
                                 let my_metrics_cols = metrics_cols.clone().unwrap();
                                 groupby_handles.push(tokio::task::spawn_blocking(|| {
-                                    apply_groupby(df, my_groupby, my_metrics_cols)
+                                    apply_groupby(df, my_groupby, my_metrics_cols, my_sortby)
                                 }));
                             } else {
                                 dataframes.push(df);
@@ -366,11 +369,14 @@ async fn gaql_query_async(
             duration.as_millis().separate_with_commas()
         );
 
-        // apply 2nd pass gropuby
-        if !groupby.is_empty() {
+        // apply 2nd pass gropuby/sortby
+        if !groupby.is_empty() || !sortby.is_empty() {
             let start = Instant::now();
 
-            dataframe = apply_groupby(dataframe, groupby.clone(), metrics_cols.clone().unwrap()).await?;
+            log::info!("Applying global groupby with columns: {:?}", groupby);
+            log::info!("Applying global sortby with columns: {:?}", sortby);
+
+            dataframe = apply_groupby(dataframe, groupby.clone(), metrics_cols.clone().unwrap(), sortby.clone()).await?;
 
             let duration = start.elapsed();
             log::debug!(
@@ -402,15 +408,32 @@ async fn gaql_query_async(
 /// Apply groupby and aggregation to dataframe
 /// groupby_cols: columns to group by; cannot be a subset of agg_cols
 /// agg_cols: columns to aggregate
-async fn apply_groupby(df: DataFrame, groupby_cols: Vec<String>, agg_cols: Vec<String>) -> Result<DataFrame> {
+async fn apply_groupby(df: DataFrame, groupby_cols: Vec<String>, agg_cols: Vec<String>, sortby_cols: Vec<String>) -> Result<DataFrame> {
 
-    let df_agg = df
-        .lazy()
-        // .group_by(&groupby)
-        .group_by(&groupby_cols.iter().map(String::as_str).collect::<Vec<_>>())
-        .agg(&agg_cols.iter().map(|col_name| col(col_name).sum()).collect::<Vec<_>>())
-        .sort(&groupby_cols, SortMultipleOptions::default())
-        .collect()?;
+    // if no sortby columns provided, use groupby columns
+    let sortby_cols_ref = if sortby_cols.is_empty() {
+        &groupby_cols
+    } else {
+        &sortby_cols
+    };
+
+    // apply groupby/aggregation as needed
+    // if both sortby and groupby are empty, just returns original dataframe
+    let df_agg = if groupby_cols.is_empty() {
+        df.lazy()
+    } else {
+        df.lazy()
+            .group_by(&groupby_cols.iter().map(String::as_str).collect::<Vec<_>>())
+            .agg(&agg_cols.iter().map(|col_name| col(col_name).sum()).collect::<Vec<_>>())
+    }
+    .sort(
+        sortby_cols_ref,
+        SortMultipleOptions {
+            descending: vec![true; sortby_cols_ref.len()],
+            ..Default::default()
+        }
+    )
+    .collect()?;
 
     Ok(df_agg)
 }

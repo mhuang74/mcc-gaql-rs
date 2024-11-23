@@ -43,6 +43,10 @@ pub struct Cli {
     #[clap(long, multiple_occurrences(true))]
     pub groupby: Vec<String>,
 
+    /// Sort by columns
+    #[clap(long, multiple_occurrences(true))]
+    pub sortby: Vec<String>,
+
     /// GAQL output filename
     #[clap(short, long)]
     pub output: Option<String>,
