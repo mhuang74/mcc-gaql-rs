@@ -514,7 +514,7 @@ locations_with_highest_revenue_per_conversion = """
 	FROM location_view
 	WHERE 
 	  segments.date DURING LAST_7_DAYS
-	  and metrics.conversions > 0
+	  and metrics.conversions > 10
 	ORDER BY
 	  metrics.value_per_conversion desc, metrics.conversions desc
 	LIMIT 1000
