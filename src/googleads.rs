@@ -15,9 +15,9 @@ use yup_oauth2::{
     AccessToken, ApplicationSecret, InstalledFlowAuthenticator, InstalledFlowReturnMethod,
 };
 
+use googleads_rs::google::ads::googleads::v18::resources::GoogleAdsField;
 use googleads_rs::google::ads::googleads::v18::services::google_ads_field_service_client::GoogleAdsFieldServiceClient;
 use googleads_rs::google::ads::googleads::v18::services::google_ads_service_client::GoogleAdsServiceClient;
-use googleads_rs::google::ads::googleads::v18::resources::GoogleAdsField;
 use googleads_rs::google::ads::googleads::v18::services::{
     GoogleAdsRow, SearchGoogleAdsFieldsRequest, SearchGoogleAdsFieldsResponse,
     SearchGoogleAdsStreamRequest, SearchGoogleAdsStreamResponse,
@@ -76,7 +76,7 @@ const GOOGLE_ADS_METRICS_INTEGER_FIELDS: &[&str] = &[
     "organic_impressions",
     "organic_queries",
     "video_views",
-    "view_through_conversions"
+    "view_through_conversions",
 ];
 
 #[derive(Clone)]
@@ -218,7 +218,8 @@ pub async fn gaql_query_with_client(
                             // go through all columns specified in query, pull out string value, and insert into columns
                             for i in 0..headers.as_ref().unwrap().len() {
                                 let path = &headers.as_ref().unwrap()[i];
-                                let string_val: String = row.get(path).trim_matches('"').to_string();
+                                let string_val: String =
+                                    row.get(path).trim_matches('"').to_string();
                                 match columns.get_mut(i) {
                                     Some(v) => {
                                         v.push(string_val);
@@ -249,7 +250,10 @@ pub async fn gaql_query_with_client(
             if let Some(headers_vec) = headers {
                 for (i, header) in headers_vec.iter().enumerate() {
                     if header.starts_with("metrics") {
-                        if GOOGLE_ADS_METRICS_INTEGER_FIELDS.iter().any(|f| f==header) {
+                        if GOOGLE_ADS_METRICS_INTEGER_FIELDS
+                            .iter()
+                            .any(|f| f == header)
+                        {
                             let v: Vec<u64> = columns
                                 .get(i)
                                 .unwrap()
@@ -319,7 +323,13 @@ pub async fn fields_query(api_context: GoogleAdsAPIAccess, query: &str) {
     let mut stdout = async_std::io::stdout();
     for r in response.results {
         let row: GoogleAdsField = r;
-        let val = format!("{}\t{:?}\t{:?}\t{}\n", row.name, row.data_type(), row.category(), row.resource_name);
+        let val = format!(
+            "{}\t{:?}\t{:?}\t{}\n",
+            row.name,
+            row.data_type(),
+            row.category(),
+            row.resource_name
+        );
         stdout.write_all(val.as_bytes()).await.unwrap();
     }
 }

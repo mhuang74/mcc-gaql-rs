@@ -1,6 +1,6 @@
 //
 // Author: Michael S. Huang (mhuang74@gmail.com)
-// 
+//
 
 use std::{
     fs::{self, File},
@@ -20,6 +20,7 @@ use tonic::{codegen::InterceptedService, transport::Channel};
 mod args;
 mod config;
 mod googleads;
+mod prompt2gaql;
 mod util;
 
 #[tokio::main]
@@ -49,6 +50,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
+    }
+
+    // convert natural language prompt into GAQL
+    if args.natural_language {
+        let prompt = args.gaql_query.as_ref().unwrap();
+        log::debug!("Construct GAQL from prompt: {:?}", prompt);
+
+        let query = prompt2gaql::convert_to_gaql(prompt).await?;
+
+        log::info!("Generated GAQL Query: {:?}", query);
+
+        args.gaql_query = Some(query);
     }
 
     // for non-FieldService queries, reduce network traffic by excluding resource_name by default
@@ -82,27 +95,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if args.list_child_accounts {
         // run Account listing query
 
-        let (customer_id, query) = 
-            if args.customer_id.is_some() {
-                // query accounts under specificied customer_id account
-                let customer_id = args.customer_id.expect("Valid customer_id required.");
-                let query: String = googleads::SUB_ACCOUNTS_QUERY.to_owned();
-                log::debug!("Listing child accounts under {customer_id}");
-                (customer_id, query)
-            } else {
-                // query child accounts under MCC
-                log::debug!(
-                    "Listing ALL child accounts under MCC {}",
-                    &config.mcc_customerid
-                );
-                (config.mcc_customerid, googleads::SUB_ACCOUNTS_QUERY.to_owned())
-            };
+        let (customer_id, query) = if args.customer_id.is_some() {
+            // query accounts under specificied customer_id account
+            let customer_id = args.customer_id.expect("Valid customer_id required.");
+            let query: String = googleads::SUB_ACCOUNTS_QUERY.to_owned();
+            log::debug!("Listing child accounts under {customer_id}");
+            (customer_id, query)
+        } else {
+            // query child accounts under MCC
+            log::debug!(
+                "Listing ALL child accounts under MCC {}",
+                &config.mcc_customerid
+            );
+            (
+                config.mcc_customerid,
+                googleads::SUB_ACCOUNTS_QUERY.to_owned(),
+            )
+        };
 
         let dataframe: Option<DataFrame> =
             match googleads::gaql_query(api_context, customer_id, query).await {
-                Ok((df, _api_consumption)) => {
-                    Some(df)
-                }
+                Ok((df, _api_consumption)) => Some(df),
                 Err(e) => {
                     let msg = format!("Error: {e}");
                     println!("{msg}");
@@ -185,7 +198,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 None
             };
 
-
         // apply query to all customer_ids
         if let Some(customer_id_vector) = customer_ids {
             let query: String = args.gaql_query.expect("Expected GAQL query");
@@ -203,7 +215,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             log::error!("Abort GAQL query. Can't find child accounts to run on.");
         }
-        
     } else {
         println!("Nothing to do.");
     }
@@ -264,11 +275,11 @@ async fn gaql_query_async(
 
                             // get list of metrics columns
                             if metrics_cols.is_none() {
-                                let cols:Vec<String> = df
+                                let cols: Vec<String> = df
                                     .get_column_names()
                                     .into_iter()
-                                    .filter(|c|c.contains("metrics"))
-                                    .map(|c| c.to_string()) 
+                                    .filter(|c| c.contains("metrics"))
+                                    .map(|c| c.to_string())
                                     .collect();
 
                                 log::debug!("Metric cols: {:?}", cols);
@@ -279,7 +290,10 @@ async fn gaql_query_async(
                             // check if groupby columns are in metrics columns
                             for col in &groupby {
                                 if metrics_cols.as_ref().unwrap().contains(&col) {
-                                    let msg = format!("Groupby column cannot be a metric column: '{}'", col);
+                                    let msg = format!(
+                                        "Groupby column cannot be a metric column: '{}'",
+                                        col
+                                    );
                                     log::error!("{msg}");
                                     return Err(anyhow::anyhow!(msg));
                                 }
@@ -376,7 +390,13 @@ async fn gaql_query_async(
             log::info!("Applying global groupby with columns: {:?}", groupby);
             log::info!("Applying global sortby with columns: {:?}", sortby);
 
-            dataframe = apply_groupby(dataframe, groupby.clone(), metrics_cols.clone().unwrap(), sortby.clone()).await?;
+            dataframe = apply_groupby(
+                dataframe,
+                groupby.clone(),
+                metrics_cols.clone().unwrap(),
+                sortby.clone(),
+            )
+            .await?;
 
             let duration = start.elapsed();
             log::debug!(
@@ -408,8 +428,12 @@ async fn gaql_query_async(
 /// Apply groupby and aggregation to dataframe
 /// groupby_cols: columns to group by; cannot be a subset of agg_cols
 /// agg_cols: columns to aggregate
-async fn apply_groupby(df: DataFrame, groupby_cols: Vec<String>, agg_cols: Vec<String>, sortby_cols: Vec<String>) -> Result<DataFrame> {
-
+async fn apply_groupby(
+    df: DataFrame,
+    groupby_cols: Vec<String>,
+    agg_cols: Vec<String>,
+    sortby_cols: Vec<String>,
+) -> Result<DataFrame> {
     // if no sortby columns provided, use groupby columns
     let sortby_cols_ref = if sortby_cols.is_empty() {
         &groupby_cols
@@ -424,14 +448,19 @@ async fn apply_groupby(df: DataFrame, groupby_cols: Vec<String>, agg_cols: Vec<S
     } else {
         df.lazy()
             .group_by(&groupby_cols.iter().map(String::as_str).collect::<Vec<_>>())
-            .agg(&agg_cols.iter().map(|col_name| col(col_name).sum()).collect::<Vec<_>>())
+            .agg(
+                &agg_cols
+                    .iter()
+                    .map(|col_name| col(col_name).sum())
+                    .collect::<Vec<_>>(),
+            )
     }
     .sort(
         sortby_cols_ref,
         SortMultipleOptions {
             descending: vec![true; sortby_cols_ref.len()],
             ..Default::default()
-        }
+        },
     )
     .collect()?;
 

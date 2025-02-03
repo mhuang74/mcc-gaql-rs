@@ -8,6 +8,21 @@ use std::io::{self, Read};
 #[derive(Parser, Debug)]
 #[clap(author, version, about)]
 pub struct Cli {
+    /// Google Ads GAQL query to run
+    pub gaql_query: Option<String>,
+
+    /// Load named query from file
+    #[clap(short = 'q', long)]
+    pub stored_query: Option<String>,
+
+    /// Use natural language prompt instead of GAQL; prompt is converted to GAQL via LLM
+    #[clap(short = 'n', long)]
+    pub natural_language: bool,
+
+    /// GAQL output filename
+    #[clap(short, long)]
+    pub output: Option<String>,
+
     /// Query using default MCC and Child CustomerIDs file specified for this profile
     #[clap(short, long)]
     pub profile: Option<String>,
@@ -15,13 +30,6 @@ pub struct Cli {
     /// Apply query to a single CustomerID. Or use with `--all-linked-child-accounts` to query all child accounts.
     #[clap(short, long)]
     pub customer_id: Option<String>,
-
-    /// Load named query from file
-    #[clap(short = 'q', long)]
-    pub stored_query: Option<String>,
-
-    /// Google Ads GAQL query to run
-    pub gaql_query: Option<String>,
 
     /// List all child accounts under MCC
     #[clap(short, long)]
@@ -46,10 +54,6 @@ pub struct Cli {
     /// Sort by columns
     #[clap(long, multiple_occurrences(true))]
     pub sortby: Vec<String>,
-
-    /// GAQL output filename
-    #[clap(short, long)]
-    pub output: Option<String>,
 }
 
 pub fn parse() -> Cli {
@@ -57,7 +61,9 @@ pub fn parse() -> Cli {
 
     if cli.stored_query.is_none() && cli.gaql_query.is_none() && !cli.list_child_accounts {
         let mut buffer = String::new();
-        io::stdin().read_to_string(&mut buffer).expect("Failed to read from stdin");
+        io::stdin()
+            .read_to_string(&mut buffer)
+            .expect("Failed to read from stdin");
         if !buffer.trim().is_empty() {
             cli.gaql_query = Some(buffer);
         }
