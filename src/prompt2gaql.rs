@@ -1,7 +1,7 @@
 use std::{env, vec};
 
 use rig::{
-    completion::Prompt,
+    completion::{Completion, Prompt},
     embeddings::{embed::Embed, EmbedError, EmbeddingsBuilder, TextEmbedder},
     providers::openai::{Client, TEXT_EMBEDDING_ADA_002},
     vector_store::in_memory_store::InMemoryVectorStore,
@@ -150,18 +150,23 @@ LIMIT 25
     // Create vector store index
     let index = vector_store.index(embedding_model);
 
-    let rag_agent = openai_client.agent("gpt-4")
+    // Create OpenAI Agent with RAG context
+    let rag_agent = openai_client.agent("gpt-4o-mini")
         .preamble("
-            You are a Google Ads GAQL query assistant here to assist the user to translate natural language query requests into valid GAQL. Respond with GAQL query only, and nothing else.
-            You will find example GAQL that could be useful below.
+            You are a Google Ads GAQL query assistant here to assist the user to translate natural language query requests into valid GAQL. 
+            Respond with GAQL query as plain text, without any formatting or code blocks.
+            You will find example GAQL that could be useful in the attachments below.
         ")
         .dynamic_context(3, index)
+        .temperature(0.1)
         .build();
+
+    // HACK: dump full LLM prompt via CompletionRequest
+    let completion_request = rag_agent.completion(prompt, vec![]).await?.build();
+    log::debug!("LLM Preamble: {:?}, Prompt: {:?}", completion_request.preamble, completion_request.prompt_with_context());
 
     // Prompt the agent and print the response
     let response = rag_agent.prompt(prompt).await?;
-
-    // println!("Generated GAQL Query: {}", response);
 
     Ok(response)
 }
