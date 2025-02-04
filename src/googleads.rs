@@ -15,7 +15,6 @@ use yup_oauth2::{
     AccessToken, ApplicationSecret, InstalledFlowAuthenticator, InstalledFlowReturnMethod,
 };
 
-use googleads_rs::google::ads::googleads::v18::resources::GoogleAdsField;
 use googleads_rs::google::ads::googleads::v18::services::google_ads_field_service_client::GoogleAdsFieldServiceClient;
 use googleads_rs::google::ads::googleads::v18::services::google_ads_service_client::GoogleAdsServiceClient;
 use googleads_rs::google::ads::googleads::v18::services::{
@@ -233,10 +232,17 @@ pub async fn gaql_query_with_client(
                         }
                     }
                     Err(status) => {
+                        let error_details = String::from_utf8_lossy(status.details())
+                            .trim()
+                            .replace(|c: char| !c.is_ascii(), "")
+                            .replace("%", " ")
+                            .replace("\n", " ")
+                            .replace("\r", " ");
+
                         bail!(
-                            "GoogleAdsClient streaming error. Account: {customer_id}, Message: {}, Details: {}",
+                            "GoogleAdsClient streaming error. Account: {customer_id}, Message: '{}', Details: '{}'",
                             status.message(),
-                            String::from_utf8_lossy(status.details()).into_owned()
+                            error_details
                         );
                     }
                 }
@@ -321,14 +327,14 @@ pub async fn fields_query(api_context: GoogleAdsAPIAccess, query: &str) {
         .into_inner();
 
     let mut stdout = async_std::io::stdout();
-    for r in response.results {
-        let row: GoogleAdsField = r;
+    for row in response.results {
         let val = format!(
-            "{}\t{:?}\t{:?}\t{}\n",
+            "{}\t{:?}\t{}\t{}\t{:?}\n",
             row.name,
-            row.data_type(),
             row.category(),
-            row.resource_name
+            row.selectable,
+            row.filterable,
+            row.selectable_with,
         );
         stdout.write_all(val.as_bytes()).await.unwrap();
     }
