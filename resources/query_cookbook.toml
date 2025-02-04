@@ -519,3 +519,69 @@ locations_with_highest_revenue_per_conversion = """
 	  metrics.value_per_conversion desc, metrics.conversions desc
 	LIMIT 1000
 """
+
+# Asset performance of Responsive Search Ads
+asset_performance_rsa = """
+SELECT 
+  customer.id, 
+  customer.descriptive_name, 
+  campaign.id, 
+  campaign.name, 
+  campaign.advertising_channel_type, 
+  ad_group.id, 
+  ad_group.name, 
+  ad_group.type,
+  ad_group_ad.ad.id,
+  ad_group_ad.ad.responsive_search_ad.headlines, 
+  ad_group_ad.ad.responsive_search_ad.descriptions, 
+  ad_group_ad.ad.responsive_search_ad.path1, 
+  ad_group_ad.ad.responsive_search_ad.path2, 
+  metrics.impressions, 
+  metrics.clicks, 
+  metrics.ctr, 
+  metrics.cost_micros, 
+  metrics.average_cpc 
+FROM ad_group_ad 
+WHERE 
+  ad_group_ad.ad.type IN ('RESPONSIVE_SEARCH_AD') 
+  AND segments.date DURING LAST_30_DAYS 
+ORDER BY 
+  campaign.name, 
+  ad_group.name, 
+  metrics.ctr DESC 
+LIMIT 1000 
+"""
+
+# investigate RSA and drill down on single adgroup for Nordstrom account
+asset_performance_rsa_nordstrom_drilldown = """
+SELECT 
+  customer.id, 
+  customer.descriptive_name, 
+  campaign.id, 
+  campaign.name, 
+  campaign.advertising_channel_type, 
+  ad_group.id, 
+  ad_group.name, 
+  ad_group.type, 
+  ad_group_ad.ad.id,
+  ad_group_ad.ad.responsive_search_ad.headlines, 
+  ad_group_ad.ad.responsive_search_ad.descriptions, 
+  ad_group_ad.ad.responsive_search_ad.path1, 
+  ad_group_ad.ad.responsive_search_ad.path2, 
+  metrics.impressions, 
+  metrics.clicks, 
+  metrics.ctr, 
+  metrics.cost_micros, 
+  metrics.average_cpc 
+FROM ad_group_ad 
+WHERE 
+  ad_group_ad.ad.type IN ('RESPONSIVE_SEARCH_AD') 
+  AND segments.date DURING LAST_30_DAYS 
+  AND ad_group.id IN (98163443460)
+  AND campaign.id IN (9533454454)
+ORDER BY 
+  campaign.name, 
+  ad_group.name, 
+  metrics.ctr DESC 
+LIMIT 1000 
+"""
