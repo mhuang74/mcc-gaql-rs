@@ -585,3 +585,33 @@ ORDER BY
   metrics.ctr DESC 
 LIMIT 1000 
 """
+
+
+# investigate RSA assets and drill down on single adgroup for Nordstrom account
+asset_performance_rsa_assets_nordstrom_drilldown = """
+SELECT 
+  customer.id, 
+  campaign.id, 
+  ad_group.id, 
+  ad_group_ad.ad.id, 
+  ad_group_ad_asset_view.asset, 
+  ad_group_ad_asset_view.performance_label,
+  ad_group_ad_asset_view.field_type, 
+  ad_group_ad_asset_view.pinned_field, 
+  metrics.impressions,
+  metrics.clicks, 
+  metrics.ctr,
+  metrics.cost_micros
+FROM ad_group_ad_asset_view 
+WHERE 
+  ad_group_ad.ad.type IN ('RESPONSIVE_SEARCH_AD') 
+  AND segments.date DURING LAST_30_DAYS 
+  AND ad_group.id IN (98163443460)
+  AND campaign.id IN (9533454454)
+ORDER BY 
+  campaign.name, 
+  ad_group.name,
+  ad_group_ad.ad.id, 
+  metrics.impressions DESC
+LIMIT 1000 
+"""
