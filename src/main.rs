@@ -3,9 +3,7 @@
 //
 
 use std::{
-    fs::{self, File},
-    process,
-    time::Instant,
+    env, fs::{self, File}, process, time::Instant
 };
 
 use anyhow::{Context, Result};
@@ -23,6 +21,8 @@ mod googleads;
 mod prompt2gaql;
 mod util;
 
+use crate::util::QueryEntry;
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     util::init_logger();
@@ -37,27 +37,50 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // load stored query
     if let Some(query_name) = args.stored_query {
-        if let Some(query_filename) = config.queries_filename {
-            let queries_path = crate::config::config_file_path(&query_filename).unwrap();
+        let query_filename = config.queries_filename.as_ref().expect("Query cookbook filename undefined");
+        let queries_path = crate::config::config_file_path(&query_filename).unwrap();
 
-            args.gaql_query = match util::get_query_from_file(queries_path, &query_name).await {
-                Ok(s) => Some(s),
-                Err(e) => {
-                    let msg = format!("Unable to load query: {e}");
-                    log::error!("{msg}");
-                    println!("{msg}");
-                    process::exit(1);
-                }
+        args.gaql_query = match util::get_queries_from_file(&queries_path).await {
+            Ok(map) => {
+                let query_entry = map.get(&query_name).expect("Query not found");
+                log::debug!("Found query '{query_name}'.");
+
+                Some(query_entry.query.to_owned())
+            },
+            Err(e) => {
+                let msg = format!("Unable to load query: {e}");
+                log::error!("{msg}");
+                println!("{msg}");
+                process::exit(1);
             }
         }
+        
     }
 
     // convert natural language prompt into GAQL
     if args.natural_language {
+        // Use OpenAI for LLM
+        let openai_api_key = env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY not set");
+        let query_filename = config.queries_filename.as_ref().expect("Query cookbook filename undefined");
+        let queries_path = crate::config::config_file_path(&query_filename).unwrap();
+
+        let example_queries:Vec<QueryEntry> = match util::get_queries_from_file(&queries_path).await {
+            Ok(map) => {
+                map.into_values().collect()
+            },
+            Err(e) => {
+                let msg = format!("Unable to load query cookbook for RAG: {e}");
+                log::error!("{msg}");
+                println!("{msg}");
+                process::exit(1);
+            }
+        };
+
+
         let prompt = args.gaql_query.as_ref().unwrap();
         log::debug!("Construct GAQL from prompt: {:?}", prompt);
 
-        let query = prompt2gaql::convert_to_gaql(prompt).await?;
+        let query = prompt2gaql::convert_to_gaql(&openai_api_key, example_queries, prompt).await?;
 
         log::info!("Generated GAQL Query: {:?}", query);
 

@@ -4,8 +4,12 @@ use std::{
     fs::File,
     io::{BufRead, BufReader, Read},
     path::Path,
+    collections::HashMap,
 };
+
 use toml::Value;
+use serde::Serialize;
+
 
 #[allow(dead_code)]
 const CACHE_FILENAME: &str = ".cache";
@@ -115,8 +119,27 @@ where
     }
 }
 
-/// get named query from file
-pub async fn get_query_from_file<P>(filename: P, query_name: &str) -> Result<String>
+// Query entries from cookbook
+// Make it sortable and comparable for vector search
+#[derive(Serialize, Clone, Debug, Eq, PartialEq, Default)]
+pub struct QueryEntry {
+    pub description: String,
+    pub query: String,
+}
+
+// Each query entry in TOML has 2 entries:
+//   * "description": explains what the query does
+//   * "query": valid GAQL query
+impl QueryEntry {
+    fn from_value(value: &Value) -> Self {
+        let description = value.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let query = value.get("query").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        QueryEntry { description, query }
+    }
+}
+
+/// get named queries from file, as a Map of String
+pub async fn get_queries_from_file<P>(filename: P) -> Result<HashMap<String, QueryEntry>>
 where
     P: AsRef<Path>,
 {
@@ -137,25 +160,26 @@ where
                 }
             };
 
-            let query = match toml.get(query_name) {
-                Some(v) => match v.as_str() {
-                    Some(s) => s.to_owned(),
-                    _ => {
-                        bail!("Query not valid string: {}", v);
-                    }
-                },
-                _ => {
-                    bail!("Query not found: {query_name}");
-                }
-            };
+            let mut query_map = HashMap::new();
 
-            log::debug!(
-                "Query '{}' loaded from file {}.",
-                query_name,
+            if let Value::Table(entries) = toml {
+                for (section, content) in entries {
+                    if let Value::Table(content_table) = content {
+                        let query_entry = QueryEntry::from_value(&Value::Table(content_table));
+                        query_map.insert(section, query_entry);
+                    }
+                }
+            } else {
+                bail!("Expected a TOML table at the root");
+            }
+
+            log::info!(
+                "{} queries loaded from file {}.",
+                query_map.len(),
                 filename.as_ref().display()
             );
 
-            Ok(query)
+            Ok(query_map)
         }
         Err(e) => {
             bail!("Unable to load named query file. Error: {}", e.to_string());

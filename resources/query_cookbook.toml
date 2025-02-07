@@ -8,85 +8,107 @@
 #
 # Naming Convention = <grain>_with_<description>, e.g. accounts_with_traffic_last_week
 #
+# FORMAT
 #
-##
+# [query_name_using_snake_case]
+# description = """
+# Provide a description of query
+# """
+# query = """
+# actual GAQL query
+# """
+#
 
-
-# Account IDs Accessible and Trafficking
-account_ids_with_access_and_traffic_last_week = """
-	SELECT 
-	  customer.id
-	FROM customer 
-	WHERE 
-	  segments.date during LAST_7_DAYS
-	  AND metrics.clicks > 1
+[account_ids_with_access_and_traffic_last_week]
+description = """
+Account IDs Accessible and Trafficking
+"""
+query = """
+SELECT 
+	customer.id
+FROM customer 
+WHERE 
+	segments.date during LAST_7_DAYS
+	AND metrics.clicks > 1
 """
 
-# Accounts with Traffic Last Week
-accounts_with_traffic_last_week = """
-	SELECT 
-	  customer.id, 
-	  customer.descriptive_name, 
-	  metrics.impressions, 
-	  metrics.clicks, 
-	  metrics.cost_micros,
-	  customer.currency_code 
-	FROM customer 
-	WHERE 
-	  segments.date during LAST_7_DAYS
-	  AND metrics.impressions > 1
+[accounts_with_traffic_last_week]
+description = """
+Accounts with Traffic Last Week
+"""
+query = """
+SELECT 
+	customer.id, 
+	customer.descriptive_name, 
+	metrics.impressions, 
+	metrics.clicks, 
+	metrics.cost_micros,
+	customer.currency_code 
+FROM customer 
+WHERE 
+	segments.date during LAST_7_DAYS
+	AND metrics.impressions > 1
 """
 
-# Top Keywords
-keywords_with_top_traffic_last_week = """
-	SELECT
-	  customer.id,
-	  customer.descriptive_name,
-	  campaign.id,
-	  campaign.name,
-	  campaign.advertising_channel_type,
-	  ad_group.id,
-	  ad_group.name,
-	  ad_group.type,
-	  ad_group_criterion.criterion_id,
-	  ad_group_criterion.keyword.text,
-	  metrics.impressions,
-	  metrics.clicks,
-	  metrics.cost_micros,
-	  customer.currency_code 
-	FROM keyword_view
-	WHERE
-	  segments.date DURING LAST_7_DAYS
-	  and metrics.clicks > 10000
-	ORDER BY
-	  metrics.clicks DESC
-	LIMIT 10
+[keywords_with_top_traffic_last_week]
+description = """
+Top Keywords
+"""
+query = """
+SELECT
+	customer.id,
+	customer.descriptive_name,
+	campaign.id,
+	campaign.name,
+	campaign.advertising_channel_type,
+	ad_group.id,
+	ad_group.name,
+	ad_group.type,
+	ad_group_criterion.criterion_id,
+	ad_group_criterion.keyword.text,
+	metrics.impressions,
+	metrics.clicks,
+	metrics.cost_micros,
+	customer.currency_code 
+FROM keyword_view
+WHERE
+	segments.date DURING LAST_7_DAYS
+	and metrics.clicks > 10000
+ORDER BY
+	metrics.clicks DESC
+LIMIT 10
 """
 
-# Accounts with Performance Max Campaigns
-accounts_with_perf_max_campaigns_last_week = """
-	SELECT 
-	  customer.id, 
-	  customer.descriptive_name, 
-	  campaign.id, 
-	  campaign.advertising_channel_type, 
-	  campaign.name, 
-	  metrics.impressions, 
-	  metrics.clicks, 
-	  metrics.cost_micros,
-	  customer.currency_code 
-	FROM campaign 
-	WHERE 
-	  segments.date DURING LAST_7_DAYS 
-	  AND campaign.advertising_channel_type IN ('PERFORMANCE_MAX') 
-	  AND metrics.clicks > 100
-	ORDER BY 
-	  metrics.clicks DESC 
-	LIMIT 1
+[accounts_with_perf_max_campaigns_last_week]
+description = """
+Accounts with Performance Max Campaigns
+"""
+query = """
+SELECT 
+  customer.id, 
+  customer.descriptive_name, 
+  campaign.id, 
+  campaign.advertising_channel_type, 
+  campaign.name, 
+  metrics.impressions, 
+  metrics.clicks, 
+  metrics.cost_micros,
+  customer.currency_code 
+FROM campaign 
+WHERE 
+  segments.date DURING LAST_7_DAYS 
+  AND campaign.advertising_channel_type IN ('PERFORMANCE_MAX') 
+  AND metrics.clicks > 100
+ORDER BY 
+  metrics.clicks DESC 
+LIMIT 1
 """
 
-# Accounts with Smart Campaigns
-accounts_with_smart_campaigns_last_week = """
+[accounts_with_smart_campaigns_last_week]
+description = """
+Accounts with Smart Campaigns
+"""
+query = """
 	SELECT 
 	  customer.id, 
 	  customer.descriptive_name, 
@@ -107,8 +129,11 @@ accounts_with_smart_campaigns_last_week = """
 	LIMIT 1
 """
 
-# Accounts with Local Campaigns
-accounts_with_local_campaigns_last_week = """
+[accounts_with_local_campaigns_last_week]
+description = """
+Accounts with Local Campaigns
+"""
+query = """
 	SELECT 
 	  customer.id, 
 	  customer.descriptive_name, 
@@ -129,8 +154,11 @@ accounts_with_local_campaigns_last_week = """
 	LIMIT 1
 """
 
-# Accounts with Shopping Campaigns
-accounts_with_shopping_campaigns_last_week = """
+[accounts_with_shopping_campaigns_last_week]
+description = """
+Accounts with Shopping Campaigns
+"""
+query = """
 	SELECT 
 	  customer.id, 
 	  customer.descriptive_name, 
@@ -151,8 +179,11 @@ accounts_with_shopping_campaigns_last_week = """
 	LIMIT 1
 """
 
-# Accounts with Multi-Channel Campaigns
-accounts_with_multichannel_campaigns_last_week = """
+[accounts_with_multichannel_campaigns_last_week]
+description = """
+Accounts with Multi-Channel Campaigns
+"""
+query = """
 	SELECT 
 	  customer.id, 
 	  customer.descriptive_name, 
@@ -174,8 +205,11 @@ accounts_with_multichannel_campaigns_last_week = """
 """
 
 
-# Accounts with Asset-based Sitelink Ext
-accounts_with_asset_sitelink_last_week = """
+[accounts_with_asset_sitelink_last_week]
+description = """
+Accounts with Asset-based Sitelink Ext
+"""
+query = """
 	SELECT 
 	  customer.id, 
 	  customer.descriptive_name, 
@@ -197,8 +231,11 @@ accounts_with_asset_sitelink_last_week = """
 	LIMIT 1
 """
 
-# Accounts with Asset-based Call Ext
-accounts_with_asset_call_last_week = """
+[accounts_with_asset_call_last_week]
+description = """
+Accounts with Asset-based Call Ext
+"""
+query = """
 	SELECT 
 	  customer.id, 
 	  customer.descriptive_name, 
@@ -220,8 +257,11 @@ accounts_with_asset_call_last_week = """
 	LIMIT 1
 """
 
-# Accounts with Asset-based Callout Ext
-accounts_with_asset_callout_last_week = """
+[accounts_with_asset_callout_last_week]
+description = """
+Accounts with Asset-based Callout Ext
+"""
+query = """
 	SELECT 
 	  customer.id, 
 	  customer.descriptive_name, 
@@ -243,8 +283,11 @@ accounts_with_asset_callout_last_week = """
 	LIMIT 1
 """
 
-# Accounts with Asset-based App Ext
-accounts_with_asset_app_last_week = """
+[accounts_with_asset_app_last_week]
+description = """
+Accounts with Asset-based App Ext
+"""
+query = """
 	SELECT 
 	  customer.id, 
 	  customer.descriptive_name, 
@@ -266,8 +309,11 @@ accounts_with_asset_app_last_week = """
 	LIMIT 1
 """
 
-# Last 30-day Traffic from Performance Max Campaigns
-perf_max_campaigns_with_traffic_last_30_days = """
+[perf_max_campaigns_with_traffic_last_30_days]
+description = """
+Last 30-day Traffic from Performance Max Campaigns
+"""
+query = """
 	SELECT 
 	  campaign.id, 
 	  segments.date,
@@ -284,8 +330,11 @@ perf_max_campaigns_with_traffic_last_30_days = """
 	  segments.date, campaign.id
 """
 
-# YTD Traffic from asset_field_type_view resource
-asset_fields_with_traffic_ytd = """
+[asset_fields_with_traffic_ytd]
+description = """
+YTD Traffic from asset_field_type_view resource
+"""
+query = """
 	SELECT 
 	  asset_field_type_view.field_type, 
 	  segments.date,
@@ -301,8 +350,11 @@ asset_fields_with_traffic_ytd = """
 	  asset_field_type_view.field_type, segments.date
 """
 
-# YTD Trafic from extension_feed_item resource
-extension_feed_items_with_traffic_ytd = """
+[extension_feed_items_with_traffic_ytd]
+description = """
+YTD Trafic from extension_feed_item resource
+"""
+query = """
 	SELECT
 	  extension_feed_item.extension_type,
 	  segments.date,
@@ -318,8 +370,11 @@ extension_feed_items_with_traffic_ytd = """
 	  extension_feed_item.extension_type, segments.date
 """
 
-# YTD Trafic from feed_placeholder_view resource
-feed_placeholders_with_traffic_ytd = """
+[feed_placeholders_with_traffic_ytd]
+description = """
+YTD Trafic from feed_placeholder_view resource
+"""
+query = """
 	SELECT
 	  feed_placeholder_view.placeholder_type,
 	  segments.date,
@@ -335,8 +390,11 @@ feed_placeholders_with_traffic_ytd = """
 	  feed_placeholder_view.placeholder_type, segments.date
 """
 
-# Top Spending Smart Bidding Campaigns
-campaigns_with_smart_bidding_by_spend = """
+[campaigns_with_smart_bidding_by_spend]
+description = """
+Top Spending Smart Bidding Campaigns
+"""
+query = """
 	SELECT 
 	  customer.id, 
 	  customer.descriptive_name,
@@ -354,7 +412,7 @@ campaigns_with_smart_bidding_by_spend = """
  	  metrics.conversions_value
 	FROM campaign
 	WHERE
-	  campaign.bidding_strategy_type IN ('MAXIMIZE_CONVERSIONS', 'MAXIMIZE_CONVERSION_VALUE', 'TARGET_CPA', 'TARGET_ROAS') 
+	  campaign.bidding_strategy_type IN ('MAXIMIZE_CLICKS', 'MAXIMIZE_CONVERSIONS', 'MAXIMIZE_CONVERSION_VALUE', 'TARGET_CPA', 'TARGET_ROAS', 'TARGET_SPEND') 
 	  AND campaign.status IN ('ENABLED') 
 	  AND segments.date DURING LAST_7_DAYS 
 	  AND metrics.cost_micros > 1000000000
@@ -362,8 +420,11 @@ campaigns_with_smart_bidding_by_spend = """
 	LIMIT 25
 """
 
-# Performance of all Shopping Campaigns
-campaigns_shopping_campaign_performance = """
+[campaigns_shopping_campaign_performance]
+description = """
+Performance of all Shopping Campaigns
+"""
+query = """
 	SELECT 
 	  customer.id, 
 	  customer.descriptive_name,
@@ -388,8 +449,11 @@ campaigns_shopping_campaign_performance = """
 	ORDER by metrics.cost_micros DESC
 """
 
-# Search Term Top CPA for Smart Campaigns
-smart_campaign_search_terms_with_top_spend = """
+[smart_campaign_search_terms_with_top_spend]
+description = """
+Search Term Top CPA for Smart Campaigns
+"""
+query = """
 	SELECT 
 	  customer.id, 
 	  customer.descriptive_name, 
@@ -411,8 +475,11 @@ smart_campaign_search_terms_with_top_spend = """
 	LIMIT 100
 """
 
-# Search Terms with Clicks
-all_search_terms_with_clicks = """
+[all_search_terms_with_clicks]
+description = """
+Search Terms with Clicks
+"""
+query = """
 	SELECT 
 	  customer.id, 
 	  customer.descriptive_name,
@@ -436,8 +503,11 @@ all_search_terms_with_clicks = """
 	  metrics.cost_micros desc
 """
 
-# Search Term Top CPA
-search_terms_with_top_cpa = """
+[search_terms_with_top_cpa]
+description = """
+Search Term Top CPA
+"""
+query = """
 	SELECT 
 	  customer.id, 
 	  customer.descriptive_name,
@@ -463,8 +533,11 @@ search_terms_with_top_cpa = """
 	LIMIT 50 
 """
 
-# Search Term Low ROAS
-search_terms_with_low_roas = """
+[search_terms_with_low_roas]
+description = """
+Search Term Low ROAS
+"""
+query = """
 	SELECT 
 	  customer.id, 
 	  customer.descriptive_name,
@@ -490,8 +563,11 @@ search_terms_with_low_roas = """
 	LIMIT 50 
 """
 
-# locations by
-locations_with_highest_revenue_per_conversion = """
+[locations_with_highest_revenue_per_conversion]
+description = """
+top locations by revenue per conversion
+"""
+query = """
 	SELECT 
 		customer.id, 
 		customer.descriptive_name, 
@@ -520,8 +596,11 @@ locations_with_highest_revenue_per_conversion = """
 	LIMIT 1000
 """
 
-# Asset performance of Responsive Search Ads
-asset_performance_rsa = """
+[asset_performance_rsa]
+description = """
+Asset performance of Responsive Search Ads
+"""
+query = """
 SELECT 
   customer.id, 
   customer.descriptive_name, 
@@ -552,8 +631,11 @@ ORDER BY
 LIMIT 1000 
 """
 
-# investigate RSA and drill down on single adgroup for Nordstrom account
-asset_performance_rsa_nordstrom_drilldown = """
+[asset_performance_rsa_nordstrom_drilldown]
+description = """
+investigate RSA and drill down on single adgroup for Nordstrom account
+"""
+query = """
 SELECT 
   customer.id, 
   customer.descriptive_name, 
@@ -586,9 +668,11 @@ ORDER BY
 LIMIT 1000 
 """
 
-
-# investigate RSA assets and drill down on single adgroup for Nordstrom account
-asset_performance_rsa_assets_nordstrom_drilldown = """
+[asset_performance_rsa_assets_nordstrom_drilldown]
+description = """
+investigate RSA assets and drill down on single adgroup for Nordstrom account
+"""
+query = """
 SELECT 
   customer.id, 
   campaign.id, 
@@ -614,4 +698,54 @@ ORDER BY
   ad_group_ad.ad.id, 
   metrics.impressions DESC
 LIMIT 1000 
+"""
+
+[recent_campaign_changes]
+description = """
+recent campaign changes with user, changed fields, and datetime of change event
+"""
+query = """
+SELECT
+  customer.id,
+  customer.descriptive_name,
+  campaign.id,
+  change_event.change_date_time,
+  change_event.client_type,
+  change_event.change_resource_type,
+  change_event.changed_fields,
+  change_event.user_email,
+  campaign.name
+FROM
+  change_event
+WHERE
+  change_event.change_date_time DURING LAST_14_DAYS
+  AND change_event.change_resource_type IN ('CAMPAIGN')
+ORDER BY
+  change_event.change_date_time DESC
+LIMIT 100
+"""
+
+[recent_changes]
+description = """
+recent changes across common objects like campaign, adgroup, ad, keywords, budgets, etc. return with changed object type, fields, user, changed fields, and datetime of change event
+"""
+query = """
+SELECT
+  customer.id,
+  customer.descriptive_name,
+  campaign.id,
+  change_event.change_date_time,
+  change_event.client_type,
+  change_event.change_resource_type,
+  change_event.changed_fields,
+  change_event.user_email,
+  campaign.name
+FROM
+  change_event
+WHERE
+  change_event.change_date_time DURING LAST_14_DAYS
+  AND change_event.change_resource_type IN ('CAMPAIGN', 'AD_GROUP', 'AD_GROUP_AD', 'AD', 'AD_GROUP_CRITERION', 'CAMPAIGN_BUDGET')
+ORDER BY
+  change_event.change_date_time DESC
+LIMIT 100
 """
