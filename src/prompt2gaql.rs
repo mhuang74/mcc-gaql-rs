@@ -4,7 +4,7 @@ use rig::{
     agent::Agent,
     completion::{Completion, Prompt},
     embeddings::{embed::Embed, EmbedError, EmbeddingsBuilder, TextEmbedder},
-    providers::openai::{Client, CompletionModel, TEXT_EMBEDDING_ADA_002, GPT_4O_MINI},
+    providers::openai::{Client, CompletionModel, GPT_4O_MINI, TEXT_EMBEDDING_ADA_002},
     vector_store::in_memory_store::InMemoryVectorStore,
 };
 
@@ -23,7 +23,10 @@ struct RAGAgent {
 }
 
 impl RAGAgent {
-    pub async fn init(openai_api_key: &str, query_cookbook: Vec<QueryEntry>) -> Result<Self, anyhow::Error> {
+    pub async fn init(
+        openai_api_key: &str,
+        query_cookbook: Vec<QueryEntry>,
+    ) -> Result<Self, anyhow::Error> {
         let client = Client::new(openai_api_key);
         let embedding_model = client.embedding_model(TEXT_EMBEDDING_ADA_002);
 
@@ -55,17 +58,24 @@ impl RAGAgent {
     pub async fn prompt(&self, prompt: &str) -> Result<String, anyhow::Error> {
         // HACK: dump full LLM prompt via CompletionRequest
         let completion_request = self.agent.completion(prompt, vec![]).await?.build();
-        log::debug!("LLM Preamble: {:?}, Prompt: {:?}", completion_request.preamble, completion_request.prompt_with_context());
+        log::debug!(
+            "LLM Preamble: {:?}, Prompt: {:?}",
+            completion_request.preamble,
+            completion_request.prompt_with_context()
+        );
 
-        // Prompt the agent 
-        self.agent.prompt(prompt).await.map_err(|e| anyhow::Error::new(e))
+        // Prompt the agent
+        self.agent.prompt(prompt).await.map_err(anyhow::Error::new)
     }
 }
 
-pub async fn convert_to_gaql(openai_api_key: &str, example_queries: Vec<QueryEntry>, prompt: &str) -> Result<String, anyhow::Error> {
-
+pub async fn convert_to_gaql(
+    openai_api_key: &str,
+    example_queries: Vec<QueryEntry>,
+    prompt: &str,
+) -> Result<String, anyhow::Error> {
     // Initialize RAGAgent
-    let rag_agent = RAGAgent::init(&openai_api_key, example_queries).await?;
+    let rag_agent = RAGAgent::init(openai_api_key, example_queries).await?;
 
     // Use RAGAgent to prompt
     rag_agent.prompt(prompt).await

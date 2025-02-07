@@ -1,15 +1,14 @@
 use anyhow::{bail, Result};
 use std::{
+    collections::HashMap,
     env,
     fs::File,
     io::{BufRead, BufReader, Read},
     path::Path,
-    collections::HashMap,
 };
 
-use toml::Value;
 use serde::Serialize;
-
+use toml::Value;
 
 #[allow(dead_code)]
 const CACHE_FILENAME: &str = ".cache";
@@ -132,8 +131,16 @@ pub struct QueryEntry {
 //   * "query": valid GAQL query
 impl QueryEntry {
     fn from_value(value: &Value) -> Self {
-        let description = value.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let query = value.get("query").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let description = value
+            .get("description")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let query = value
+            .get("query")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         QueryEntry { description, query }
     }
 }
