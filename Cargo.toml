@@ -17,8 +17,8 @@ dirs = "4.0"
 figment = { version = "0.10", features = ["toml", "env"] }
 flexi_logger = { version = "0.22", features = ["compress"] }
 futures = { version = "0.3", default-features = false, features = ["alloc"] }
-# googleads-rs = { version = "0.9.0" }
-googleads-rs = { version = "0.9.1", path = "../googleads-rs" }
+googleads-rs = { version = "0.9.1" }
+# googleads-rs = { version = "0.9.1", path = "../googleads-rs" }
 itertools = "0.10"
 log = "0.4"
 polars = { version = "0.42", features = ["lazy"] }
@@ -31,5 +31,5 @@ tonic = { version = "0.8", features = ["tls", "tls-roots"] }
 serde_json = "1.0"
 yup-oauth2 = "6.7"
 rig-core = "0.7.0"
-rig-lancedb = "0.2.3"
-lancedb = "0.15.0"
+# rig-lancedb = "0.2.3"
+# lancedb = "0.15.0"
