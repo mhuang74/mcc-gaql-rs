@@ -1,7 +1,7 @@
 [package]
 name = "mcc-gaql"
 description = "Execute GAQL across MCC child accounts."
-version = "0.10.0"
+version = "0.11.0"
 authors = ["Michael S. Huang <mhuang74@gmail.com>"]
 edition = "2021"
 
@@ -17,8 +17,8 @@ dirs = "4.0"
 figment = { version = "0.10", features = ["toml", "env"] }
 flexi_logger = { version = "0.22", features = ["compress"] }
 futures = { version = "0.3", default-features = false, features = ["alloc"] }
-googleads-rs = { version = "0.9.1" }
-# googleads-rs = { version = "0.9.1", path = "../googleads-rs" }
+googleads-rs = { version = "0.10.0" }
+#googleads-rs = { version = "0.10.0", path = "../googleads-rs" }
 itertools = "0.10"
 log = "0.4"
 polars = { version = "0.42", features = ["lazy"] }
