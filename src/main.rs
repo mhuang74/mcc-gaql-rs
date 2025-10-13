@@ -13,7 +13,7 @@ use anyhow::{Context, Result};
 use futures::{stream::FuturesUnordered, StreamExt};
 
 use googleads::GoogleAdsAPIAccess;
-use googleads_rs::google::ads::googleads::v19::services::google_ads_service_client::GoogleAdsServiceClient;
+use googleads_rs::google::ads::googleads::v21::services::google_ads_service_client::GoogleAdsServiceClient;
 use polars::prelude::*;
 use thousands::Separable;
 use tonic::{codegen::InterceptedService, transport::Channel};
