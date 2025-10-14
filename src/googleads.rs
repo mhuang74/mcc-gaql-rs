@@ -262,22 +262,29 @@ pub async fn gaql_query_with_client(
                         {
                             let v: Vec<u64> = columns
                                 .get(i)
-                                .unwrap()
-                                .iter()
-                                .map(|x| x.parse::<u64>().unwrap())
-                                .collect();
+                                .map(|col| {
+                                    col.iter()
+                                        .map(|x| x.parse::<u64>().unwrap())
+                                        .collect()
+                                })
+                                .unwrap_or_default();
                             series_vec.push(Series::new(header, v));
                         } else {
                             let v: Vec<f64> = columns
                                 .get(i)
-                                .unwrap()
-                                .iter()
-                                .map(|x| x.parse::<f64>().unwrap())
-                                .collect();
+                                .map(|col| {
+                                    col.iter()
+                                        .map(|x| x.parse::<f64>().unwrap())
+                                        .collect()
+                                })
+                                .unwrap_or_default();
                             series_vec.push(Series::new(header, v));
                         }
                     } else {
-                        let v: &Vec<String> = columns.get(i).unwrap();
+                        let v: Vec<String> = columns
+                            .get(i)
+                            .map(|col| col.clone())
+                            .unwrap_or_default();
                         series_vec.push(Series::new(header, v));
                     };
                 }
