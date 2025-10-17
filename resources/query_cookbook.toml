@@ -749,3 +749,21 @@ ORDER BY
   change_event.change_date_time DESC
 LIMIT 100
 """
+
+[all_campaigns]
+description = """
+returns basic info of all campaigns
+"""
+query = """
+SELECT
+  customer.id,
+  customer.descriptive_name,
+	campaign.id,
+  campaign.name,
+  campaign.advertising_channel_type,
+  campaign.status,
+  campaign.primary_status
+FROM
+  campaign
+LIMIT 100
+"""
