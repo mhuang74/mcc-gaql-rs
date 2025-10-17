@@ -15,9 +15,9 @@ use yup_oauth2::{
     AccessToken, ApplicationSecret, InstalledFlowAuthenticator, InstalledFlowReturnMethod,
 };
 
-use googleads_rs::google::ads::googleads::v19::services::google_ads_field_service_client::GoogleAdsFieldServiceClient;
-use googleads_rs::google::ads::googleads::v19::services::google_ads_service_client::GoogleAdsServiceClient;
-use googleads_rs::google::ads::googleads::v19::services::{
+use googleads_rs::google::ads::googleads::v21::services::google_ads_field_service_client::GoogleAdsFieldServiceClient;
+use googleads_rs::google::ads::googleads::v21::services::google_ads_service_client::GoogleAdsServiceClient;
+use googleads_rs::google::ads::googleads::v21::services::{
     GoogleAdsRow, SearchGoogleAdsFieldsRequest, SearchGoogleAdsFieldsResponse,
     SearchGoogleAdsStreamRequest, SearchGoogleAdsStreamResponse,
 };
@@ -262,22 +262,29 @@ pub async fn gaql_query_with_client(
                         {
                             let v: Vec<u64> = columns
                                 .get(i)
-                                .unwrap()
-                                .iter()
-                                .map(|x| x.parse::<u64>().unwrap())
-                                .collect();
+                                .map(|col| {
+                                    col.iter()
+                                        .map(|x| x.parse::<u64>().unwrap())
+                                        .collect()
+                                })
+                                .unwrap_or_default();
                             series_vec.push(Series::new(header, v));
                         } else {
                             let v: Vec<f64> = columns
                                 .get(i)
-                                .unwrap()
-                                .iter()
-                                .map(|x| x.parse::<f64>().unwrap())
-                                .collect();
+                                .map(|col| {
+                                    col.iter()
+                                        .map(|x| x.parse::<f64>().unwrap())
+                                        .collect()
+                                })
+                                .unwrap_or_default();
                             series_vec.push(Series::new(header, v));
                         }
                     } else {
-                        let v: &Vec<String> = columns.get(i).unwrap();
+                        let v: Vec<String> = columns
+                            .get(i)
+                            .map(|col| col.clone())
+                            .unwrap_or_default();
                         series_vec.push(Series::new(header, v));
                     };
                 }
