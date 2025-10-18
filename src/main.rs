@@ -13,7 +13,7 @@ use anyhow::{Context, Result};
 use futures::{stream::FuturesUnordered, StreamExt};
 
 use googleads::GoogleAdsAPIAccess;
-use googleads_rs::google::ads::googleads::v21::services::google_ads_service_client::GoogleAdsServiceClient;
+use googleads_rs::google::ads::googleads::v22::services::google_ads_service_client::GoogleAdsServiceClient;
 use polars::prelude::*;
 use thousands::Separable;
 use tonic::{codegen::InterceptedService, transport::Channel};
@@ -113,8 +113,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let token_cache_path =
                     crate::config::config_file_path(&config.token_cache_filename)
                         .expect("token cache path");
-                fs::remove_file(token_cache_path)
-                    .expect("Failed to remove token cache file to force re-auth");
+                let _ = fs::remove_file(token_cache_path);
                 googleads::get_api_access(&config.mcc_customerid, &config.token_cache_filename)
                     .await
                     .expect("Refresh token expired and failed to kick off re-auth.")

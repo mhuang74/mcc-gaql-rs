@@ -15,9 +15,9 @@ use yup_oauth2::{
     AccessToken, ApplicationSecret, InstalledFlowAuthenticator, InstalledFlowReturnMethod,
 };
 
-use googleads_rs::google::ads::googleads::v21::services::google_ads_field_service_client::GoogleAdsFieldServiceClient;
-use googleads_rs::google::ads::googleads::v21::services::google_ads_service_client::GoogleAdsServiceClient;
-use googleads_rs::google::ads::googleads::v21::services::{
+use googleads_rs::google::ads::googleads::v22::services::google_ads_field_service_client::GoogleAdsFieldServiceClient;
+use googleads_rs::google::ads::googleads::v22::services::google_ads_service_client::GoogleAdsServiceClient;
+use googleads_rs::google::ads::googleads::v22::services::{
     GoogleAdsRow, SearchGoogleAdsFieldsRequest, SearchGoogleAdsFieldsResponse,
     SearchGoogleAdsStreamRequest, SearchGoogleAdsStreamResponse,
 };
@@ -159,7 +159,11 @@ pub async fn get_api_access(
     let header_value_dev_token = MetadataValue::try_from(DEV_TOKEN)?;
     let header_value_login_customer = MetadataValue::try_from(mcc_customer_id)?;
 
+    let tls_config = tonic::transport::ClientTlsConfig::new()
+        .with_native_roots();
+
     let channel: Channel = Channel::from_static(ENDPOINT)
+        .tls_config(tls_config)?
         .rate_limit(100, Duration::from_secs(1))
         .concurrency_limit(100)
         .connect()
