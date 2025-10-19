@@ -61,13 +61,13 @@ pub async fn _get_child_accounts_from_cache() -> Option<Vec<String>> {
             Err(e) => {
                 log::error!(
                     "Unable to deserialize child accounts cache: {}",
-                    e.to_string()
+                    e
                 );
                 None
             }
         },
         Err(e) => {
-            log::debug!("Unable to read child accounts cache: {}", e.to_string());
+            log::debug!("Unable to read child accounts cache: {}", e);
             None
         }
     }
@@ -81,7 +81,7 @@ pub async fn _save_child_accounts_to_cache(customer_ids: Vec<String>) {
             log::debug!("Added {} child account ids to cache", customer_ids.len());
         }
         Err(e) => {
-            log::error!("Failed to update child account cache: {}", e.to_string());
+            log::error!("Failed to update child account cache: {}", e);
         }
     }
 }
@@ -112,7 +112,7 @@ where
         Err(e) => {
             bail!(
                 "Unable to load child account ids from file: {}",
-                e.to_string()
+                e
             );
         }
     }
@@ -162,7 +162,7 @@ where
                 Err(e) => {
                     bail!(
                         "Unable to parse stored query toml. Error: {}",
-                        e.to_string()
+                        e
                     );
                 }
             };
@@ -189,7 +189,7 @@ where
             Ok(query_map)
         }
         Err(e) => {
-            bail!("Unable to load named query file. Error: {}", e.to_string());
+            bail!("Unable to load named query file. Error: {}", e);
         }
     }
 }
