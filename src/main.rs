@@ -10,7 +10,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use futures::{stream::FuturesUnordered, StreamExt};
+use futures::{StreamExt, stream::FuturesUnordered};
 
 use googleads::GoogleAdsAPIAccess;
 use googleads_rs::google::ads::googleads::v22::services::google_ads_service_client::GoogleAdsServiceClient;
