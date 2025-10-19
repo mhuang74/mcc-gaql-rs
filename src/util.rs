@@ -59,10 +59,7 @@ pub async fn _get_child_accounts_from_cache() -> Option<Vec<String>> {
                 Some(v)
             }
             Err(e) => {
-                log::error!(
-                    "Unable to deserialize child accounts cache: {}",
-                    e
-                );
+                log::error!("Unable to deserialize child accounts cache: {}", e);
                 None
             }
         },
@@ -110,10 +107,7 @@ where
             Ok(customer_ids)
         }
         Err(e) => {
-            bail!(
-                "Unable to load child account ids from file: {}",
-                e
-            );
+            bail!("Unable to load child account ids from file: {}", e);
         }
     }
 }
@@ -160,10 +154,7 @@ where
             let toml = match buffer.parse::<Value>() {
                 Ok(v) => v,
                 Err(e) => {
-                    bail!(
-                        "Unable to parse stored query toml. Error: {}",
-                        e
-                    );
+                    bail!("Unable to parse stored query toml. Error: {}", e);
                 }
             };
 

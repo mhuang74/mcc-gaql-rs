@@ -95,10 +95,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // for non-FieldService queries, reduce network traffic by excluding resource_name by default
     if let Some(query) = &args.gaql_query
-        && !args.field_service && !query.contains("PARAMETERS") {
-            let new_query = format!("{query} PARAMETERS omit_unselected_resource_names = true");
-            args.gaql_query = Some(new_query);
-        }
+        && !args.field_service
+        && !query.contains("PARAMETERS")
+    {
+        let new_query = format!("{query} PARAMETERS omit_unselected_resource_names = true");
+        args.gaql_query = Some(new_query);
+    }
 
     let api_context =
         match googleads::get_api_access(&config.mcc_customerid, &config.token_cache_filename).await

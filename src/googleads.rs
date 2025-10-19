@@ -276,8 +276,7 @@ pub async fn gaql_query_with_client(
                             series_vec.push(Series::new(header, v));
                         }
                     } else {
-                        let v: Vec<String> =
-                            columns.get(i).cloned().unwrap_or_default();
+                        let v: Vec<String> = columns.get(i).cloned().unwrap_or_default();
                         series_vec.push(Series::new(header, v));
                     };
                 }
