@@ -23,6 +23,10 @@ pub struct Cli {
     #[clap(short, long)]
     pub output: Option<String>,
 
+    /// Output format: table, csv, json
+    #[clap(long, default_value = "table")]
+    pub format: String,
+
     /// Query using default MCC and Child CustomerIDs file specified for this profile
     #[clap(short, long)]
     pub profile: Option<String>,

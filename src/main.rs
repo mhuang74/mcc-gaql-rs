@@ -153,11 +153,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
 
         if dataframe.is_some() {
-            if args.output.is_some() {
-                write_csv(&mut dataframe.unwrap(), args.output.as_ref().unwrap())?;
-            } else {
-                println!("{}", dataframe.unwrap());
-            }
+            output_dataframe(&mut dataframe.unwrap(), &args.format, args.output)?;
         }
     } else if args.field_service {
         let query = &args
@@ -225,6 +221,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 query,
                 args.groupby,
                 args.sortby,
+                args.format,
                 args.output,
             )
             .await?;
@@ -244,6 +241,7 @@ async fn gaql_query_async(
     query: String,
     groupby: Vec<String>,
     sortby: Vec<String>,
+    format: String,
     outfile: Option<String>,
 ) -> Result<()> {
     log::info!(
@@ -423,19 +421,13 @@ async fn gaql_query_async(
 
         log::debug!("final dataframe shape: {:?}", dataframe.shape());
 
-        if outfile.is_some() {
-            let start = Instant::now();
-
-            write_csv(&mut dataframe, &outfile.unwrap())?;
-
-            let duration = start.elapsed();
-            log::debug!(
-                "csv written in {} msec",
-                duration.as_millis().separate_with_commas()
-            );
-        } else {
-            println!("{}", dataframe);
-        }
+        let start = Instant::now();
+        output_dataframe(&mut dataframe, &format, outfile)?;
+        let duration = start.elapsed();
+        log::debug!(
+            "output written in {} msec",
+            duration.as_millis().separate_with_commas()
+        );
     }
 
     Ok(())
@@ -487,5 +479,108 @@ fn write_csv(df: &mut DataFrame, outfile: &str) -> Result<()> {
     let f = File::create(outfile)?;
     CsvWriter::new(f).finish(df)?;
 
+    Ok(())
+}
+
+/// Write DataFrame as CSV to stdout
+fn write_csv_to_stdout(df: &mut DataFrame) -> Result<()> {
+    let mut buf = Vec::new();
+    CsvWriter::new(&mut buf).finish(df)?;
+    print!("{}", String::from_utf8(buf)?);
+    Ok(())
+}
+
+/// Write DataFrame as JSON to stdout
+fn write_json_to_stdout(df: &mut DataFrame) -> Result<()> {
+    // Convert DataFrame to JSON array of objects
+    let columns: Vec<String> = df.get_column_names().iter().map(|s| s.to_string()).collect();
+    let mut records: Vec<serde_json::Map<String, serde_json::Value>> = Vec::new();
+
+    for row_idx in 0..df.height() {
+        let mut record = serde_json::Map::new();
+        for (col_idx, col_name) in columns.iter().enumerate() {
+            let column = df.get_columns().get(col_idx).unwrap();
+            let value = column.get(row_idx)?;
+            let json_value = format!("{}", value);
+
+            // Remove surrounding quotes if present (polars adds quotes to strings)
+            let cleaned_value = json_value.trim_matches('"');
+
+            // Try to parse as number, otherwise use string
+            let json_val = if let Ok(num) = cleaned_value.parse::<i64>() {
+                serde_json::Value::Number(serde_json::Number::from(num))
+            } else if let Ok(num) = cleaned_value.parse::<f64>() {
+                serde_json::Number::from_f64(num)
+                    .map(serde_json::Value::Number)
+                    .unwrap_or_else(|| serde_json::Value::String(cleaned_value.to_string()))
+            } else if cleaned_value == "null" {
+                serde_json::Value::Null
+            } else {
+                serde_json::Value::String(cleaned_value.to_string())
+            };
+            record.insert(col_name.clone(), json_val);
+        }
+        records.push(record);
+    }
+
+    let json = serde_json::to_string(&records)?;
+    println!("{}", json);
+    Ok(())
+}
+
+/// Write DataFrame as JSON to file
+fn write_json(df: &mut DataFrame, outfile: &str) -> Result<()> {
+    // Convert DataFrame to JSON array of objects
+    let columns: Vec<String> = df.get_column_names().iter().map(|s| s.to_string()).collect();
+    let mut records: Vec<serde_json::Map<String, serde_json::Value>> = Vec::new();
+
+    for row_idx in 0..df.height() {
+        let mut record = serde_json::Map::new();
+        for (col_idx, col_name) in columns.iter().enumerate() {
+            let column = df.get_columns().get(col_idx).unwrap();
+            let value = column.get(row_idx)?;
+            let json_value = format!("{}", value);
+
+            // Remove surrounding quotes if present (polars adds quotes to strings)
+            let cleaned_value = json_value.trim_matches('"');
+
+            // Try to parse as number, otherwise use string
+            let json_val = if let Ok(num) = cleaned_value.parse::<i64>() {
+                serde_json::Value::Number(serde_json::Number::from(num))
+            } else if let Ok(num) = cleaned_value.parse::<f64>() {
+                serde_json::Number::from_f64(num)
+                    .map(serde_json::Value::Number)
+                    .unwrap_or_else(|| serde_json::Value::String(cleaned_value.to_string()))
+            } else if cleaned_value == "null" {
+                serde_json::Value::Null
+            } else {
+                serde_json::Value::String(cleaned_value.to_string())
+            };
+            record.insert(col_name.clone(), json_val);
+        }
+        records.push(record);
+    }
+
+    let f = File::create(outfile)?;
+    serde_json::to_writer(f, &records)?;
+    Ok(())
+}
+
+/// Handle output based on format and output file
+fn output_dataframe(df: &mut DataFrame, format: &str, outfile: Option<String>) -> Result<()> {
+    match (format, outfile) {
+        // File output
+        (_, Some(path)) => {
+            if format == "json" || path.ends_with(".json") {
+                write_json(df, &path)?;
+            } else {
+                write_csv(df, &path)?;
+            }
+        }
+        // STDOUT output
+        ("csv", None) => write_csv_to_stdout(df)?,
+        ("json", None) => write_json_to_stdout(df)?,
+        ("table", None) | (_, None) => println!("{}", df),
+    }
     Ok(())
 }
