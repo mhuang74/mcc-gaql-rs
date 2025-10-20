@@ -493,7 +493,11 @@ fn write_csv_to_stdout(df: &mut DataFrame) -> Result<()> {
 /// Write DataFrame as JSON to stdout
 fn write_json_to_stdout(df: &mut DataFrame) -> Result<()> {
     // Convert DataFrame to JSON array of objects
-    let columns: Vec<String> = df.get_column_names().iter().map(|s| s.to_string()).collect();
+    let columns: Vec<String> = df
+        .get_column_names()
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
     let mut records: Vec<serde_json::Map<String, serde_json::Value>> = Vec::new();
 
     for row_idx in 0..df.height() {
@@ -531,7 +535,11 @@ fn write_json_to_stdout(df: &mut DataFrame) -> Result<()> {
 /// Write DataFrame as JSON to file
 fn write_json(df: &mut DataFrame, outfile: &str) -> Result<()> {
     // Convert DataFrame to JSON array of objects
-    let columns: Vec<String> = df.get_column_names().iter().map(|s| s.to_string()).collect();
+    let columns: Vec<String> = df
+        .get_column_names()
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
     let mut records: Vec<serde_json::Map<String, serde_json::Value>> = Vec::new();
 
     for row_idx in 0..df.height() {
