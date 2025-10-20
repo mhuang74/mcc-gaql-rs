@@ -1,23 +1,23 @@
 use std::time::Duration;
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use polars::prelude::*;
 use tokio_stream::StreamExt;
 use tonic::{
+    Response, Status, Streaming,
     codegen::InterceptedService,
     metadata::{Ascii, MetadataValue},
     service::Interceptor,
     transport::Channel,
-    Response, Status, Streaming,
 };
 use yup_oauth2::{
-    authenticator::{Authenticator, DefaultHyperClient, HyperClientBuilder},
     AccessToken, ApplicationSecret, InstalledFlowAuthenticator, InstalledFlowReturnMethod,
+    authenticator::{Authenticator, DefaultHyperClient, HyperClientBuilder},
 };
 
-use googleads_rs::google::ads::googleads::v21::services::google_ads_field_service_client::GoogleAdsFieldServiceClient;
-use googleads_rs::google::ads::googleads::v21::services::google_ads_service_client::GoogleAdsServiceClient;
-use googleads_rs::google::ads::googleads::v21::services::{
+use googleads_rs::google::ads::googleads::v22::services::google_ads_field_service_client::GoogleAdsFieldServiceClient;
+use googleads_rs::google::ads::googleads::v22::services::google_ads_service_client::GoogleAdsServiceClient;
+use googleads_rs::google::ads::googleads::v22::services::{
     GoogleAdsRow, SearchGoogleAdsFieldsRequest, SearchGoogleAdsFieldsResponse,
     SearchGoogleAdsStreamRequest, SearchGoogleAdsStreamResponse,
 };
@@ -159,7 +159,10 @@ pub async fn get_api_access(
     let header_value_dev_token = MetadataValue::try_from(DEV_TOKEN)?;
     let header_value_login_customer = MetadataValue::try_from(mcc_customer_id)?;
 
+    let tls_config = tonic::transport::ClientTlsConfig::new().with_native_roots();
+
     let channel: Channel = Channel::from_static(ENDPOINT)
+        .tls_config(tls_config)?
         .rate_limit(100, Duration::from_secs(1))
         .concurrency_limit(100)
         .connect()
@@ -262,29 +265,18 @@ pub async fn gaql_query_with_client(
                         {
                             let v: Vec<u64> = columns
                                 .get(i)
-                                .map(|col| {
-                                    col.iter()
-                                        .map(|x| x.parse::<u64>().unwrap())
-                                        .collect()
-                                })
+                                .map(|col| col.iter().map(|x| x.parse::<u64>().unwrap()).collect())
                                 .unwrap_or_default();
                             series_vec.push(Series::new(header, v));
                         } else {
                             let v: Vec<f64> = columns
                                 .get(i)
-                                .map(|col| {
-                                    col.iter()
-                                        .map(|x| x.parse::<f64>().unwrap())
-                                        .collect()
-                                })
+                                .map(|col| col.iter().map(|x| x.parse::<f64>().unwrap()).collect())
                                 .unwrap_or_default();
                             series_vec.push(Series::new(header, v));
                         }
                     } else {
-                        let v: Vec<String> = columns
-                            .get(i)
-                            .map(|col| col.clone())
-                            .unwrap_or_default();
+                        let v: Vec<String> = columns.get(i).cloned().unwrap_or_default();
                         series_vec.push(Series::new(header, v));
                     };
                 }

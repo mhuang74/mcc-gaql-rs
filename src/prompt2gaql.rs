@@ -3,7 +3,7 @@ use std::vec;
 use rig::{
     agent::Agent,
     completion::{Completion, Prompt},
-    embeddings::{embed::Embed, EmbedError, EmbeddingsBuilder, TextEmbedder},
+    embeddings::{EmbedError, EmbeddingsBuilder, TextEmbedder, embed::Embed},
     providers::openai::{Client, CompletionModel, GPT_4O_MINI, TEXT_EMBEDDING_ADA_002},
     vector_store::in_memory_store::InMemoryVectorStore,
 };

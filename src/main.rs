@@ -10,10 +10,10 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use futures::{stream::FuturesUnordered, StreamExt};
+use futures::{StreamExt, stream::FuturesUnordered};
 
 use googleads::GoogleAdsAPIAccess;
-use googleads_rs::google::ads::googleads::v21::services::google_ads_service_client::GoogleAdsServiceClient;
+use googleads_rs::google::ads::googleads::v22::services::google_ads_service_client::GoogleAdsServiceClient;
 use polars::prelude::*;
 use thousands::Separable;
 use tonic::{codegen::InterceptedService, transport::Channel};
@@ -94,11 +94,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // for non-FieldService queries, reduce network traffic by excluding resource_name by default
-    if let Some(query) = &args.gaql_query {
-        if !args.field_service && !query.contains("PARAMETERS") {
-            let new_query = format!("{query} PARAMETERS omit_unselected_resource_names = true");
-            args.gaql_query = Some(new_query);
-        }
+    if let Some(query) = &args.gaql_query
+        && !args.field_service
+        && !query.contains("PARAMETERS")
+    {
+        let new_query = format!("{query} PARAMETERS omit_unselected_resource_names = true");
+        args.gaql_query = Some(new_query);
     }
 
     let api_context =
@@ -113,8 +114,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let token_cache_path =
                     crate::config::config_file_path(&config.token_cache_filename)
                         .expect("token cache path");
-                fs::remove_file(token_cache_path)
-                    .expect("Failed to remove token cache file to force re-auth");
+                let _ = fs::remove_file(token_cache_path);
                 googleads::get_api_access(&config.mcc_customerid, &config.token_cache_filename)
                     .await
                     .expect("Refresh token expired and failed to kick off re-auth.")
@@ -170,18 +170,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else if args.gaql_query.is_some() {
         // figure out which customerids to query for
         let customer_ids: Option<Vec<String>> =
-            // if provided customerid and querying all child accounts, 
+            // if provided customerid and querying all child accounts,
             // then query all linked accounts under provided customerid
             if args.customer_id.is_some() & args.all_linked_child_accounts {
                 let customer_id = args.customer_id.expect("Valid customer_id required.");
                 log::debug!("Querying child accounts under MCC: {}", &customer_id);
 
                 // generate new list of child accounts
-                match googleads::get_child_account_ids(api_context.clone(), customer_id).await
-                    {
-                        Ok(customer_ids) => Some(customer_ids),
-                        Err(_e) => None,
-                    }
+                (googleads::get_child_account_ids(api_context.clone(), customer_id).await).ok()
             }
             // if provided customerid and not querying all child accounts, 
             // then just query one account
@@ -198,11 +194,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 log::debug!("Querying all linked child accounts under profile MCC: {}", &customer_id);
 
                 // generate new list of child accounts
-                match googleads::get_child_account_ids(api_context.clone(), customer_id).await
-                    {
-                        Ok(customer_ids) => Some(customer_ids),
-                        Err(_e) => None,
-                    }
+                (googleads::get_child_account_ids(api_context.clone(), customer_id).await).ok()
             }
             // if using default profile MCC and NOT querying all child accounts, 
             // then look for customerids file and use it
@@ -212,11 +204,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     crate::config::config_file_path(&config.customerids_filename.unwrap()).unwrap();
                     log::debug!("Querying accounts listed in file: {}", customerids_path.display());
 
-                    match util::get_child_account_ids_from_file(customerids_path.as_path()).await
-                        {
-                            Ok(customer_ids) => Some(customer_ids),
-                            Err(_e) => None,
-                        }
+                    (util::get_child_account_ids_from_file(customerids_path.as_path()).await).ok()
                 } else {
                     log::warn!("Expecting customerids file but none found in config");
                     None
