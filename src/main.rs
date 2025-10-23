@@ -21,6 +21,7 @@ use tonic::{codegen::InterceptedService, transport::Channel};
 mod args;
 mod config;
 mod googleads;
+mod init;
 mod prompt2gaql;
 mod util;
 
@@ -31,6 +32,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     util::init_logger();
 
     let mut args = args::parse();
+
+    // Handle --init flag to run configuration wizard
+    if args.init {
+        init::run_wizard()?;
+        return Ok(());
+    }
 
     let profile = &args.profile.unwrap_or_else(|| "test".to_owned());
 

@@ -54,6 +54,10 @@ pub struct Cli {
     /// Sort by columns
     #[clap(long, multiple_occurrences(true))]
     pub sortby: Vec<String>,
+
+    /// Initialize configuration with interactive wizard
+    #[clap(long)]
+    pub init: bool,
 }
 
 pub fn parse() -> Cli {
