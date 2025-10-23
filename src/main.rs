@@ -32,6 +32,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut args = args::parse();
 
+    // Handle --init flag first
+    if args.init {
+        config::init_config()?;
+        return Ok(());
+    }
+
     let profile = &args.profile.unwrap_or_else(|| "test".to_owned());
 
     let config = config::load(profile).context(format!("Loading config for profile: {profile}"))?;

@@ -13,6 +13,7 @@ async-std = "1.11"
 bincode = "1.3"
 cacache = "10.0"
 clap = { version = "3.1", features = ["derive", "cargo"] }
+dialoguer = "0.11"
 dirs = "4.0"
 figment = { version = "0.10", features = ["toml", "env"] }
 flexi_logger = { version = "0.22", features = ["compress"] }
