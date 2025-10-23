@@ -177,8 +177,8 @@ pub fn init_config() -> Result<()> {
     println!("\nYou can now run mcc-gaql with: mcc-gaql --profile {}", profile);
 
     // Show additional setup instructions
-    if config.queries_filename.is_some() {
-        let queries_file = config_dir.join(config.queries_filename.unwrap());
+    if let Some(queries_filename) = &config.queries_filename {
+        let queries_file = config_dir.join(queries_filename);
         if !queries_file.exists() {
             println!("\nNote: You'll need to create the queries file at:");
             println!("  {:?}", queries_file);
