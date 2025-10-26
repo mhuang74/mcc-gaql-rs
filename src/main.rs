@@ -504,6 +504,15 @@ fn convert_value_to_json(value: AnyValue) -> serde_json::Value {
     }
 }
 
+/// Validate DataFrame is suitable for output
+fn validate_dataframe(df: &DataFrame) -> Result<()> {
+    if df.width() == 0 {
+        return Err(anyhow::anyhow!("Cannot output DataFrame with zero columns"));
+    }
+    // Empty rows is OK - just output headers for CSV/JSON or empty table
+    Ok(())
+}
+
 fn write_csv(df: &mut DataFrame, outfile: &str) -> Result<()> {
     let f = File::create(outfile)
         .with_context(|| format!("Failed to create CSV output file: {}", outfile))?;
@@ -576,13 +585,48 @@ fn write_json(df: &DataFrame, outfile: &str) -> Result<()> {
         .with_context(|| format!("Failed to write JSON to file: {}", outfile))
 }
 
-/// Determine output format from explicit flag or file extension
-fn resolve_output_format(format: OutputFormat, outfile: &Option<String>) -> OutputFormat {
-    match outfile {
-        Some(path) if path.ends_with(".json") => OutputFormat::Json,
-        Some(path) if path.ends_with(".csv") => OutputFormat::Csv,
-        Some(_) => format, // Use explicit format for other extensions
-        None => format,    // Use explicit format for stdout
+/// Resolve output format, preferring explicit format flag over file extension inference
+fn resolve_output_format(
+    explicit_format: OutputFormat,
+    outfile: &Option<String>,
+) -> Result<OutputFormat> {
+    let inferred_format = outfile.as_ref().and_then(|path| {
+        if path.ends_with(".json") {
+            Some(OutputFormat::Json)
+        } else if path.ends_with(".csv") {
+            Some(OutputFormat::Csv)
+        } else {
+            None
+        }
+    });
+
+    match (explicit_format, inferred_format) {
+        // No file or no inference - use explicit format
+        (format, None) => Ok(format),
+
+        // File extension matches explicit format - all good
+        (format, Some(inferred)) if format == inferred => Ok(format),
+
+        // Mismatch between explicit format and file extension
+        (OutputFormat::Table, Some(inferred)) => {
+            // Table is default, so file extension takes precedence
+            log::info!(
+                "Inferring format {:?} from file extension (override with --format if needed)",
+                inferred
+            );
+            Ok(inferred)
+        }
+
+        (explicit, Some(inferred)) => {
+            // User explicitly specified format that differs from extension
+            log::warn!(
+                "Format mismatch: --format={:?} but file extension suggests {:?}. Using explicit format {:?}",
+                explicit,
+                inferred,
+                explicit
+            );
+            Ok(explicit)
+        }
     }
 }
 
@@ -591,7 +635,10 @@ fn output_dataframe(
     format: OutputFormat, // Take ownership, it's Copy
     outfile: Option<String>,
 ) -> Result<()> {
-    let resolved_format = resolve_output_format(format, &outfile);
+    // Validate before attempting output
+    validate_dataframe(df).context("Invalid DataFrame for output")?;
+
+    let resolved_format = resolve_output_format(format, &outfile)?;
 
     match outfile {
         Some(path) => {
