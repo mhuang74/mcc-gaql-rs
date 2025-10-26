@@ -1,5 +1,7 @@
 name: AI Code Review
-on: [pull_request]
+on: 
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]  # Triggers on PR events
 jobs:
   review:
     runs-on: ubuntu-latest
@@ -9,7 +11,17 @@ jobs:
         uses: AleksandrFurmenkovOfficial/ai-code-review@v0.9
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          owner: ${{ github.repository_owner }}  # e.g., your GitHub username
+          repo: ${{ github.event.repository.name }}  # e.g., "my-repo-name"
+          pr_number: ${{ github.event.number }}  # PR number
+          
+          # Anthropic-specific (your provider)
           ai_provider: 'anthropic'
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          anthropic_model: 'claude-3-5-sonnet-20240620'
-
+          anthropic_model: 'claude-3-5-sonnet-20240620'  # Valid Sonnet model
+          
+          # Optional: Customize review scope (uncomment if needed)
+          # include_extensions: '.py,.js,.ts'  # Review only these file types
+          # exclude_paths: 'tests/,docs/'  # Skip these paths
+          
+          fail_action_if_review_failed: false
