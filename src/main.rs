@@ -526,18 +526,21 @@ fn write_csv_to_stdout(df: &mut DataFrame) -> Result<()> {
     Ok(())
 }
 
-/// Convert DataFrame to JSON array of objects
-fn dataframe_to_json_records(
-    df: &DataFrame,
-) -> Result<Vec<serde_json::Map<String, serde_json::Value>>> {
+/// Stream DataFrame as JSON array to a writer (one record at a time)
+fn write_json_to_writer<W: Write>(df: &DataFrame, writer: &mut W) -> Result<()> {
     let columns: Vec<String> = df
         .get_column_names()
         .iter()
         .map(|s| s.to_string())
         .collect();
-    let mut records: Vec<serde_json::Map<String, serde_json::Value>> = Vec::new();
+
+    write!(writer, "[").context("Failed to write opening bracket")?;
 
     for row_idx in 0..df.height() {
+        if row_idx > 0 {
+            write!(writer, ",").context("Failed to write comma separator")?;
+        }
+
         let mut record = serde_json::Map::new();
         for (col_idx, col_name) in columns.iter().enumerate() {
             let column = df.get_columns().get(col_idx).unwrap();
@@ -549,34 +552,28 @@ fn dataframe_to_json_records(
             })?;
             record.insert(col_name.clone(), convert_value_to_json(value));
         }
-        records.push(record);
+
+        serde_json::to_writer(&mut *writer, &record).context("Failed to write JSON record")?;
     }
 
-    Ok(records)
-}
-
-/// Write DataFrame as JSON to stdout
-fn write_json_to_stdout(df: &mut DataFrame) -> Result<()> {
-    let records =
-        dataframe_to_json_records(df).context("Failed to convert DataFrame to JSON records")?;
-    let json =
-        serde_json::to_string(&records).context("Failed to serialize JSON records to string")?;
-    println!("{}", json);
+    writeln!(writer, "]").context("Failed to write closing bracket")?;
     Ok(())
 }
 
-/// Write DataFrame as JSON to file
-fn write_json(df: &mut DataFrame, outfile: &str) -> Result<()> {
-    let records =
-        dataframe_to_json_records(df).context("Failed to convert DataFrame to JSON records")?;
+/// Write DataFrame as JSON to stdout (streaming)
+fn write_json_to_stdout(df: &DataFrame) -> Result<()> {
+    let stdout = std::io::stdout();
+    let mut handle = stdout.lock();
+    write_json_to_writer(df, &mut handle).context("Failed to write JSON to stdout")
+}
+
+/// Write DataFrame as JSON to file (streaming)
+fn write_json(df: &DataFrame, outfile: &str) -> Result<()> {
     let f = File::create(outfile)
         .with_context(|| format!("Failed to create JSON output file: {}", outfile))?;
-    // TODO: switch to Polars optimized JSON writer after upgrading to latest Polars
-    // At least buffer file writes to reduce syscall
-    let writer = BufWriter::new(f);
-    serde_json::to_writer(writer, &records)
-        .with_context(|| format!("Failed to write JSON data to file: {}", outfile))?;
-    Ok(())
+    let mut writer = BufWriter::new(f);
+    write_json_to_writer(df, &mut writer)
+        .with_context(|| format!("Failed to write JSON to file: {}", outfile))
 }
 
 /// Determine output format from explicit flag or file extension
