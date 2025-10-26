@@ -5,7 +5,7 @@
 use std::{
     env,
     fs::{self, File},
-    io::BufWriter,
+    io::{BufWriter, Write},
     process,
     time::Instant,
 };
@@ -157,7 +157,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
 
         if dataframe.is_some() {
-            output_dataframe(&mut dataframe.unwrap(), &args.format, args.output)?;
+            output_dataframe(&mut dataframe.unwrap(), args.format, args.output)?;
         }
     } else if args.field_service {
         let query = &args
@@ -426,7 +426,7 @@ async fn gaql_query_async(
         log::debug!("final dataframe shape: {:?}", dataframe.shape());
 
         let start = Instant::now();
-        output_dataframe(&mut dataframe, &format, outfile)?;
+        output_dataframe(&mut dataframe, format, outfile)?;
         let duration = start.elapsed();
         log::debug!(
             "output written in {} msec",
@@ -520,8 +520,8 @@ fn write_csv_to_stdout(df: &mut DataFrame) -> Result<()> {
     CsvWriter::new(&mut buf)
         .finish(df)
         .context("Failed to write CSV data to buffer")?;
-    let csv_string = String::from_utf8(buf)
-        .context("Failed to convert CSV buffer to UTF-8 string")?;
+    let csv_string =
+        String::from_utf8(buf).context("Failed to convert CSV buffer to UTF-8 string")?;
     print!("{}", csv_string);
     Ok(())
 }
@@ -541,8 +541,12 @@ fn dataframe_to_json_records(
         let mut record = serde_json::Map::new();
         for (col_idx, col_name) in columns.iter().enumerate() {
             let column = df.get_columns().get(col_idx).unwrap();
-            let value = column.get(row_idx)
-                .with_context(|| format!("Failed to get value at row {} column '{}'", row_idx, col_name))?;
+            let value = column.get(row_idx).with_context(|| {
+                format!(
+                    "Failed to get value at row {} column '{}'",
+                    row_idx, col_name
+                )
+            })?;
             record.insert(col_name.clone(), convert_value_to_json(value));
         }
         records.push(record);
@@ -553,18 +557,18 @@ fn dataframe_to_json_records(
 
 /// Write DataFrame as JSON to stdout
 fn write_json_to_stdout(df: &mut DataFrame) -> Result<()> {
-    let records = dataframe_to_json_records(df)
-        .context("Failed to convert DataFrame to JSON records")?;
-    let json = serde_json::to_string(&records)
-        .context("Failed to serialize JSON records to string")?;
+    let records =
+        dataframe_to_json_records(df).context("Failed to convert DataFrame to JSON records")?;
+    let json =
+        serde_json::to_string(&records).context("Failed to serialize JSON records to string")?;
     println!("{}", json);
     Ok(())
 }
 
 /// Write DataFrame as JSON to file
 fn write_json(df: &mut DataFrame, outfile: &str) -> Result<()> {
-    let records = dataframe_to_json_records(df)
-        .context("Failed to convert DataFrame to JSON records")?;
+    let records =
+        dataframe_to_json_records(df).context("Failed to convert DataFrame to JSON records")?;
     let f = File::create(outfile)
         .with_context(|| format!("Failed to create JSON output file: {}", outfile))?;
     // TODO: switch to Polars optimized JSON writer after upgrading to latest Polars
@@ -575,25 +579,41 @@ fn write_json(df: &mut DataFrame, outfile: &str) -> Result<()> {
     Ok(())
 }
 
-/// Handle output based on format and output file
+/// Determine output format from explicit flag or file extension
+fn resolve_output_format(format: OutputFormat, outfile: &Option<String>) -> OutputFormat {
+    match outfile {
+        Some(path) if path.ends_with(".json") => OutputFormat::Json,
+        Some(path) if path.ends_with(".csv") => OutputFormat::Csv,
+        Some(_) => format, // Use explicit format for other extensions
+        None => format,    // Use explicit format for stdout
+    }
+}
+
 fn output_dataframe(
     df: &mut DataFrame,
-    format: &OutputFormat,
+    format: OutputFormat, // Take ownership, it's Copy
     outfile: Option<String>,
 ) -> Result<()> {
-    match (format, outfile) {
-        // File output
-        (_, Some(path)) => {
-            if matches!(format, OutputFormat::Json) || path.ends_with(".json") {
-                write_json(df, &path)?;
-            } else {
-                write_csv(df, &path)?;
+    let resolved_format = resolve_output_format(format, &outfile);
+
+    match outfile {
+        Some(path) => {
+            match resolved_format {
+                OutputFormat::Csv => write_csv(df, &path)?,
+                OutputFormat::Json => write_json(df, &path)?,
+                OutputFormat::Table => {
+                    // Table format to file doesn't make much sense, but handle gracefully
+                    log::warn!("Writing table format to file, consider using csv or json");
+                    let mut f = File::create(path)?;
+                    write!(f, "{}", df)?;
+                }
             }
         }
-        // STDOUT output
-        (OutputFormat::Csv, None) => write_csv_to_stdout(df)?,
-        (OutputFormat::Json, None) => write_json_to_stdout(df)?,
-        (OutputFormat::Table, None) => println!("{}", df),
+        None => match resolved_format {
+            OutputFormat::Csv => write_csv_to_stdout(df)?,
+            OutputFormat::Json => write_json_to_stdout(df)?,
+            OutputFormat::Table => println!("{}", df),
+        },
     }
     Ok(())
 }

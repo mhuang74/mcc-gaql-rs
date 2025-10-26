@@ -18,7 +18,10 @@ impl FromStr for OutputFormat {
             "table" => Ok(OutputFormat::Table),
             "csv" => Ok(OutputFormat::Csv),
             "json" => Ok(OutputFormat::Json),
-            _ => Err(format!("Invalid format '{}'. Valid formats are: table, csv, json", s)),
+            _ => Err(format!(
+                "Invalid format '{}'. Valid formats are: table, csv, json",
+                s
+            )),
         }
     }
 }
