@@ -5,6 +5,7 @@
 use std::{
     env,
     fs::{self, File},
+    io::BufWriter,
     process,
     time::Instant,
 };
@@ -530,6 +531,31 @@ async fn apply_groupby(
     Ok(df_agg)
 }
 
+/// Convert a polars AnyValue to serde_json::Value
+fn convert_value_to_json(value: AnyValue) -> serde_json::Value {
+    match value {
+        AnyValue::Null => serde_json::Value::Null,
+        AnyValue::Boolean(b) => serde_json::Value::Bool(b),
+        AnyValue::String(s) => serde_json::Value::String(s.to_string()),
+        AnyValue::Int8(i) => serde_json::Value::Number(serde_json::Number::from(i)),
+        AnyValue::Int16(i) => serde_json::Value::Number(serde_json::Number::from(i)),
+        AnyValue::Int32(i) => serde_json::Value::Number(serde_json::Number::from(i)),
+        AnyValue::Int64(i) => serde_json::Value::Number(serde_json::Number::from(i)),
+        AnyValue::UInt8(i) => serde_json::Value::Number(serde_json::Number::from(i)),
+        AnyValue::UInt16(i) => serde_json::Value::Number(serde_json::Number::from(i)),
+        AnyValue::UInt32(i) => serde_json::Value::Number(serde_json::Number::from(i)),
+        AnyValue::UInt64(i) => serde_json::Value::Number(serde_json::Number::from(i)),
+        AnyValue::Float32(f) => serde_json::Number::from_f64(f as f64)
+            .map(serde_json::Value::Number)
+            .unwrap_or_else(|| serde_json::Value::String(f.to_string())),
+        AnyValue::Float64(f) => serde_json::Number::from_f64(f)
+            .map(serde_json::Value::Number)
+            .unwrap_or_else(|| serde_json::Value::String(f.to_string())),
+        // For other types, convert to string
+        _ => serde_json::Value::String(format!("{}", value)),
+    }
+}
+
 fn write_csv(df: &mut DataFrame, outfile: &str) -> Result<(), OutputError> {
     let f = File::create(outfile)?;
     CsvWriter::new(f).finish(df)?;
@@ -560,24 +586,7 @@ fn write_json_to_stdout(df: &mut DataFrame) -> Result<(), OutputError> {
         for (col_idx, col_name) in columns.iter().enumerate() {
             let column = df.get_columns().get(col_idx).unwrap();
             let value = column.get(row_idx)?;
-            let json_value = format!("{}", value);
-
-            // Remove surrounding quotes if present (polars adds quotes to strings)
-            let cleaned_value = json_value.trim_matches('"');
-
-            // Try to parse as number, otherwise use string
-            let json_val = if let Ok(num) = cleaned_value.parse::<i64>() {
-                serde_json::Value::Number(serde_json::Number::from(num))
-            } else if let Ok(num) = cleaned_value.parse::<f64>() {
-                serde_json::Number::from_f64(num)
-                    .map(serde_json::Value::Number)
-                    .unwrap_or_else(|| serde_json::Value::String(cleaned_value.to_string()))
-            } else if cleaned_value == "null" {
-                serde_json::Value::Null
-            } else {
-                serde_json::Value::String(cleaned_value.to_string())
-            };
-            record.insert(col_name.clone(), json_val);
+            record.insert(col_name.clone(), convert_value_to_json(value));
         }
         records.push(record);
     }
@@ -602,35 +611,25 @@ fn write_json(df: &mut DataFrame, outfile: &str) -> Result<(), OutputError> {
         for (col_idx, col_name) in columns.iter().enumerate() {
             let column = df.get_columns().get(col_idx).unwrap();
             let value = column.get(row_idx)?;
-            let json_value = format!("{}", value);
-
-            // Remove surrounding quotes if present (polars adds quotes to strings)
-            let cleaned_value = json_value.trim_matches('"');
-
-            // Try to parse as number, otherwise use string
-            let json_val = if let Ok(num) = cleaned_value.parse::<i64>() {
-                serde_json::Value::Number(serde_json::Number::from(num))
-            } else if let Ok(num) = cleaned_value.parse::<f64>() {
-                serde_json::Number::from_f64(num)
-                    .map(serde_json::Value::Number)
-                    .unwrap_or_else(|| serde_json::Value::String(cleaned_value.to_string()))
-            } else if cleaned_value == "null" {
-                serde_json::Value::Null
-            } else {
-                serde_json::Value::String(cleaned_value.to_string())
-            };
-            record.insert(col_name.clone(), json_val);
+            record.insert(col_name.clone(), convert_value_to_json(value));
         }
         records.push(record);
     }
 
     let f = File::create(outfile)?;
-    serde_json::to_writer(f, &records)?;
+    // TODO: switch to Polars optimized JSON writer after upgrading to latest Polars
+    // At least buffer file writes to reduce syscall
+    let writer = BufWriter::new(f);
+    serde_json::to_writer(writer, &records)?;
     Ok(())
 }
 
 /// Handle output based on format and output file
-fn output_dataframe(df: &mut DataFrame, format: &str, outfile: Option<String>) -> Result<(), OutputError> {
+fn output_dataframe(
+    df: &mut DataFrame,
+    format: &str,
+    outfile: Option<String>,
+) -> Result<(), OutputError> {
     match (format, outfile) {
         // File output
         (_, Some(path)) => {
