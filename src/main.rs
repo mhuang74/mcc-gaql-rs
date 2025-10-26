@@ -25,6 +25,7 @@ mod googleads;
 mod prompt2gaql;
 mod util;
 
+use crate::args::OutputFormat;
 use crate::util::QueryEntry;
 
 /// Custom error type for output operations
@@ -41,9 +42,6 @@ pub enum OutputError {
 
     #[error("UTF-8 conversion error: {0}")]
     Utf8Error(#[from] std::string::FromUtf8Error),
-
-    #[error("Invalid format: {0}")]
-    InvalidFormatError(String),
 }
 
 #[tokio::main]
@@ -51,6 +49,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     util::init_logger();
 
     let mut args = args::parse();
+    // Format validation happens at parse time via OutputFormat enum type system.
+    // Invalid formats will fail with clap error before any queries are executed.
 
     let profile = &args.profile.unwrap_or_else(|| "test".to_owned());
 
@@ -261,7 +261,7 @@ async fn gaql_query_async(
     query: String,
     groupby: Vec<String>,
     sortby: Vec<String>,
-    format: String,
+    format: OutputFormat,
     outfile: Option<String>,
 ) -> Result<()> {
     log::info!(
@@ -581,24 +581,22 @@ fn write_json(df: &mut DataFrame, outfile: &str) -> Result<(), OutputError> {
 /// Handle output based on format and output file
 fn output_dataframe(
     df: &mut DataFrame,
-    format: &str,
+    format: &OutputFormat,
     outfile: Option<String>,
 ) -> Result<(), OutputError> {
     match (format, outfile) {
         // File output
         (_, Some(path)) => {
-            if format == "json" || path.ends_with(".json") {
+            if matches!(format, OutputFormat::Json) || path.ends_with(".json") {
                 write_json(df, &path)?;
             } else {
                 write_csv(df, &path)?;
             }
         }
         // STDOUT output
-        ("csv", None) => write_csv_to_stdout(df)?,
-        ("json", None) => write_json_to_stdout(df)?,
-        ("table", None) => println!("{}", df),
-        // New variation to handle unsupported formats
-        _ => return Err(OutputError::InvalidFormatError(format.to_string())),
+        (OutputFormat::Csv, None) => write_csv_to_stdout(df)?,
+        (OutputFormat::Json, None) => write_json_to_stdout(df)?,
+        (OutputFormat::Table, None) => println!("{}", df),
     }
     Ok(())
 }

@@ -1,5 +1,27 @@
 use clap::Parser;
 use std::io::{self, Read};
+use std::str::FromStr;
+
+/// Output format for query results
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutputFormat {
+    Table,
+    Csv,
+    Json,
+}
+
+impl FromStr for OutputFormat {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "table" => Ok(OutputFormat::Table),
+            "csv" => Ok(OutputFormat::Csv),
+            "json" => Ok(OutputFormat::Json),
+            _ => Err(format!("Invalid format '{}'. Valid formats are: table, csv, json", s)),
+        }
+    }
+}
 
 /// Efficiently run Google Ads GAQL query across one or more child accounts linked to MCC.
 ///
@@ -24,8 +46,8 @@ pub struct Cli {
     pub output: Option<String>,
 
     /// Output format: table, csv, json
-    #[clap(long, default_value = "table", possible_values = ["table", "csv", "json"])]
-    pub format: String,
+    #[clap(long, default_value = "table")]
+    pub format: OutputFormat,
 
     /// Query using default MCC and Child CustomerIDs file specified for this profile
     #[clap(short, long)]
