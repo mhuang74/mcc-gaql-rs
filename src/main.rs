@@ -26,6 +26,61 @@ mod util;
 
 use crate::util::QueryEntry;
 
+/// Custom error type for output operations
+#[derive(Debug)]
+pub enum OutputError {
+    IoError(std::io::Error),
+    JsonError(serde_json::Error),
+    PolarsError(PolarsError),
+    Utf8Error(std::string::FromUtf8Error),
+}
+
+impl std::fmt::Display for OutputError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            OutputError::IoError(e) => write!(f, "IO error: {}", e),
+            OutputError::JsonError(e) => write!(f, "JSON serialization error: {}", e),
+            OutputError::PolarsError(e) => write!(f, "DataFrame error: {}", e),
+            OutputError::Utf8Error(e) => write!(f, "UTF-8 conversion error: {}", e),
+        }
+    }
+}
+
+impl std::error::Error for OutputError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            OutputError::IoError(e) => Some(e),
+            OutputError::JsonError(e) => Some(e),
+            OutputError::PolarsError(e) => Some(e),
+            OutputError::Utf8Error(e) => Some(e),
+        }
+    }
+}
+
+impl From<std::io::Error> for OutputError {
+    fn from(err: std::io::Error) -> OutputError {
+        OutputError::IoError(err)
+    }
+}
+
+impl From<serde_json::Error> for OutputError {
+    fn from(err: serde_json::Error) -> OutputError {
+        OutputError::JsonError(err)
+    }
+}
+
+impl From<PolarsError> for OutputError {
+    fn from(err: PolarsError) -> OutputError {
+        OutputError::PolarsError(err)
+    }
+}
+
+impl From<std::string::FromUtf8Error> for OutputError {
+    fn from(err: std::string::FromUtf8Error) -> OutputError {
+        OutputError::Utf8Error(err)
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     util::init_logger();
@@ -475,7 +530,7 @@ async fn apply_groupby(
     Ok(df_agg)
 }
 
-fn write_csv(df: &mut DataFrame, outfile: &str) -> Result<()> {
+fn write_csv(df: &mut DataFrame, outfile: &str) -> Result<(), OutputError> {
     let f = File::create(outfile)?;
     CsvWriter::new(f).finish(df)?;
 
@@ -483,7 +538,7 @@ fn write_csv(df: &mut DataFrame, outfile: &str) -> Result<()> {
 }
 
 /// Write DataFrame as CSV to stdout
-fn write_csv_to_stdout(df: &mut DataFrame) -> Result<()> {
+fn write_csv_to_stdout(df: &mut DataFrame) -> Result<(), OutputError> {
     let mut buf = Vec::new();
     CsvWriter::new(&mut buf).finish(df)?;
     print!("{}", String::from_utf8(buf)?);
@@ -491,7 +546,7 @@ fn write_csv_to_stdout(df: &mut DataFrame) -> Result<()> {
 }
 
 /// Write DataFrame as JSON to stdout
-fn write_json_to_stdout(df: &mut DataFrame) -> Result<()> {
+fn write_json_to_stdout(df: &mut DataFrame) -> Result<(), OutputError> {
     // Convert DataFrame to JSON array of objects
     let columns: Vec<String> = df
         .get_column_names()
@@ -533,7 +588,7 @@ fn write_json_to_stdout(df: &mut DataFrame) -> Result<()> {
 }
 
 /// Write DataFrame as JSON to file
-fn write_json(df: &mut DataFrame, outfile: &str) -> Result<()> {
+fn write_json(df: &mut DataFrame, outfile: &str) -> Result<(), OutputError> {
     // Convert DataFrame to JSON array of objects
     let columns: Vec<String> = df
         .get_column_names()
@@ -575,7 +630,7 @@ fn write_json(df: &mut DataFrame, outfile: &str) -> Result<()> {
 }
 
 /// Handle output based on format and output file
-fn output_dataframe(df: &mut DataFrame, format: &str, outfile: Option<String>) -> Result<()> {
+fn output_dataframe(df: &mut DataFrame, format: &str, outfile: Option<String>) -> Result<(), OutputError> {
     match (format, outfile) {
         // File output
         (_, Some(path)) => {
