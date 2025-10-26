@@ -28,61 +28,22 @@ mod util;
 use crate::util::QueryEntry;
 
 /// Custom error type for output operations
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum OutputError {
-    IoError(std::io::Error),
-    JsonError(serde_json::Error),
-    PolarsError(PolarsError),
-    Utf8Error(std::string::FromUtf8Error),
+    #[error("IO error: {0}")]
+    IoError(#[from] std::io::Error),
+
+    #[error("JSON serialization error: {0}")]
+    JsonError(#[from] serde_json::Error),
+
+    #[error("DataFrame error: {0}")]
+    PolarsError(#[from] PolarsError),
+
+    #[error("UTF-8 conversion error: {0}")]
+    Utf8Error(#[from] std::string::FromUtf8Error),
+
+    #[error("Invalid format: {0}")]
     InvalidFormatError(String),
-}
-
-impl std::fmt::Display for OutputError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            OutputError::IoError(e) => write!(f, "IO error: {}", e),
-            OutputError::JsonError(e) => write!(f, "JSON serialization error: {}", e),
-            OutputError::PolarsError(e) => write!(f, "DataFrame error: {}", e),
-            OutputError::Utf8Error(e) => write!(f, "UTF-8 conversion error: {}", e),
-            OutputError::InvalidFormatError(s) => write!(f, "Invalid format: {}", s),
-        }
-    }
-}
-
-impl std::error::Error for OutputError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            OutputError::IoError(e) => Some(e),
-            OutputError::JsonError(e) => Some(e),
-            OutputError::PolarsError(e) => Some(e),
-            OutputError::Utf8Error(e) => Some(e),
-            OutputError::InvalidFormatError(_) => None,
-        }
-    }
-}
-
-impl From<std::io::Error> for OutputError {
-    fn from(err: std::io::Error) -> OutputError {
-        OutputError::IoError(err)
-    }
-}
-
-impl From<serde_json::Error> for OutputError {
-    fn from(err: serde_json::Error) -> OutputError {
-        OutputError::JsonError(err)
-    }
-}
-
-impl From<PolarsError> for OutputError {
-    fn from(err: PolarsError) -> OutputError {
-        OutputError::PolarsError(err)
-    }
-}
-
-impl From<std::string::FromUtf8Error> for OutputError {
-    fn from(err: std::string::FromUtf8Error) -> OutputError {
-        OutputError::Utf8Error(err)
-    }
 }
 
 #[tokio::main]
