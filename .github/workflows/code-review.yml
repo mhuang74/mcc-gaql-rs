@@ -17,7 +17,7 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}  # Auto-provided by GitHub for PR interactions
           open_router_key: ${{ secrets.OPENROUTER_API_KEY }}  # Your secret key
           # model: 'anthropic/claude-3.5-sonnet'  # Optional: Choose any OpenRouter model (e.g., 'openai/gpt-4o', 'google/gemini-pro'). Defaults to a cost-effective one if omitted.
-          model: 'meta-llama/llama-3.1-8b-instruct:free'
+          model: 'meta-llama/llama-3.1-8b-instruct'
           prompt: 'Review the code for bugs, performance issues, security vulnerabilities, and suggest improvements.'  # Optional: Customize the review prompt
           max_changed_files: 20  # Optional: Skip if PR has >20 changed files to avoid high costs
 concurrency:
