@@ -28,22 +28,6 @@ mod util;
 use crate::args::OutputFormat;
 use crate::util::QueryEntry;
 
-/// Custom error type for output operations
-#[derive(Debug, thiserror::Error)]
-pub enum OutputError {
-    #[error("IO error: {0}")]
-    IoError(#[from] std::io::Error),
-
-    #[error("JSON serialization error: {0}")]
-    JsonError(#[from] serde_json::Error),
-
-    #[error("DataFrame error: {0}")]
-    PolarsError(#[from] PolarsError),
-
-    #[error("UTF-8 conversion error: {0}")]
-    Utf8Error(#[from] std::string::FromUtf8Error),
-}
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     util::init_logger();
@@ -520,25 +504,32 @@ fn convert_value_to_json(value: AnyValue) -> serde_json::Value {
     }
 }
 
-fn write_csv(df: &mut DataFrame, outfile: &str) -> Result<(), OutputError> {
-    let f = File::create(outfile)?;
-    CsvWriter::new(f).finish(df)?;
+fn write_csv(df: &mut DataFrame, outfile: &str) -> Result<()> {
+    let f = File::create(outfile)
+        .with_context(|| format!("Failed to create CSV output file: {}", outfile))?;
+    CsvWriter::new(f)
+        .finish(df)
+        .with_context(|| format!("Failed to write CSV data to file: {}", outfile))?;
 
     Ok(())
 }
 
 /// Write DataFrame as CSV to stdout
-fn write_csv_to_stdout(df: &mut DataFrame) -> Result<(), OutputError> {
+fn write_csv_to_stdout(df: &mut DataFrame) -> Result<()> {
     let mut buf = Vec::new();
-    CsvWriter::new(&mut buf).finish(df)?;
-    print!("{}", String::from_utf8(buf)?);
+    CsvWriter::new(&mut buf)
+        .finish(df)
+        .context("Failed to write CSV data to buffer")?;
+    let csv_string = String::from_utf8(buf)
+        .context("Failed to convert CSV buffer to UTF-8 string")?;
+    print!("{}", csv_string);
     Ok(())
 }
 
 /// Convert DataFrame to JSON array of objects
 fn dataframe_to_json_records(
     df: &DataFrame,
-) -> Result<Vec<serde_json::Map<String, serde_json::Value>>, OutputError> {
+) -> Result<Vec<serde_json::Map<String, serde_json::Value>>> {
     let columns: Vec<String> = df
         .get_column_names()
         .iter()
@@ -550,7 +541,8 @@ fn dataframe_to_json_records(
         let mut record = serde_json::Map::new();
         for (col_idx, col_name) in columns.iter().enumerate() {
             let column = df.get_columns().get(col_idx).unwrap();
-            let value = column.get(row_idx)?;
+            let value = column.get(row_idx)
+                .with_context(|| format!("Failed to get value at row {} column '{}'", row_idx, col_name))?;
             record.insert(col_name.clone(), convert_value_to_json(value));
         }
         records.push(record);
@@ -560,21 +552,26 @@ fn dataframe_to_json_records(
 }
 
 /// Write DataFrame as JSON to stdout
-fn write_json_to_stdout(df: &mut DataFrame) -> Result<(), OutputError> {
-    let records = dataframe_to_json_records(df)?;
-    let json = serde_json::to_string(&records)?;
+fn write_json_to_stdout(df: &mut DataFrame) -> Result<()> {
+    let records = dataframe_to_json_records(df)
+        .context("Failed to convert DataFrame to JSON records")?;
+    let json = serde_json::to_string(&records)
+        .context("Failed to serialize JSON records to string")?;
     println!("{}", json);
     Ok(())
 }
 
 /// Write DataFrame as JSON to file
-fn write_json(df: &mut DataFrame, outfile: &str) -> Result<(), OutputError> {
-    let records = dataframe_to_json_records(df)?;
-    let f = File::create(outfile)?;
+fn write_json(df: &mut DataFrame, outfile: &str) -> Result<()> {
+    let records = dataframe_to_json_records(df)
+        .context("Failed to convert DataFrame to JSON records")?;
+    let f = File::create(outfile)
+        .with_context(|| format!("Failed to create JSON output file: {}", outfile))?;
     // TODO: switch to Polars optimized JSON writer after upgrading to latest Polars
     // At least buffer file writes to reduce syscall
     let writer = BufWriter::new(f);
-    serde_json::to_writer(writer, &records)?;
+    serde_json::to_writer(writer, &records)
+        .with_context(|| format!("Failed to write JSON data to file: {}", outfile))?;
     Ok(())
 }
 
@@ -583,7 +580,7 @@ fn output_dataframe(
     df: &mut DataFrame,
     format: &OutputFormat,
     outfile: Option<String>,
-) -> Result<(), OutputError> {
+) -> Result<()> {
     match (format, outfile) {
         // File output
         (_, Some(path)) => {
