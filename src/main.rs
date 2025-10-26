@@ -34,6 +34,7 @@ pub enum OutputError {
     JsonError(serde_json::Error),
     PolarsError(PolarsError),
     Utf8Error(std::string::FromUtf8Error),
+    InvalidFormatError(String),
 }
 
 impl std::fmt::Display for OutputError {
@@ -43,6 +44,7 @@ impl std::fmt::Display for OutputError {
             OutputError::JsonError(e) => write!(f, "JSON serialization error: {}", e),
             OutputError::PolarsError(e) => write!(f, "DataFrame error: {}", e),
             OutputError::Utf8Error(e) => write!(f, "UTF-8 conversion error: {}", e),
+            OutputError::InvalidFormatError(s) => write!(f, "Invalid format: {}", s),
         }
     }
 }
@@ -54,6 +56,7 @@ impl std::error::Error for OutputError {
             OutputError::JsonError(e) => Some(e),
             OutputError::PolarsError(e) => Some(e),
             OutputError::Utf8Error(e) => Some(e),
+            OutputError::InvalidFormatError(_) => None,
         }
     }
 }
@@ -642,7 +645,9 @@ fn output_dataframe(
         // STDOUT output
         ("csv", None) => write_csv_to_stdout(df)?,
         ("json", None) => write_json_to_stdout(df)?,
-        ("table", None) | (_, None) => println!("{}", df),
+        ("table", None) => println!("{}", df),
+        // New variation to handle unsupported formats
+        _ => return Err(OutputError::InvalidFormatError(format.to_string())),
     }
     Ok(())
 }
