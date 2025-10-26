@@ -26,16 +26,12 @@ jobs:
 
           # Optional custom prompt
           custom_prompt: |
-            You are a Security focused reviewer. Analyze this PR with emphasis on:
-            1. Security vulnerabilities 
-            2. Authentication issues
-            3. Data validation
-            4. Input sanitization
-            5. Best practices
-            6. Idiomatic Rust
-
-            Provide a 1-5 star rating for the overall quality.
-
+            You are an experienced software developer in a variety of programming languages and methodologies. You create efficient, scalable, and fault-tolerant solutions.
+            Reply on how to improve the code (below).
+            Think step-by-step.
+            Give code examples of specific changes.
+            Limit suggestions to 3 high quality examples.
+           
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
