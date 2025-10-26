@@ -535,9 +535,10 @@ fn write_csv_to_stdout(df: &mut DataFrame) -> Result<(), OutputError> {
     Ok(())
 }
 
-/// Write DataFrame as JSON to stdout
-fn write_json_to_stdout(df: &mut DataFrame) -> Result<(), OutputError> {
-    // Convert DataFrame to JSON array of objects
+/// Convert DataFrame to JSON array of objects
+fn dataframe_to_json_records(
+    df: &DataFrame,
+) -> Result<Vec<serde_json::Map<String, serde_json::Value>>, OutputError> {
     let columns: Vec<String> = df
         .get_column_names()
         .iter()
@@ -555,6 +556,12 @@ fn write_json_to_stdout(df: &mut DataFrame) -> Result<(), OutputError> {
         records.push(record);
     }
 
+    Ok(records)
+}
+
+/// Write DataFrame as JSON to stdout
+fn write_json_to_stdout(df: &mut DataFrame) -> Result<(), OutputError> {
+    let records = dataframe_to_json_records(df)?;
     let json = serde_json::to_string(&records)?;
     println!("{}", json);
     Ok(())
@@ -562,24 +569,7 @@ fn write_json_to_stdout(df: &mut DataFrame) -> Result<(), OutputError> {
 
 /// Write DataFrame as JSON to file
 fn write_json(df: &mut DataFrame, outfile: &str) -> Result<(), OutputError> {
-    // Convert DataFrame to JSON array of objects
-    let columns: Vec<String> = df
-        .get_column_names()
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-    let mut records: Vec<serde_json::Map<String, serde_json::Value>> = Vec::new();
-
-    for row_idx in 0..df.height() {
-        let mut record = serde_json::Map::new();
-        for (col_idx, col_name) in columns.iter().enumerate() {
-            let column = df.get_columns().get(col_idx).unwrap();
-            let value = column.get(row_idx)?;
-            record.insert(col_name.clone(), convert_value_to_json(value));
-        }
-        records.push(record);
-    }
-
+    let records = dataframe_to_json_records(df)?;
     let f = File::create(outfile)?;
     // TODO: switch to Polars optimized JSON writer after upgrading to latest Polars
     // At least buffer file writes to reduce syscall
