@@ -1,0 +1,15 @@
+name: AI Code Review
+on: [pull_request]
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: AI Review
+        uses: AleksandrFurmenkovOfficial/ai-code-review@v0.9
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          ai_provider: 'anthropic'
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          anthropic_model: 'claude-3-5-sonnet-20240620'
+
