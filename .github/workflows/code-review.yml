@@ -2,26 +2,24 @@ name: AI Code Review
 on: 
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]  # Triggers on PR events
+permissions:
+  contents: read
+  pull-requests: write  # Allows posting comments on PRs
 jobs:
   review:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: AI Review
-        uses: AleksandrFurmenkovOfficial/ai-code-review@v0.9
+      - uses: actions/checkout@v4  # Checks out your repo code
+
+      - name: AI Code Review
+        uses: jonit-dev/openrouter-github-action@main  # The OpenRouter-integrated action
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          owner: ${{ github.repository_owner }}  # e.g., your GitHub username
-          repo: ${{ github.event.repository.name }}  # e.g., "my-repo-name"
-          pr_number: ${{ github.event.number }}  # PR number
-          
-          # Anthropic-specific (your provider)
-          ai_provider: 'anthropic'
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          anthropic_model: 'claude-3-5-sonnet-20240620'  # Valid Sonnet model
-          
-          # Optional: Customize review scope (uncomment if needed)
-          # include_extensions: '.py,.js,.ts'  # Review only these file types
-          # exclude_paths: 'tests/,docs/'  # Skip these paths
-          
-          fail_action_if_review_failed: false
+          github_token: ${{ secrets.GITHUB_TOKEN }}  # Auto-provided by GitHub for PR interactions
+          open_router_key: ${{ secrets.OPENROUTER_API_KEY }}  # Your secret key
+          # model: 'anthropic/claude-3.5-sonnet'  # Optional: Choose any OpenRouter model (e.g., 'openai/gpt-4o', 'google/gemini-pro'). Defaults to a cost-effective one if omitted.
+          model: 'meta-llama/llama-3.1-8b-instruct:free'
+          prompt: 'Review the code for bugs, performance issues, security vulnerabilities, and suggest improvements.'  # Optional: Customize the review prompt
+          max_changed_files: 20  # Optional: Skip if PR has >20 changed files to avoid high costs
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
