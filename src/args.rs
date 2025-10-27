@@ -56,6 +56,14 @@ pub struct Cli {
     #[clap(short, long)]
     pub profile: Option<String>,
 
+    /// User email for OAuth2 authentication (auto-generates token cache)
+    #[clap(short = 'u', long)]
+    pub user: Option<String>,
+
+    /// MCC (Manager) Customer ID for login-customer-id header
+    #[clap(short = 'm', long)]
+    pub mcc: Option<String>,
+
     /// Apply query to a single CustomerID. Or use with `--all-linked-child-accounts` to query all child accounts.
     #[clap(short, long)]
     pub customer_id: Option<String>,

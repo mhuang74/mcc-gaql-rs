@@ -36,18 +36,41 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Format validation happens at parse time via OutputFormat enum type system.
     // Invalid formats will fail with clap error before any queries are executed.
 
-    let profile = &args.profile.unwrap_or_else(|| "test".to_owned());
-
-    let config = config::load(profile).context(format!("Loading config for profile: {profile}"))?;
+    // Only load config if profile is explicitly specified
+    let config = if let Some(profile) = &args.profile {
+        log::info!("Config profile: {profile}");
+        Some(config::load(profile).context(format!("Loading config for profile: {profile}"))?)
+    } else {
+        log::info!("No profile specified, using CLI arguments only");
+        None
+    };
 
     log::debug!("Configuration: {config:?}");
 
+    // Priority: CLI arg > config file > None
+    let user_email = args.user.as_deref()
+        .or_else(|| config.as_ref().and_then(|c| c.user.as_deref()));
+
+    // Priority: CLI --mcc > CLI --customer-id > config file
+    let mcc_customer_id = args.mcc.as_ref()
+        .or(args.customer_id.as_ref())
+        .map(|s| s.as_str())
+        .or_else(|| config.as_ref().map(|c| c.mcc_customerid.as_str()))
+        .ok_or_else(|| anyhow::anyhow!(
+            "MCC customer ID required. Either:\n  \
+             1. Provide via CLI: --mcc <MCC_ID> or --customer-id <CUSTOMER_ID>\n  \
+             2. Specify config profile: --profile <PROFILE_NAME>"
+        ))?;
+
     // load stored query
     if let Some(query_name) = args.stored_query {
-        let query_filename = config
-            .queries_filename
-            .as_ref()
-            .expect("Query cookbook filename undefined");
+        let query_filename = config.as_ref()
+            .and_then(|c| c.queries_filename.as_ref())
+            .ok_or_else(|| anyhow::anyhow!(
+                "Query cookbook not available. Either:\n  \
+                 1. Provide GAQL query directly: <QUERY>\n  \
+                 2. Specify config profile with queries_filename: --profile <PROFILE_NAME>"
+            ))?;
         let queries_path = crate::config::config_file_path(query_filename).unwrap();
 
         args.gaql_query = match util::get_queries_from_file(&queries_path).await {
@@ -70,10 +93,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if args.natural_language {
         // Use OpenAI for LLM
         let openai_api_key = env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY not set");
-        let query_filename = config
-            .queries_filename
-            .as_ref()
-            .expect("Query cookbook filename undefined");
+        let query_filename = config.as_ref()
+            .and_then(|c| c.queries_filename.as_ref())
+            .ok_or_else(|| anyhow::anyhow!(
+                "Query cookbook required for natural language mode. \
+                 Specify config profile with queries_filename: --profile <PROFILE_NAME>"
+            ))?;
         let queries_path = crate::config::config_file_path(query_filename).unwrap();
 
         let example_queries: Vec<QueryEntry> =
@@ -107,7 +132,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let api_context =
-        match googleads::get_api_access(&config.mcc_customerid, &config.token_cache_filename).await
+        match googleads::get_api_access(
+            mcc_customer_id,
+            user_email,
+            config.as_ref().and_then(|c| c.token_cache_filename.as_deref()),
+        )
+        .await
         {
             Ok(a) => a,
             Err(_e) => {
@@ -115,13 +145,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "Refresh token became invalid. Clearing token cache and forcing re-auth"
                 );
                 // remove cached token to force re-auth and try again
-                let token_cache_path =
-                    crate::config::config_file_path(&config.token_cache_filename)
-                        .expect("token cache path");
+                let token_cache_filename = config.as_ref()
+                    .and_then(|c| c.token_cache_filename.as_ref().cloned())
+                    .or_else(|| user_email.map(googleads::generate_token_cache_filename))
+                    .unwrap_or_else(|| "tokencache_default.json".to_string());
+
+                let token_cache_path = crate::config::config_file_path(&token_cache_filename)
+                    .expect("token cache path");
                 let _ = fs::remove_file(token_cache_path);
-                googleads::get_api_access(&config.mcc_customerid, &config.token_cache_filename)
-                    .await
-                    .expect("Refresh token expired and failed to kick off re-auth.")
+                googleads::get_api_access(
+                    mcc_customer_id,
+                    user_email,
+                    config.as_ref().and_then(|c| c.token_cache_filename.as_deref()),
+                )
+                .await
+                .expect("Refresh token expired and failed to kick off re-auth.")
             }
         };
 
@@ -138,10 +176,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // query child accounts under MCC
             log::debug!(
                 "Listing ALL child accounts under MCC {}",
-                &config.mcc_customerid
+                mcc_customer_id
             );
             (
-                config.mcc_customerid,
+                mcc_customer_id.to_string(),
                 googleads::SUB_ACCOUNTS_QUERY.to_owned(),
             )
         };
@@ -190,23 +228,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // if using default profile MCC and querying all child accounts,
             // then query all linked accounts under profile mcc
             else if args.customer_id.is_none() & args.all_linked_child_accounts {
-                let customer_id = config.mcc_customerid;
-                log::debug!("Querying all linked child accounts under profile MCC: {}", &customer_id);
+                let customer_id = mcc_customer_id.to_string();
+                log::debug!("Querying all linked child accounts under MCC: {}", &customer_id);
 
                 // generate new list of child accounts
                 (googleads::get_child_account_ids(api_context.clone(), customer_id).await).ok()
             }
-            // if using default profile MCC and NOT querying all child accounts, 
+            // if using default profile MCC and NOT querying all child accounts,
             // then look for customerids file and use it
             else if args.customer_id.is_none() & !args.all_linked_child_accounts {
-                if config.customerids_filename.is_some() {
+                if let Some(customerids_filename) = config.as_ref().and_then(|c| c.customerids_filename.as_ref()) {
                     let customerids_path =
-                    crate::config::config_file_path(&config.customerids_filename.unwrap()).unwrap();
+                        crate::config::config_file_path(customerids_filename).unwrap();
                     log::debug!("Querying accounts listed in file: {}", customerids_path.display());
 
                     (util::get_child_account_ids_from_file(customerids_path.as_path()).await).ok()
                 } else {
-                    log::warn!("Expecting customerids file but none found in config");
+                    log::warn!("No customerids file specified. Use --customer-id or --all-linked-child-accounts");
                     None
                 }
             } else {

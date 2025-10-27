@@ -13,8 +13,10 @@ pub const ENV_VAR_PREFIX: &str = "MCC_GAQL_";
 pub struct MyConfig {
     /// MCC Account ID is mandatory
     pub mcc_customerid: String,
-    /// Token Cache filename
-    pub token_cache_filename: String,
+    /// Optional user email for OAuth2 (preferred over token_cache_filename)
+    pub user: Option<String>,
+    /// Token Cache filename (legacy - use 'user' instead)
+    pub token_cache_filename: Option<String>,
     /// Optional file containing child customer_ids to query
     pub customerids_filename: Option<String>,
     /// Optional TOML file with stored queries
