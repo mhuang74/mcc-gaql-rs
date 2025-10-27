@@ -63,7 +63,7 @@ pub struct Cli {
 pub fn parse() -> Cli {
     let mut cli = Cli::parse();
 
-    if cli.stored_query.is_none() && cli.gaql_query.is_none() && !cli.list_child_accounts {
+    if cli.stored_query.is_none() && cli.gaql_query.is_none() && !cli.list_child_accounts && !cli.init{
         let mut buffer = String::new();
         io::stdin()
             .read_to_string(&mut buffer)
