@@ -23,6 +23,32 @@ pub struct MyConfig {
     pub queries_filename: Option<String>,
 }
 
+// Add extension trait for cleaner access
+pub trait ConfigExt {
+    fn queries_filename(&self) -> Option<&String>;
+    fn customerids_filename(&self) -> Option<&String>;
+    fn token_cache_filename(&self) -> Option<&String>;
+    fn user(&self) -> Option<&str>;
+}
+
+impl ConfigExt for Option<MyConfig> {
+    fn queries_filename(&self) -> Option<&String> {
+        self.as_ref().and_then(|c| c.queries_filename.as_ref())
+    }
+
+    fn customerids_filename(&self) -> Option<&String> {
+        self.as_ref().and_then(|c| c.customerids_filename.as_ref())
+    }
+
+    fn token_cache_filename(&self) -> Option<&String> {
+        self.as_ref().and_then(|c| c.token_cache_filename.as_ref())
+    }
+
+    fn user(&self) -> Option<&str> {
+        self.as_ref().and_then(|c| c.user.as_deref())
+    }
+}
+
 pub fn load(profile: &str) -> anyhow::Result<MyConfig> {
     log::info!("Config profile: {profile}");
 

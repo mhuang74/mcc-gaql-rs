@@ -27,6 +27,7 @@ mod util;
 
 use crate::args::Cli;
 use crate::args::OutputFormat;
+use crate::config::ConfigExt;
 use crate::util::QueryEntry;
 
 #[tokio::main]
@@ -53,7 +54,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Priority: CLI arg > config file > None
     let user_email = args.user.as_deref()
-        .or_else(|| config.as_ref().and_then(|c| c.user.as_deref()));
+        .or_else(|| config.user());
 
     // Priority: CLI --mcc > CLI --customer-id > config file
     let mcc_customer_id = args.mcc.as_ref()
@@ -68,8 +69,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // load stored query
     if let Some(query_name) = args.stored_query {
-        let query_filename = config.as_ref()
-            .and_then(|c| c.queries_filename.as_ref())
+        let query_filename = config
+            .queries_filename()
             .ok_or_else(|| anyhow::anyhow!(
                 "Query cookbook not available. Either:\n  \
                  1. Provide GAQL query directly: <QUERY>\n  \
@@ -97,8 +98,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if args.natural_language {
         // Use OpenAI for LLM
         let openai_api_key = env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY not set");
-        let query_filename = config.as_ref()
-            .and_then(|c| c.queries_filename.as_ref())
+        let query_filename = config
+            .queries_filename()
             .ok_or_else(|| anyhow::anyhow!(
                 "Query cookbook required for natural language mode. \
                  Specify config profile with queries_filename: --profile <PROFILE_NAME>"
@@ -139,7 +140,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         match googleads::get_api_access(
             mcc_customer_id,
             user_email,
-            config.as_ref().and_then(|c| c.token_cache_filename.as_deref()),
+            config.token_cache_filename().map(|s| s.as_str()),
         )
         .await
         {
@@ -149,8 +150,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "Refresh token became invalid. Clearing token cache and forcing re-auth"
                 );
                 // remove cached token to force re-auth and try again
-                let token_cache_filename = config.as_ref()
-                    .and_then(|c| c.token_cache_filename.as_ref().cloned())
+                let token_cache_filename = config
+                    .token_cache_filename()
+                    .cloned()
                     .or_else(|| user_email.map(googleads::generate_token_cache_filename))
                     .unwrap_or_else(|| "tokencache_default.json".to_string());
 
@@ -160,7 +162,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 googleads::get_api_access(
                     mcc_customer_id,
                     user_email,
-                    config.as_ref().and_then(|c| c.token_cache_filename.as_deref()),
+                    config.token_cache_filename().map(|s| s.as_str()),
                 )
                 .await
                 .expect("Refresh token expired and failed to kick off re-auth.")
@@ -241,7 +243,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // if using default profile MCC and NOT querying all child accounts,
             // then look for customerids file and use it
             else if args.customer_id.is_none() & !args.all_linked_child_accounts {
-                if let Some(customerids_filename) = config.as_ref().and_then(|c| c.customerids_filename.as_ref()) {
+                if let Some(customerids_filename) = config.customerids_filename() {
                     let customerids_path =
                         crate::config::config_file_path(customerids_filename).unwrap();
                     log::debug!("Querying accounts listed in file: {}", customerids_path.display());
