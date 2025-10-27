@@ -25,6 +25,7 @@ mod googleads;
 mod prompt2gaql;
 mod util;
 
+use crate::args::Cli;
 use crate::args::OutputFormat;
 use crate::util::QueryEntry;
 
@@ -32,9 +33,12 @@ use crate::util::QueryEntry;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     util::init_logger();
 
-    let mut args = args::parse();
     // Format validation happens at parse time via OutputFormat enum type system.
     // Invalid formats will fail with clap error before any queries are executed.
+    let mut args = args::parse();
+
+    // Validate argument combinations
+    validate_args(&args)?;
 
     // Only load config if profile is explicitly specified
     let config = if let Some(profile) = &args.profile {
@@ -697,5 +701,42 @@ fn output_dataframe(
             OutputFormat::Table => println!("{}", df),
         },
     }
+    Ok(())
+}
+
+
+fn validate_args(args: &Cli) -> Result<()> {
+    // Ambiguous which child account(s) to query
+    if args.customer_id.is_some() && args.all_linked_child_accounts {
+        return Err(anyhow::anyhow!(
+            "Use --customer-id to query a specific account.\n\
+                Use --mcc with --all-linked-child-accounts to query all child accounts under mcc.\n\
+                Please don't use --customer-id and --all-linked-child-accounts together."
+        ));
+    }
+
+    // Validate that stored query and natural language aren't both specified
+    if args.stored_query.is_some() && args.natural_language {
+        return Err(anyhow::anyhow!(
+            "Cannot use both --stored-query and --natural-language.\n\
+             Choose one query method."
+        ));
+    }
+
+    // Validate that natural language requires a query text
+    if args.natural_language && args.gaql_query.is_none() {
+        return Err(anyhow::anyhow!(
+            "Natural language mode requires a query string.\n\
+             Usage: mcc-gaql --natural-language \"show me all campaigns\""
+        ));
+    }
+
+    // Warn if both profile and config-free mode arguments are mixed
+    if args.profile.is_some() && args.mcc.is_some() {
+        log::warn!(
+            "Both --profile and --mcc specified. CLI --mcc will override profile's MCC setting."
+        );
+    }
+
     Ok(())
 }
