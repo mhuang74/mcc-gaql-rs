@@ -5,6 +5,7 @@
 use std::{
     env,
     fs::{self, File},
+    io::{BufWriter, Write},
     process,
     time::Instant,
 };
@@ -24,6 +25,7 @@ mod googleads;
 mod prompt2gaql;
 mod util;
 
+use crate::args::OutputFormat;
 use crate::util::QueryEntry;
 
 #[tokio::main]
@@ -31,6 +33,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     util::init_logger();
 
     let mut args = args::parse();
+    // Format validation happens at parse time via OutputFormat enum type system.
+    // Invalid formats will fail with clap error before any queries are executed.
 
     let profile = &args.profile.unwrap_or_else(|| "test".to_owned());
 
@@ -153,11 +157,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
 
         if dataframe.is_some() {
-            if args.output.is_some() {
-                write_csv(&mut dataframe.unwrap(), args.output.as_ref().unwrap())?;
-            } else {
-                println!("{}", dataframe.unwrap());
-            }
+            output_dataframe(&mut dataframe.unwrap(), args.format, args.output)?;
         }
     } else if args.field_service {
         let query = &args
@@ -225,6 +225,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 query,
                 args.groupby,
                 args.sortby,
+                args.format,
                 args.output,
             )
             .await?;
@@ -244,6 +245,7 @@ async fn gaql_query_async(
     query: String,
     groupby: Vec<String>,
     sortby: Vec<String>,
+    format: OutputFormat,
     outfile: Option<String>,
 ) -> Result<()> {
     log::info!(
@@ -423,19 +425,13 @@ async fn gaql_query_async(
 
         log::debug!("final dataframe shape: {:?}", dataframe.shape());
 
-        if outfile.is_some() {
-            let start = Instant::now();
-
-            write_csv(&mut dataframe, &outfile.unwrap())?;
-
-            let duration = start.elapsed();
-            log::debug!(
-                "csv written in {} msec",
-                duration.as_millis().separate_with_commas()
-            );
-        } else {
-            println!("{}", dataframe);
-        }
+        let start = Instant::now();
+        output_dataframe(&mut dataframe, format, outfile)?;
+        let duration = start.elapsed();
+        log::debug!(
+            "output written in {} msec",
+            duration.as_millis().separate_with_commas()
+        );
     }
 
     Ok(())
@@ -483,9 +479,185 @@ async fn apply_groupby(
     Ok(df_agg)
 }
 
-fn write_csv(df: &mut DataFrame, outfile: &str) -> Result<()> {
-    let f = File::create(outfile)?;
-    CsvWriter::new(f).finish(df)?;
+/// Convert a polars AnyValue to serde_json::Value
+fn convert_value_to_json(value: AnyValue) -> serde_json::Value {
+    match value {
+        AnyValue::Null => serde_json::Value::Null,
+        AnyValue::Boolean(b) => serde_json::Value::Bool(b),
+        AnyValue::String(s) => serde_json::Value::String(s.to_string()),
+        AnyValue::Int8(i) => serde_json::Value::Number(serde_json::Number::from(i)),
+        AnyValue::Int16(i) => serde_json::Value::Number(serde_json::Number::from(i)),
+        AnyValue::Int32(i) => serde_json::Value::Number(serde_json::Number::from(i)),
+        AnyValue::Int64(i) => serde_json::Value::Number(serde_json::Number::from(i)),
+        AnyValue::UInt8(i) => serde_json::Value::Number(serde_json::Number::from(i)),
+        AnyValue::UInt16(i) => serde_json::Value::Number(serde_json::Number::from(i)),
+        AnyValue::UInt32(i) => serde_json::Value::Number(serde_json::Number::from(i)),
+        AnyValue::UInt64(i) => serde_json::Value::Number(serde_json::Number::from(i)),
+        AnyValue::Float32(f) => serde_json::Number::from_f64(f as f64)
+            .map(serde_json::Value::Number)
+            .unwrap_or_else(|| serde_json::Value::String(f.to_string())),
+        AnyValue::Float64(f) => serde_json::Number::from_f64(f)
+            .map(serde_json::Value::Number)
+            .unwrap_or_else(|| serde_json::Value::String(f.to_string())),
+        // For other types, convert to string
+        _ => serde_json::Value::String(format!("{}", value)),
+    }
+}
 
+/// Validate DataFrame is suitable for output
+fn validate_dataframe(df: &DataFrame) -> Result<()> {
+    if df.width() == 0 {
+        return Err(anyhow::anyhow!("Cannot output DataFrame with zero columns"));
+    }
+    // Empty rows is OK - just output headers for CSV/JSON or empty table
+    Ok(())
+}
+
+fn write_csv(df: &mut DataFrame, outfile: &str) -> Result<()> {
+    let f = File::create(outfile)
+        .with_context(|| format!("Failed to create CSV output file: {}", outfile))?;
+    CsvWriter::new(f)
+        .finish(df)
+        .with_context(|| format!("Failed to write CSV data to file: {}", outfile))?;
+
+    Ok(())
+}
+
+/// Write DataFrame as CSV to stdout
+fn write_csv_to_stdout(df: &mut DataFrame) -> Result<()> {
+    let mut buf = Vec::new();
+    CsvWriter::new(&mut buf)
+        .finish(df)
+        .context("Failed to write CSV data to buffer")?;
+    let csv_string =
+        String::from_utf8(buf).context("Failed to convert CSV buffer to UTF-8 string")?;
+    print!("{}", csv_string);
+    Ok(())
+}
+
+/// Stream DataFrame as JSON array to a writer (one record at a time)
+fn write_json_to_writer<W: Write>(df: &DataFrame, writer: &mut W) -> Result<()> {
+    let columns: Vec<String> = df
+        .get_column_names()
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+
+    write!(writer, "[").context("Failed to write opening bracket")?;
+
+    for row_idx in 0..df.height() {
+        if row_idx > 0 {
+            write!(writer, ",").context("Failed to write comma separator")?;
+        }
+
+        let mut record = serde_json::Map::new();
+        for (col_idx, col_name) in columns.iter().enumerate() {
+            let column = df.get_columns().get(col_idx).unwrap();
+            let value = column.get(row_idx).with_context(|| {
+                format!(
+                    "Failed to get value at row {} column '{}'",
+                    row_idx, col_name
+                )
+            })?;
+            record.insert(col_name.clone(), convert_value_to_json(value));
+        }
+
+        serde_json::to_writer(&mut *writer, &record).context("Failed to write JSON record")?;
+    }
+
+    writeln!(writer, "]").context("Failed to write closing bracket")?;
+    Ok(())
+}
+
+/// Write DataFrame as JSON to stdout (streaming)
+fn write_json_to_stdout(df: &DataFrame) -> Result<()> {
+    let stdout = std::io::stdout();
+    let mut handle = stdout.lock();
+    write_json_to_writer(df, &mut handle).context("Failed to write JSON to stdout")
+}
+
+/// Write DataFrame as JSON to file (streaming)
+fn write_json(df: &DataFrame, outfile: &str) -> Result<()> {
+    let f = File::create(outfile)
+        .with_context(|| format!("Failed to create JSON output file: {}", outfile))?;
+    let mut writer = BufWriter::new(f);
+    write_json_to_writer(df, &mut writer)
+        .with_context(|| format!("Failed to write JSON to file: {}", outfile))
+}
+
+/// Resolve output format, preferring explicit format flag over file extension inference
+fn resolve_output_format(
+    explicit_format: OutputFormat,
+    outfile: &Option<String>,
+) -> Result<OutputFormat> {
+    let inferred_format = outfile.as_ref().and_then(|path| {
+        if path.ends_with(".json") {
+            Some(OutputFormat::Json)
+        } else if path.ends_with(".csv") {
+            Some(OutputFormat::Csv)
+        } else {
+            None
+        }
+    });
+
+    match (explicit_format, inferred_format) {
+        // No file or no inference - use explicit format
+        (format, None) => Ok(format),
+
+        // File extension matches explicit format - all good
+        (format, Some(inferred)) if format == inferred => Ok(format),
+
+        // Mismatch between explicit format and file extension
+        (OutputFormat::Table, Some(inferred)) => {
+            // Table is default, so file extension takes precedence
+            log::info!(
+                "Inferring format {:?} from file extension (override with --format if needed)",
+                inferred
+            );
+            Ok(inferred)
+        }
+
+        (explicit, Some(inferred)) => {
+            // User explicitly specified format that differs from extension
+            log::warn!(
+                "Format mismatch: --format={:?} but file extension suggests {:?}. Using explicit format {:?}",
+                explicit,
+                inferred,
+                explicit
+            );
+            Ok(explicit)
+        }
+    }
+}
+
+fn output_dataframe(
+    df: &mut DataFrame,
+    format: OutputFormat, // Take ownership, it's Copy
+    outfile: Option<String>,
+) -> Result<()> {
+    // Validate before attempting output
+    validate_dataframe(df).context("Invalid DataFrame for output")?;
+
+    let resolved_format = resolve_output_format(format, &outfile)?;
+
+    match outfile {
+        Some(path) => {
+            match resolved_format {
+                OutputFormat::Csv => write_csv(df, &path)?,
+                OutputFormat::Json => write_json(df, &path)?,
+                OutputFormat::Table => {
+                    // Table format to file doesn't make much sense, but handle gracefully
+                    log::warn!("Writing table format to file, consider using csv or json");
+                    let mut f = File::create(path)?;
+                    write!(f, "{}", df)?;
+                }
+            }
+        }
+        None => match resolved_format {
+            OutputFormat::Csv => write_csv_to_stdout(df)?,
+            OutputFormat::Json => write_json_to_stdout(df)?,
+            OutputFormat::Table => println!("{}", df),
+        },
+    }
     Ok(())
 }
