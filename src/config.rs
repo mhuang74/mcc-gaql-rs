@@ -103,6 +103,20 @@ impl ResolvedConfig {
 
     /// Validate that resolved config supports the requested operation mode
     pub fn validate_for_operation(&self, args: &crate::args::Cli) -> anyhow::Result<()> {
+        // Validate that user context is always specified before running any operation
+        // This ensures we know which user's credentials we're using
+        if self.user_email.is_none() {
+            return Err(anyhow::anyhow!(
+                "User context required for authentication.\n\
+                 A user email must be specified to identify which Google Ads account credentials to use.\n\
+                 Please provide one of:\n  \
+                 1. CLI argument: --user <EMAIL>\n  \
+                 2. Config profile with 'user' field: --profile <PROFILE_NAME>\n\n\
+                 Without a user context, it's unclear which user's token is being used,\n\
+                 which may result in using incorrect credentials."
+            ));
+        }
+
         // Validate natural language mode requirements
         if args.natural_language && self.queries_filename.is_none() {
             return Err(anyhow::anyhow!(
