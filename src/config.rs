@@ -39,20 +39,33 @@ impl ResolvedConfig {
         args: &crate::args::Cli,
         config: Option<MyConfig>,
     ) -> anyhow::Result<Self> {
-        // Resolve MCC with priority: CLI --mcc > CLI --customer-id > config
-        let mcc_customer_id = args
-            .mcc
-            .as_ref()
-            .or(args.customer_id.as_ref())
-            .map(|s| s.to_string())
-            .or_else(|| config.as_ref().map(|c| c.mcc_customerid.clone()))
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "MCC customer ID required. Either:\n  \
-                 1. Provide via CLI: --mcc <MCC_ID> or --customer-id <CUSTOMER_ID>\n  \
-                 2. Specify config profile: --profile <PROFILE_NAME>"
-                )
-            })?;
+        // Resolve MCC with explicit priority and logging
+        let mcc_customer_id = if let Some(mcc) = &args.mcc {
+            // Explicit --mcc takes highest priority
+            log::debug!("Using MCC from --mcc argument: {}", mcc);
+            mcc.clone()
+        } else if let Some(config_mcc) = config.as_ref().map(|c| &c.mcc_customerid) {
+            // Config file MCC is second priority
+            log::debug!("Using MCC from config profile: {}", config_mcc);
+            config_mcc.clone()
+        } else if let Some(customer_id) = &args.customer_id {
+            // Fallback: use customer_id as MCC (for solo accounts)
+            log::warn!(
+                "No --mcc specified. Using --customer-id ({}) as MCC. \
+                 This assumes the account is not under a manager account. \
+                 Use --mcc explicitly if this account has a manager.",
+                customer_id
+            );
+            customer_id.clone()
+        } else {
+            // No MCC available anywhere
+            return Err(anyhow::anyhow!(
+                "MCC customer ID required. Provide one of:\n  \
+                 1. CLI argument: --mcc <MCC_ID>\n  \
+                 2. Config profile: --profile <PROFILE_NAME>\n  \
+                 3. For solo accounts: --customer-id <CUSTOMER_ID> (will be used as MCC)"
+            ));
+        };
 
         // Resolve user email: CLI > config
         let user_email = args
@@ -89,10 +102,7 @@ impl ResolvedConfig {
     }
 
     /// Validate that resolved config supports the requested operation mode
-    pub fn validate_for_operation(
-        &self,
-        args: &crate::args::Cli,
-    ) -> anyhow::Result<()> {
+    pub fn validate_for_operation(&self, args: &crate::args::Cli) -> anyhow::Result<()> {
         // Validate natural language mode requirements
         if args.natural_language && self.queries_filename.is_none() {
             return Err(anyhow::anyhow!(

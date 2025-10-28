@@ -61,11 +61,15 @@ pub struct Cli {
     #[clap(short = 'u', long)]
     pub user: Option<String>,
 
-    /// MCC (Manager) Customer ID for login-customer-id header
+    /// MCC (Manager) Customer ID for login-customer-id header.
+    /// Required unless specified in config profile.
+    /// For solo accounts, can be omitted if --customer-id is provided.
     #[clap(short = 'm', long)]
     pub mcc: Option<String>,
 
-    /// Apply query to a single CustomerID. Or use with `--all-linked-child-accounts` to query all child accounts.
+    /// Apply query to a single account.
+    /// If no --mcc is specified, this will be used as the MCC (for solo accounts).
+    /// To query across many accounts, specify a customerids_filename in config file, or query across all child accounts via --all-linked-child-accounts.
     #[clap(short, long)]
     pub customer_id: Option<String>,
 
