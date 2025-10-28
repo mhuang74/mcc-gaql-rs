@@ -128,22 +128,41 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         user_email,
     )
     .await
-    {
+    .context(format!(
+        "Initial OAuth2 authentication failed for MCC: {}, User: {:?}",
+        mcc_customer_id,
+        user_email
+    )) {
         Ok(a) => a,
-        Err(_e) => {
-            log::info!("Refresh token became invalid. Clearing token cache and forcing re-auth");
+        Err(e) => {
+            log::warn!("Authentication failed: {}. Attempting re-auth by clearing token cache", e);
+
             // remove cached token to force re-auth and try again
             let token_cache_path =
                 mcc_gaql::config::config_file_path(&resolved_config.token_cache_filename)
-                    .expect("token cache path");
-            let _ = fs::remove_file(token_cache_path);
+                    .context("Failed to determine token cache file path")?;
+
+            fs::remove_file(&token_cache_path)
+                .context(format!(
+                    "Failed to remove invalid token cache at: {}",
+                    token_cache_path.display()
+                ))?;
+
+            log::info!("Removed cached token at: {}", token_cache_path.display());
+
             googleads::get_api_access(
                 mcc_customer_id,
                 &resolved_config.token_cache_filename,
                 user_email,
             )
             .await
-            .expect("Refresh token expired and failed to kick off re-auth.")
+            .context(format!(
+                "Re-authentication failed after clearing token cache. \
+                 MCC: {}, User: {:?}, Token cache: {}",
+                mcc_customer_id,
+                user_email,
+                token_cache_path.display()
+            ))?
         }
     };
 

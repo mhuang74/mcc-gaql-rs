@@ -164,14 +164,56 @@ pub fn load(profile: &str) -> anyhow::Result<MyConfig> {
 
     // load from file if present
     if let Some(config_file_path) = config_file_path(TOML_CONFIG_FILENAME) {
+        if !config_file_path.exists() {
+            return Err(anyhow::anyhow!(
+                "Config file not found at: {}\n\
+                 Expected format: [profile_name] sections in TOML\n\
+                 Run with --help for configuration instructions",
+                config_file_path.display()
+            ));
+        }
+
         log::debug!("Loading config file: {:?}", config_file_path);
-        figment = figment.merge(Toml::file(config_file_path).nested());
+        figment = figment.merge(Toml::file(&config_file_path).nested());
+    } else {
+        return Err(anyhow::anyhow!(
+            "Could not determine config directory path for profile '{}'\n\
+             Expected config at: ~/.config/{}/{}",
+            profile,
+            CRATE_NAME,
+            TOML_CONFIG_FILENAME
+        ));
     }
 
     // merge in ENV VAR Overrides
     figment = figment.merge(Env::prefixed(ENV_VAR_PREFIX));
 
-    Ok(figment.select(profile).extract()?)
+    // Extract the profile with better error context
+    figment
+        .select(profile)
+        .extract()
+        .map_err(|e| {
+            // Try to provide helpful context about what went wrong
+            let config_path = config_file_path(TOML_CONFIG_FILENAME)
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| "unknown".to_string());
+
+            anyhow::anyhow!(
+                "Failed to load profile '{}' from config file: {}\n\
+                 Error: {}\n\
+                 \n\
+                 Possible issues:\n\
+                 - Profile '{}' may not exist in the config file\n\
+                 - Required fields may be missing (mcc_customerid is mandatory)\n\
+                 - TOML syntax may be invalid\n\
+                 \n\
+                 Check your config file format and ensure the profile exists.",
+                profile,
+                config_path,
+                e,
+                profile
+            )
+        })
 }
 
 /// get the platform-correct config file path
