@@ -19,15 +19,11 @@ use polars::prelude::*;
 use thousands::Separable;
 use tonic::{codegen::InterceptedService, transport::Channel};
 
-mod args;
-mod config;
-mod googleads;
-mod prompt2gaql;
-mod util;
-
-use crate::args::OutputFormat;
-use crate::config::ResolvedConfig;
-use crate::util::QueryEntry;
+use mcc_gaql::args::{self, OutputFormat};
+use mcc_gaql::config::{self, ResolvedConfig};
+use mcc_gaql::googleads;
+use mcc_gaql::prompt2gaql;
+use mcc_gaql::util::{self, QueryEntry};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -67,7 +63,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .queries_filename
             .as_ref()
             .expect("queries_filename validated earlier");
-        let queries_path = crate::config::config_file_path(query_filename).unwrap();
+        let queries_path = mcc_gaql::config::config_file_path(query_filename).unwrap();
 
         args.gaql_query = match util::get_queries_from_file(&queries_path).await {
             Ok(map) => {
@@ -94,7 +90,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .queries_filename
             .as_ref()
             .expect("queries_filename validated earlier");
-        let queries_path = crate::config::config_file_path(query_filename).unwrap();
+        let queries_path = mcc_gaql::config::config_file_path(query_filename).unwrap();
 
         let example_queries: Vec<QueryEntry> =
             match util::get_queries_from_file(&queries_path).await {
@@ -138,7 +134,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             log::info!("Refresh token became invalid. Clearing token cache and forcing re-auth");
             // remove cached token to force re-auth and try again
             let token_cache_path =
-                crate::config::config_file_path(&resolved_config.token_cache_filename)
+                mcc_gaql::config::config_file_path(&resolved_config.token_cache_filename)
                     .expect("token cache path");
             let _ = fs::remove_file(token_cache_path);
             googleads::get_api_access(
@@ -224,7 +220,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             else if args.customer_id.is_none() & !args.all_linked_child_accounts {
                 if let Some(customerids_filename) = resolved_config.customerids_filename.as_deref() {
                     let customerids_path =
-                        crate::config::config_file_path(customerids_filename).unwrap();
+                        mcc_gaql::config::config_file_path(customerids_filename).unwrap();
                     log::debug!("Querying accounts listed in file: {}", customerids_path.display());
 
                     (util::get_child_account_ids_from_file(customerids_path.as_path()).await).ok()
