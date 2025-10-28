@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 const CRATE_NAME: &str = env!("CARGO_PKG_NAME");
-const TOML_CONFIG_FILENAME: &str = "config.toml";
+pub const TOML_CONFIG_FILENAME: &str = "config.toml";
 pub const ENV_VAR_PREFIX: &str = "MCC_GAQL_";
 
 /// Validate and normalize Google Ads customer ID format

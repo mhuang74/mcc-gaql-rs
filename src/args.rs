@@ -96,12 +96,20 @@ pub struct Cli {
     /// Sort by columns
     #[clap(long, multiple_occurrences(true))]
     pub sortby: Vec<String>,
+
+    /// Set up configuration with interactive wizard
+    #[clap(long)]
+    pub setup: bool,
 }
 
 pub fn parse() -> Cli {
     let mut cli = Cli::parse();
 
-    if cli.stored_query.is_none() && cli.gaql_query.is_none() && !cli.list_child_accounts {
+    if cli.stored_query.is_none()
+        && cli.gaql_query.is_none()
+        && !cli.list_child_accounts
+        && !cli.setup
+    {
         let mut buffer = String::new();
         io::stdin()
             .read_to_string(&mut buffer)
