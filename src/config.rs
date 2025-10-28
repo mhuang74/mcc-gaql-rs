@@ -88,14 +88,47 @@ impl ResolvedConfig {
         })
     }
 
-    pub fn require_queries_filename(&self) -> anyhow::Result<&str> {
-        self.queries_filename.as_deref().ok_or_else(|| {
-            anyhow::anyhow!(
-                "Query cookbook not available. Either:\n  \
-                 1. Provide GAQL query directly: <QUERY>\n  \
-                 2. Specify config profile with queries_filename: --profile <PROFILE_NAME>"
-            )
-        })
+    /// Validate that resolved config supports the requested operation mode
+    pub fn validate_for_operation(
+        &self,
+        args: &crate::args::Cli,
+    ) -> anyhow::Result<()> {
+        // Validate natural language mode requirements
+        if args.natural_language && self.queries_filename.is_none() {
+            return Err(anyhow::anyhow!(
+                "Natural language mode requires a query cookbook.\n\
+                 Please specify a config profile with queries_filename:\n  \
+                 --profile <PROFILE_NAME>"
+            ));
+        }
+
+        // Validate stored query requirements
+        if args.stored_query.is_some() && self.queries_filename.is_none() {
+            return Err(anyhow::anyhow!(
+                "Stored queries require a query cookbook.\n\
+                 Please specify a config profile with queries_filename:\n  \
+                 --profile <PROFILE_NAME>"
+            ));
+        }
+
+        // Validate customer ID list requirements for GAQL queries
+        // (skip this check if only listing accounts or using field service)
+        if !args.list_child_accounts
+            && !args.field_service
+            && args.gaql_query.is_some()
+            && !args.all_linked_child_accounts
+            && args.customer_id.is_none()
+            && self.customerids_filename.is_none()
+        {
+            return Err(anyhow::anyhow!(
+                "No target accounts specified. Please provide one of:\n  \
+                 1. Single account: --customer-id <CUSTOMER_ID>\n  \
+                 2. All linked accounts: --all-linked-child-accounts\n  \
+                 3. Config profile with customerids_filename: --profile <PROFILE_NAME>"
+            ));
+        }
+
+        Ok(())
     }
 }
 

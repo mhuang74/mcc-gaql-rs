@@ -51,6 +51,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Resolve configuration from CLI args and config file
     let resolved_config = ResolvedConfig::from_args_and_config(&args, config)?;
+
+    // Validate that resolved config supports the requested operation
+    resolved_config.validate_for_operation(&args)?;
+
     log::debug!("Resolved configuration: {resolved_config:?}");
 
     let user_email = resolved_config.user_email.as_deref();
@@ -58,7 +62,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // load stored query
     if let Some(query_name) = args.stored_query {
-        let query_filename = resolved_config.require_queries_filename()?;
+        // Safe to unwrap: validated by validate_for_operation()
+        let query_filename = resolved_config.queries_filename.as_ref().expect("queries_filename validated earlier");
         let queries_path = crate::config::config_file_path(query_filename).unwrap();
 
         args.gaql_query = match util::get_queries_from_file(&queries_path).await {
@@ -81,7 +86,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if args.natural_language {
         // Use OpenAI for LLM
         let openai_api_key = env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY not set");
-        let query_filename = resolved_config.require_queries_filename()?;
+        // Safe to unwrap: validated by validate_for_operation()
+        let query_filename = resolved_config.queries_filename.as_ref().expect("queries_filename validated earlier");
         let queries_path = crate::config::config_file_path(query_filename).unwrap();
 
         let example_queries: Vec<QueryEntry> =
