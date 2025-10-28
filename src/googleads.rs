@@ -140,10 +140,25 @@ impl Interceptor for GoogleAdsAPIAccess {
 /// Sanitizes email by replacing @ with _at_ and . with _
 /// Example: user@example.com -> tokencache_user_at_example_com.json
 pub fn generate_token_cache_filename(user_email: &str) -> String {
-    let sanitized = user_email
-        .replace('@', "_at_")
-        .replace('.', "_");
+    let sanitized = user_email.replace('@', "_at_").replace('.', "_");
     format!("tokencache_{}.json", sanitized)
+}
+
+/// Resolve token cache filename based on priority:
+/// 1. Explicit legacy token cache filename (highest priority)
+/// 2. Auto-generated from user email
+/// 3. Default filename (lowest priority)
+pub fn resolve_token_cache_filename(
+    legacy_filename: Option<&str>,
+    user_email: Option<&str>,
+) -> String {
+    if let Some(legacy) = legacy_filename {
+        legacy.to_string()
+    } else if let Some(email) = user_email {
+        generate_token_cache_filename(email)
+    } else {
+        "tokencache_default.json".to_string()
+    }
 }
 
 /// Get access to Google Ads API via OAuth2 flow and return API Credentials
@@ -153,16 +168,8 @@ pub async fn get_api_access(
     legacy_token_cache_filename: Option<&str>,
 ) -> Result<GoogleAdsAPIAccess> {
     // Determine token cache filename based on priority: legacy > user email > default
-    let token_cache_filename = if let Some(legacy) = legacy_token_cache_filename {
-        // Legacy path: use explicit filename
-        legacy.to_string()
-    } else if let Some(email) = user_email {
-        // New path: auto-generate from email
-        generate_token_cache_filename(email)
-    } else {
-        // Default: use generic cache name
-        "tokencache_default.json".to_string()
-    };
+    let token_cache_filename =
+        resolve_token_cache_filename(legacy_token_cache_filename, user_email);
     let client_secret_path =
         crate::config::config_file_path(FILENAME_CLIENT_SECRET).expect("clientsecret path");
 
