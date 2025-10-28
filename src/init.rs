@@ -3,9 +3,9 @@ use chrono::Local;
 use dialoguer::{Confirm, Input};
 use std::fs;
 use std::path::PathBuf;
-use toml::{map::Map, Value};
+use toml::{Value, map::Map};
 
-use crate::config::{MyConfig, config_file_path, TOML_CONFIG_FILENAME};
+use crate::config::{MyConfig, TOML_CONFIG_FILENAME, config_file_path};
 
 /// Run the interactive configuration wizard
 pub fn run_wizard() -> Result<()> {
@@ -91,15 +91,21 @@ pub fn run_wizard() -> Result<()> {
     println!("  mcc-gaql --profile {}", profile_name);
     println!();
     println!("Next steps:");
-    println!("  1. Place your OAuth2 credentials in: {:?}",
-        config_file_path("clientsecret.json"));
+    println!(
+        "  1. Place your OAuth2 credentials in: {:?}",
+        config_file_path("clientsecret.json")
+    );
     if config.customerids_filename.is_some() {
-        println!("  2. Create your customer IDs file: {:?}",
-            config_file_path(&config.customerids_filename.unwrap()));
+        println!(
+            "  2. Create your customer IDs file: {:?}",
+            config_file_path(&config.customerids_filename.unwrap())
+        );
     }
     if config.queries_filename.is_some() {
-        println!("  3. (Optional) Create your queries cookbook: {:?}",
-            config_file_path(&config.queries_filename.unwrap()));
+        println!(
+            "  3. (Optional) Create your queries cookbook: {:?}",
+            config_file_path(&config.queries_filename.unwrap())
+        );
     }
 
     Ok(())
@@ -141,11 +147,10 @@ pub fn determine_profile_name() -> Result<String> {
 
 /// Get list of existing profile names from config file
 fn get_existing_profiles(config_path: &PathBuf) -> Result<Vec<String>> {
-    let content = fs::read_to_string(config_path)
-        .context("Failed to read config file")?;
+    let content = fs::read_to_string(config_path).context("Failed to read config file")?;
 
-    let toml_table: Map<String, Value> = toml::from_str(&content)
-        .context("Failed to parse config file")?;
+    let toml_table: Map<String, Value> =
+        toml::from_str(&content).context("Failed to parse config file")?;
 
     let profiles: Vec<String> = toml_table.keys().map(|k| k.to_string()).collect();
 
@@ -159,42 +164,51 @@ fn save_config(profile_name: &str, config: &MyConfig) -> Result<()> {
 
     // Create parent directory if it doesn't exist
     if let Some(parent) = config_path.parent() {
-        fs::create_dir_all(parent)
-            .context("Failed to create config directory")?;
+        fs::create_dir_all(parent).context("Failed to create config directory")?;
     }
 
     // Load existing config or create new one
     let mut config_table: Map<String, Value> = if config_path.exists() {
-        let content = fs::read_to_string(&config_path)
-            .context("Failed to read existing config file")?;
-        toml::from_str(&content)
-            .context("Failed to parse existing config file")?
+        let content =
+            fs::read_to_string(&config_path).context("Failed to read existing config file")?;
+        toml::from_str(&content).context("Failed to parse existing config file")?
     } else {
         Map::new()
     };
 
     // Create profile section
     let mut profile_table = Map::new();
-    profile_table.insert("mcc_customerid".to_string(), Value::String(config.mcc_customerid.clone()));
-    profile_table.insert("token_cache_filename".to_string(), Value::String(config.token_cache_filename.clone()));
+    profile_table.insert(
+        "mcc_customerid".to_string(),
+        Value::String(config.mcc_customerid.clone()),
+    );
+    profile_table.insert(
+        "token_cache_filename".to_string(),
+        Value::String(config.token_cache_filename.clone()),
+    );
 
     if let Some(ref filename) = config.customerids_filename {
-        profile_table.insert("customerids_filename".to_string(), Value::String(filename.clone()));
+        profile_table.insert(
+            "customerids_filename".to_string(),
+            Value::String(filename.clone()),
+        );
     }
 
     if let Some(ref filename) = config.queries_filename {
-        profile_table.insert("queries_filename".to_string(), Value::String(filename.clone()));
+        profile_table.insert(
+            "queries_filename".to_string(),
+            Value::String(filename.clone()),
+        );
     }
 
     // Add or update profile in config
     config_table.insert(profile_name.to_string(), Value::Table(profile_table));
 
     // Write config file
-    let toml_string = toml::to_string_pretty(&config_table)
-        .context("Failed to serialize config")?;
+    let toml_string =
+        toml::to_string_pretty(&config_table).context("Failed to serialize config")?;
 
-    fs::write(&config_path, toml_string)
-        .context("Failed to write config file")?;
+    fs::write(&config_path, toml_string).context("Failed to write config file")?;
 
     println!("Configuration written to: {:?}", config_path);
 
@@ -269,10 +283,22 @@ token_cache_filename = "tokencache_myprofile.json"
         let mut config_table = Map::new();
         let mut profile_table = Map::new();
 
-        profile_table.insert("mcc_customerid".to_string(), Value::String(config.mcc_customerid.clone()));
-        profile_table.insert("token_cache_filename".to_string(), Value::String(config.token_cache_filename.clone()));
-        profile_table.insert("customerids_filename".to_string(), Value::String(config.customerids_filename.clone().unwrap()));
-        profile_table.insert("queries_filename".to_string(), Value::String(config.queries_filename.clone().unwrap()));
+        profile_table.insert(
+            "mcc_customerid".to_string(),
+            Value::String(config.mcc_customerid.clone()),
+        );
+        profile_table.insert(
+            "token_cache_filename".to_string(),
+            Value::String(config.token_cache_filename.clone()),
+        );
+        profile_table.insert(
+            "customerids_filename".to_string(),
+            Value::String(config.customerids_filename.clone().unwrap()),
+        );
+        profile_table.insert(
+            "queries_filename".to_string(),
+            Value::String(config.queries_filename.clone().unwrap()),
+        );
 
         config_table.insert("testprofile".to_string(), Value::Table(profile_table));
 
