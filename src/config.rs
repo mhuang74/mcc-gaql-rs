@@ -9,6 +9,36 @@ const CRATE_NAME: &str = env!("CARGO_PKG_NAME");
 const TOML_CONFIG_FILENAME: &str = "config.toml";
 pub const ENV_VAR_PREFIX: &str = "MCC_GAQL_";
 
+/// Validate and normalize Google Ads customer ID format
+/// Accepts: "1234567890" or "123-456-7890"
+/// Returns: "1234567890" (normalized, no hyphens)
+pub fn validate_and_normalize_customer_id(customer_id: &str) -> anyhow::Result<String> {
+    // Remove hyphens if present
+    let normalized = customer_id.replace('-', "");
+
+    // Validate format: exactly 10 digits
+    if !normalized.chars().all(|c| c.is_ascii_digit()) {
+        return Err(anyhow::anyhow!(
+            "Invalid customer ID format: '{}'. \
+             Customer ID must contain only digits (and optional hyphens). \
+             Example: '1234567890' or '123-456-7890'",
+            customer_id
+        ));
+    }
+
+    if normalized.len() != 10 {
+        return Err(anyhow::anyhow!(
+            "Invalid customer ID length: '{}'. \
+             Customer ID must be exactly 10 digits. \
+             Found {} digits.",
+            customer_id,
+            normalized.len()
+        ));
+    }
+
+    Ok(normalized)
+}
+
 #[derive(Deserialize, Serialize, Debug)]
 pub struct MyConfig {
     /// MCC Account ID is mandatory
@@ -39,15 +69,19 @@ impl ResolvedConfig {
         args: &crate::args::Cli,
         config: Option<MyConfig>,
     ) -> anyhow::Result<Self> {
+        use anyhow::Context;
+
         // Resolve MCC with explicit priority and logging
         let mcc_customer_id = if let Some(mcc) = &args.mcc {
             // Explicit --mcc takes highest priority
             log::debug!("Using MCC from --mcc argument: {}", mcc);
-            mcc.clone()
+            validate_and_normalize_customer_id(mcc)
+                .context("Invalid --mcc argument")?
         } else if let Some(config_mcc) = config.as_ref().map(|c| &c.mcc_customerid) {
             // Config file MCC is second priority
             log::debug!("Using MCC from config profile: {}", config_mcc);
-            config_mcc.clone()
+            validate_and_normalize_customer_id(config_mcc)
+                .context("Invalid mcc_customerid in config file")?
         } else if let Some(customer_id) = &args.customer_id {
             // Fallback: use customer_id as MCC (for solo accounts)
             log::warn!(
@@ -56,7 +90,8 @@ impl ResolvedConfig {
                  Use --mcc explicitly if this account has a manager.",
                 customer_id
             );
-            customer_id.clone()
+            validate_and_normalize_customer_id(customer_id)
+                .context("Invalid --customer-id argument")?
         } else {
             // No MCC available anywhere
             return Err(anyhow::anyhow!(
@@ -223,4 +258,81 @@ pub fn config_file_path(filename: &str) -> Option<PathBuf> {
         path.push(filename);
         path
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_customer_id_valid() {
+        assert_eq!(
+            validate_and_normalize_customer_id("1234567890").unwrap(),
+            "1234567890"
+        );
+    }
+
+    #[test]
+    fn test_validate_customer_id_with_hyphens() {
+        assert_eq!(
+            validate_and_normalize_customer_id("123-456-7890").unwrap(),
+            "1234567890"
+        );
+    }
+
+    #[test]
+    fn test_validate_customer_id_with_multiple_hyphens() {
+        assert_eq!(
+            validate_and_normalize_customer_id("1-2-3-4-5-6-7-8-9-0").unwrap(),
+            "1234567890"
+        );
+    }
+
+    #[test]
+    fn test_validate_customer_id_invalid_chars() {
+        let result = validate_and_normalize_customer_id("123abc7890");
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid customer ID format"));
+    }
+
+    #[test]
+    fn test_validate_customer_id_invalid_chars_with_spaces() {
+        let result = validate_and_normalize_customer_id("123 456 7890");
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid customer ID format"));
+    }
+
+    #[test]
+    fn test_validate_customer_id_too_short() {
+        let result = validate_and_normalize_customer_id("123456789");
+        assert!(result.is_err());
+        let error_msg = result.unwrap_err().to_string();
+        assert!(error_msg.contains("Invalid customer ID length"));
+        assert!(error_msg.contains("Found 9 digits"));
+    }
+
+    #[test]
+    fn test_validate_customer_id_too_long() {
+        let result = validate_and_normalize_customer_id("12345678901");
+        assert!(result.is_err());
+        let error_msg = result.unwrap_err().to_string();
+        assert!(error_msg.contains("Invalid customer ID length"));
+        assert!(error_msg.contains("Found 11 digits"));
+    }
+
+    #[test]
+    fn test_validate_customer_id_empty() {
+        let result = validate_and_normalize_customer_id("");
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid customer ID length"));
+    }
 }
