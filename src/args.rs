@@ -1,3 +1,4 @@
+use anyhow::Result;
 use clap::Parser;
 use std::io::{self, Read};
 use std::str::FromStr;
@@ -56,7 +57,19 @@ pub struct Cli {
     #[clap(short, long)]
     pub profile: Option<String>,
 
-    /// Apply query to a single CustomerID. Or use with `--all-linked-child-accounts` to query all child accounts.
+    /// User email for OAuth2 authentication (auto-generates token cache)
+    #[clap(short = 'u', long)]
+    pub user: Option<String>,
+
+    /// MCC (Manager) Customer ID for login-customer-id header.
+    /// Required unless specified in config profile.
+    /// For solo accounts, can be omitted if --customer-id is provided.
+    #[clap(short = 'm', long)]
+    pub mcc: Option<String>,
+
+    /// Apply query to a single account.
+    /// If no --mcc is specified, this will be used as the MCC (for solo accounts).
+    /// To query across many accounts, specify a customerids_filename in config file, or query across all child accounts via --all-linked-child-accounts.
     #[clap(short, long)]
     pub customer_id: Option<String>,
 
@@ -107,4 +120,43 @@ pub fn parse() -> Cli {
     }
 
     cli
+}
+
+impl Cli {
+    /// Validate argument combinations after parsing
+    pub fn validate(&self) -> Result<()> {
+        // Ambiguous which child account(s) to query
+        if self.customer_id.is_some() && self.all_linked_child_accounts {
+            return Err(anyhow::anyhow!(
+                "Use --customer-id to query a specific account.\n\
+                    Use --mcc with --all-linked-child-accounts to query all child accounts under mcc.\n\
+                    Please don't use --customer-id and --all-linked-child-accounts together."
+            ));
+        }
+
+        // Validate that stored query and natural language aren't both specified
+        if self.stored_query.is_some() && self.natural_language {
+            return Err(anyhow::anyhow!(
+                "Cannot use both --stored-query and --natural-language.\n\
+                Choose one query method."
+            ));
+        }
+
+        // Validate that natural language requires a query text
+        if self.natural_language && self.gaql_query.is_none() {
+            return Err(anyhow::anyhow!(
+                "Natural language mode requires a query string.\n\
+                Usage: mcc-gaql --natural-language \"show me all campaigns\""
+            ));
+        }
+
+        // Warn if both profile and config-free mode arguments are mixed
+        if self.profile.is_some() && self.mcc.is_some() {
+            log::warn!(
+                "Both --profile and --mcc specified. CLI --mcc will override profile's MCC setting."
+            );
+        }
+
+        Ok(())
+    }
 }

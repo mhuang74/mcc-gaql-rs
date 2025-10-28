@@ -19,23 +19,20 @@ use polars::prelude::*;
 use thousands::Separable;
 use tonic::{codegen::InterceptedService, transport::Channel};
 
-mod args;
-mod config;
-mod googleads;
-mod init;
-mod prompt2gaql;
-mod util;
-
-use crate::args::OutputFormat;
-use crate::util::QueryEntry;
+use mcc_gaql::args::{self, OutputFormat};
+use mcc_gaql::config::{self, ResolvedConfig};
+use mcc_gaql::googleads;
+use mcc_gaql::init;
+use mcc_gaql::prompt2gaql;
+use mcc_gaql::util::{self, QueryEntry};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     util::init_logger();
 
-    let mut args = args::parse();
     // Format validation happens at parse time via OutputFormat enum type system.
     // Invalid formats will fail with clap error before any queries are executed.
+    let mut args = args::parse();
 
     // Handle --init flag to run configuration wizard
     if args.init {
@@ -43,19 +40,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    let profile = &args.profile.unwrap_or_else(|| "test".to_owned());
+    // Validate argument combinations
+    args.validate()?;
 
-    let config = config::load(profile).context(format!("Loading config for profile: {profile}"))?;
+    // Only load config if profile is explicitly specified
+    let config = if let Some(profile) = &args.profile {
+        log::info!("Config profile: {profile}");
+        Some(config::load(profile).context(format!("Loading config for profile: {profile}"))?)
+    } else {
+        log::info!("No profile specified, using CLI arguments only");
+        None
+    };
 
-    log::debug!("Configuration: {config:?}");
+    // Resolve configuration from CLI args and config file
+    let resolved_config = ResolvedConfig::from_args_and_config(&args, config)?;
+
+    // Validate that resolved config supports the requested operation
+    resolved_config.validate_for_operation(&args)?;
+
+    log::debug!("Resolved configuration: {resolved_config:?}");
+
+    let user_email = resolved_config.user_email.as_deref();
+    let mcc_customer_id = resolved_config.mcc_customer_id.as_str();
 
     // load stored query
     if let Some(query_name) = args.stored_query {
-        let query_filename = config
+        // Safe to unwrap: validated by validate_for_operation()
+        let query_filename = resolved_config
             .queries_filename
             .as_ref()
-            .expect("Query cookbook filename undefined");
-        let queries_path = crate::config::config_file_path(query_filename).unwrap();
+            .expect("queries_filename validated earlier");
+        let queries_path = mcc_gaql::config::config_file_path(query_filename).unwrap();
 
         args.gaql_query = match util::get_queries_from_file(&queries_path).await {
             Ok(map) => {
@@ -77,11 +92,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if args.natural_language {
         // Use OpenAI for LLM
         let openai_api_key = env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY not set");
-        let query_filename = config
+        // Safe to unwrap: validated by validate_for_operation()
+        let query_filename = resolved_config
             .queries_filename
             .as_ref()
-            .expect("Query cookbook filename undefined");
-        let queries_path = crate::config::config_file_path(query_filename).unwrap();
+            .expect("queries_filename validated earlier");
+        let queries_path = mcc_gaql::config::config_file_path(query_filename).unwrap();
 
         let example_queries: Vec<QueryEntry> =
             match util::get_queries_from_file(&queries_path).await {
@@ -113,24 +129,50 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         args.gaql_query = Some(new_query);
     }
 
-    let api_context =
-        match googleads::get_api_access(&config.mcc_customerid, &config.token_cache_filename).await
-        {
-            Ok(a) => a,
-            Err(_e) => {
-                log::info!(
-                    "Refresh token became invalid. Clearing token cache and forcing re-auth"
-                );
-                // remove cached token to force re-auth and try again
-                let token_cache_path =
-                    crate::config::config_file_path(&config.token_cache_filename)
-                        .expect("token cache path");
-                let _ = fs::remove_file(token_cache_path);
-                googleads::get_api_access(&config.mcc_customerid, &config.token_cache_filename)
-                    .await
-                    .expect("Refresh token expired and failed to kick off re-auth.")
-            }
-        };
+    let api_context = match googleads::get_api_access(
+        mcc_customer_id,
+        &resolved_config.token_cache_filename,
+        user_email,
+    )
+    .await
+    .context(format!(
+        "Initial OAuth2 authentication failed for MCC: {}, User: {:?}",
+        mcc_customer_id, user_email
+    )) {
+        Ok(a) => a,
+        Err(e) => {
+            log::warn!(
+                "Authentication failed: {}. Attempting re-auth by clearing token cache",
+                e
+            );
+
+            // remove cached token to force re-auth and try again
+            let token_cache_path =
+                mcc_gaql::config::config_file_path(&resolved_config.token_cache_filename)
+                    .context("Failed to determine token cache file path")?;
+
+            fs::remove_file(&token_cache_path).context(format!(
+                "Failed to remove invalid token cache at: {}",
+                token_cache_path.display()
+            ))?;
+
+            log::info!("Removed cached token at: {}", token_cache_path.display());
+
+            googleads::get_api_access(
+                mcc_customer_id,
+                &resolved_config.token_cache_filename,
+                user_email,
+            )
+            .await
+            .context(format!(
+                "Re-authentication failed after clearing token cache. \
+                 MCC: {}, User: {:?}, Token cache: {}",
+                mcc_customer_id,
+                user_email,
+                token_cache_path.display()
+            ))?
+        }
+    };
 
     if args.list_child_accounts {
         // run Account listing query
@@ -143,12 +185,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             (customer_id, query)
         } else {
             // query child accounts under MCC
-            log::debug!(
-                "Listing ALL child accounts under MCC {}",
-                &config.mcc_customerid
-            );
+            log::debug!("Listing ALL child accounts under MCC {}", mcc_customer_id);
             (
-                config.mcc_customerid,
+                mcc_customer_id.to_string(),
                 googleads::SUB_ACCOUNTS_QUERY.to_owned(),
             )
         };
@@ -197,23 +236,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // if using default profile MCC and querying all child accounts,
             // then query all linked accounts under profile mcc
             else if args.customer_id.is_none() & args.all_linked_child_accounts {
-                let customer_id = config.mcc_customerid;
-                log::debug!("Querying all linked child accounts under profile MCC: {}", &customer_id);
+                let customer_id = mcc_customer_id.to_string();
+                log::debug!("Querying all linked child accounts under MCC: {}", &customer_id);
 
                 // generate new list of child accounts
                 (googleads::get_child_account_ids(api_context.clone(), customer_id).await).ok()
             }
-            // if using default profile MCC and NOT querying all child accounts, 
+            // if using default profile MCC and NOT querying all child accounts,
             // then look for customerids file and use it
             else if args.customer_id.is_none() & !args.all_linked_child_accounts {
-                if config.customerids_filename.is_some() {
+                if let Some(customerids_filename) = resolved_config.customerids_filename.as_deref() {
                     let customerids_path =
-                    crate::config::config_file_path(&config.customerids_filename.unwrap()).unwrap();
+                        mcc_gaql::config::config_file_path(customerids_filename).unwrap();
                     log::debug!("Querying accounts listed in file: {}", customerids_path.display());
 
                     (util::get_child_account_ids_from_file(customerids_path.as_path()).await).ok()
                 } else {
-                    log::warn!("Expecting customerids file but none found in config");
+                    log::warn!("No customerids file specified. Use --customer-id or --all-linked-child-accounts");
                     None
                 }
             } else {

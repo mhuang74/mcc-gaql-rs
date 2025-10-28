@@ -86,6 +86,8 @@ pub struct GoogleAdsAPIAccess {
     pub auth_token: Option<MetadataValue<Ascii>>,
     pub token: Option<AccessToken>,
     pub authenticator: Authenticator<<DefaultHyperClient as HyperClientBuilder>::Connector>,
+    #[allow(dead_code)]
+    pub user_email: Option<String>,
 }
 
 impl GoogleAdsAPIAccess {
@@ -134,10 +136,19 @@ impl Interceptor for GoogleAdsAPIAccess {
     }
 }
 
+/// Generate token cache filename from user email
+/// Sanitizes email by replacing @ with _at_ and . with _
+/// Example: user@example.com -> tokencache_user_at_example_com.json
+pub fn generate_token_cache_filename(user_email: &str) -> String {
+    let sanitized = user_email.replace('@', "_at_").replace('.', "_");
+    format!("tokencache_{}.json", sanitized)
+}
+
 /// Get access to Google Ads API via OAuth2 flow and return API Credentials
 pub async fn get_api_access(
     mcc_customer_id: &str,
     token_cache_filename: &str,
+    user_email: Option<&str>,
 ) -> Result<GoogleAdsAPIAccess> {
     let client_secret_path =
         crate::config::config_file_path(FILENAME_CLIENT_SECRET).expect("clientsecret path");
@@ -175,6 +186,7 @@ pub async fn get_api_access(
         auth_token: None,
         token: None,
         authenticator: auth,
+        user_email: user_email.map(|s| s.to_string()),
     };
 
     access.renew_token().await?;
