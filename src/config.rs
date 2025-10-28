@@ -23,29 +23,61 @@ pub struct MyConfig {
     pub queries_filename: Option<String>,
 }
 
-// Add extension trait for cleaner access
-pub trait ConfigExt {
-    fn queries_filename(&self) -> Option<&String>;
-    fn customerids_filename(&self) -> Option<&String>;
-    fn token_cache_filename(&self) -> Option<&String>;
-    fn user(&self) -> Option<&str>;
+/// Resolved runtime configuration combining CLI args and config file
+#[derive(Debug, Clone)]
+pub struct ResolvedConfig {
+    pub mcc_customer_id: String,
+    pub user_email: Option<String>,
+    pub token_cache_filename: Option<String>,
+    pub queries_filename: Option<String>,
+    pub customerids_filename: Option<String>,
 }
 
-impl ConfigExt for Option<MyConfig> {
-    fn queries_filename(&self) -> Option<&String> {
-        self.as_ref().and_then(|c| c.queries_filename.as_ref())
+impl ResolvedConfig {
+    /// Create resolved config from CLI args and optional config file
+    pub fn from_args_and_config(
+        args: &crate::args::Cli,
+        config: Option<MyConfig>,
+    ) -> anyhow::Result<Self> {
+        // Resolve MCC with priority: CLI --mcc > CLI --customer-id > config
+        let mcc_customer_id = args.mcc.as_ref()
+            .or(args.customer_id.as_ref())
+            .map(|s| s.to_string())
+            .or_else(|| config.as_ref().map(|c| c.mcc_customerid.clone()))
+            .ok_or_else(|| anyhow::anyhow!(
+                "MCC customer ID required. Either:\n  \
+                 1. Provide via CLI: --mcc <MCC_ID> or --customer-id <CUSTOMER_ID>\n  \
+                 2. Specify config profile: --profile <PROFILE_NAME>"
+            ))?;
+
+        // Resolve user email: CLI > config
+        let user_email = args.user.clone()
+            .or_else(|| config.as_ref().and_then(|c| c.user.clone()));
+
+        // Config file fields (only available if profile specified)
+        let token_cache_filename = config.as_ref()
+            .and_then(|c| c.token_cache_filename.clone());
+        let queries_filename = config.as_ref()
+            .and_then(|c| c.queries_filename.clone());
+        let customerids_filename = config.as_ref()
+            .and_then(|c| c.customerids_filename.clone());
+
+        Ok(Self {
+            mcc_customer_id,
+            user_email,
+            token_cache_filename,
+            queries_filename,
+            customerids_filename,
+        })
     }
 
-    fn customerids_filename(&self) -> Option<&String> {
-        self.as_ref().and_then(|c| c.customerids_filename.as_ref())
-    }
-
-    fn token_cache_filename(&self) -> Option<&String> {
-        self.as_ref().and_then(|c| c.token_cache_filename.as_ref())
-    }
-
-    fn user(&self) -> Option<&str> {
-        self.as_ref().and_then(|c| c.user.as_deref())
+    pub fn require_queries_filename(&self) -> anyhow::Result<&str> {
+        self.queries_filename.as_deref()
+            .ok_or_else(|| anyhow::anyhow!(
+                "Query cookbook not available. Either:\n  \
+                 1. Provide GAQL query directly: <QUERY>\n  \
+                 2. Specify config profile with queries_filename: --profile <PROFILE_NAME>"
+            ))
     }
 }
 
