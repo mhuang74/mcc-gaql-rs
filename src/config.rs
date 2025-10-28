@@ -75,8 +75,7 @@ impl ResolvedConfig {
         let mcc_customer_id = if let Some(mcc) = &args.mcc {
             // Explicit --mcc takes highest priority
             log::debug!("Using MCC from --mcc argument: {}", mcc);
-            validate_and_normalize_customer_id(mcc)
-                .context("Invalid --mcc argument")?
+            validate_and_normalize_customer_id(mcc).context("Invalid --mcc argument")?
         } else if let Some(config_mcc) = config.as_ref().map(|c| &c.mcc_customerid) {
             // Config file MCC is second priority
             log::debug!("Using MCC from config profile: {}", config_mcc);
@@ -224,17 +223,14 @@ pub fn load(profile: &str) -> anyhow::Result<MyConfig> {
     figment = figment.merge(Env::prefixed(ENV_VAR_PREFIX));
 
     // Extract the profile with better error context
-    figment
-        .select(profile)
-        .extract()
-        .map_err(|e| {
-            // Try to provide helpful context about what went wrong
-            let config_path = config_file_path(TOML_CONFIG_FILENAME)
-                .map(|p| p.display().to_string())
-                .unwrap_or_else(|| "unknown".to_string());
+    figment.select(profile).extract().map_err(|e| {
+        // Try to provide helpful context about what went wrong
+        let config_path = config_file_path(TOML_CONFIG_FILENAME)
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "unknown".to_string());
 
-            anyhow::anyhow!(
-                "Failed to load profile '{}' from config file: {}\n\
+        anyhow::anyhow!(
+            "Failed to load profile '{}' from config file: {}\n\
                  Error: {}\n\
                  \n\
                  Possible issues:\n\
@@ -243,12 +239,12 @@ pub fn load(profile: &str) -> anyhow::Result<MyConfig> {
                  - TOML syntax may be invalid\n\
                  \n\
                  Check your config file format and ensure the profile exists.",
-                profile,
-                config_path,
-                e,
-                profile
-            )
-        })
+            profile,
+            config_path,
+            e,
+            profile
+        )
+    })
 }
 
 /// get the platform-correct config file path
@@ -292,20 +288,24 @@ mod tests {
     fn test_validate_customer_id_invalid_chars() {
         let result = validate_and_normalize_customer_id("123abc7890");
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Invalid customer ID format"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Invalid customer ID format")
+        );
     }
 
     #[test]
     fn test_validate_customer_id_invalid_chars_with_spaces() {
         let result = validate_and_normalize_customer_id("123 456 7890");
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Invalid customer ID format"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Invalid customer ID format")
+        );
     }
 
     #[test]
@@ -330,9 +330,11 @@ mod tests {
     fn test_validate_customer_id_empty() {
         let result = validate_and_normalize_customer_id("");
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Invalid customer ID length"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Invalid customer ID length")
+        );
     }
 }

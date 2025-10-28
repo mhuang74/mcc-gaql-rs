@@ -21,8 +21,10 @@ fn test_mcc_priority_cli_overrides_config() {
 fn test_mcc_fallback_to_customer_id_for_solo_accounts() {
     let args = Cli::parse_from([
         "mcc-gaql",
-        "--customer-id", "2222222222",
-        "--user", "test@example.com"
+        "--customer-id",
+        "2222222222",
+        "--user",
+        "test@example.com",
     ]);
 
     let resolved = ResolvedConfig::from_args_and_config(&args, None).unwrap();
@@ -35,15 +37,22 @@ fn test_error_when_no_mcc_available() {
 
     let result = ResolvedConfig::from_args_and_config(&args, None);
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("MCC customer ID required"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("MCC customer ID required")
+    );
 }
 
 #[test]
 fn test_token_cache_generation_from_user_email() {
     let args = Cli::parse_from([
         "mcc-gaql",
-        "--user", "john.doe@example.com",
-        "--mcc", "1234567890"
+        "--user",
+        "john.doe@example.com",
+        "--mcc",
+        "1234567890",
     ]);
 
     let resolved = ResolvedConfig::from_args_and_config(&args, None).unwrap();
@@ -57,9 +66,11 @@ fn test_token_cache_generation_from_user_email() {
 fn test_validate_requires_user_context() {
     let args = Cli::parse_from([
         "mcc-gaql",
-        "--mcc", "1234567890",
-        "--customer-id", "7890123456",
-        "SELECT campaign.id FROM campaign"
+        "--mcc",
+        "1234567890",
+        "--customer-id",
+        "7890123456",
+        "SELECT campaign.id FROM campaign",
     ]);
 
     let resolved = ResolvedConfig {
@@ -72,5 +83,10 @@ fn test_validate_requires_user_context() {
 
     let result = resolved.validate_for_operation(&args);
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("User context required"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("User context required")
+    );
 }

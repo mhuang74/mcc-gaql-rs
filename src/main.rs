@@ -130,23 +130,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .await
     .context(format!(
         "Initial OAuth2 authentication failed for MCC: {}, User: {:?}",
-        mcc_customer_id,
-        user_email
+        mcc_customer_id, user_email
     )) {
         Ok(a) => a,
         Err(e) => {
-            log::warn!("Authentication failed: {}. Attempting re-auth by clearing token cache", e);
+            log::warn!(
+                "Authentication failed: {}. Attempting re-auth by clearing token cache",
+                e
+            );
 
             // remove cached token to force re-auth and try again
             let token_cache_path =
                 mcc_gaql::config::config_file_path(&resolved_config.token_cache_filename)
                     .context("Failed to determine token cache file path")?;
 
-            fs::remove_file(&token_cache_path)
-                .context(format!(
-                    "Failed to remove invalid token cache at: {}",
-                    token_cache_path.display()
-                ))?;
+            fs::remove_file(&token_cache_path).context(format!(
+                "Failed to remove invalid token cache at: {}",
+                token_cache_path.display()
+            ))?;
 
             log::info!("Removed cached token at: {}", token_cache_path.display());
 
