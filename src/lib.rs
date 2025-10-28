@@ -6,6 +6,6 @@
 pub mod args;
 pub mod config;
 pub mod googleads;
-pub mod init;
+pub mod setup;
 pub mod prompt2gaql;
 pub mod util;

@@ -97,9 +97,9 @@ pub struct Cli {
     #[clap(long, multiple_occurrences(true))]
     pub sortby: Vec<String>,
 
-    /// Initialize configuration with interactive wizard
+    /// Set up configuration with interactive wizard
     #[clap(long)]
-    pub init: bool,
+    pub setup: bool,
 }
 
 pub fn parse() -> Cli {
@@ -108,7 +108,7 @@ pub fn parse() -> Cli {
     if cli.stored_query.is_none()
         && cli.gaql_query.is_none()
         && !cli.list_child_accounts
-        && !cli.init
+        && !cli.setup
     {
         let mut buffer = String::new();
         io::stdin()

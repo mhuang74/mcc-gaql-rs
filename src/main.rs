@@ -22,7 +22,7 @@ use tonic::{codegen::InterceptedService, transport::Channel};
 use mcc_gaql::args::{self, OutputFormat};
 use mcc_gaql::config::{self, ResolvedConfig};
 use mcc_gaql::googleads;
-use mcc_gaql::init;
+use mcc_gaql::setup;
 use mcc_gaql::prompt2gaql;
 use mcc_gaql::util::{self, QueryEntry};
 
@@ -34,9 +34,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Invalid formats will fail with clap error before any queries are executed.
     let mut args = args::parse();
 
-    // Handle --init flag to run configuration wizard
-    if args.init {
-        init::run_wizard()?;
+    // Handle --setup flag to run configuration wizard
+    if args.setup {
+        setup::run_wizard()?;
         return Ok(());
     }
 
