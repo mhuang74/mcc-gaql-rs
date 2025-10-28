@@ -675,5 +675,3 @@ fn output_dataframe(
     }
     Ok(())
 }
-
-

@@ -40,27 +40,30 @@ impl ResolvedConfig {
         config: Option<MyConfig>,
     ) -> anyhow::Result<Self> {
         // Resolve MCC with priority: CLI --mcc > CLI --customer-id > config
-        let mcc_customer_id = args.mcc.as_ref()
+        let mcc_customer_id = args
+            .mcc
+            .as_ref()
             .or(args.customer_id.as_ref())
             .map(|s| s.to_string())
             .or_else(|| config.as_ref().map(|c| c.mcc_customerid.clone()))
-            .ok_or_else(|| anyhow::anyhow!(
-                "MCC customer ID required. Either:\n  \
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "MCC customer ID required. Either:\n  \
                  1. Provide via CLI: --mcc <MCC_ID> or --customer-id <CUSTOMER_ID>\n  \
                  2. Specify config profile: --profile <PROFILE_NAME>"
-            ))?;
+                )
+            })?;
 
         // Resolve user email: CLI > config
-        let user_email = args.user.clone()
+        let user_email = args
+            .user
+            .clone()
             .or_else(|| config.as_ref().and_then(|c| c.user.clone()));
 
         // Config file fields (only available if profile specified)
-        let token_cache_filename = config.as_ref()
-            .and_then(|c| c.token_cache_filename.clone());
-        let queries_filename = config.as_ref()
-            .and_then(|c| c.queries_filename.clone());
-        let customerids_filename = config.as_ref()
-            .and_then(|c| c.customerids_filename.clone());
+        let token_cache_filename = config.as_ref().and_then(|c| c.token_cache_filename.clone());
+        let queries_filename = config.as_ref().and_then(|c| c.queries_filename.clone());
+        let customerids_filename = config.as_ref().and_then(|c| c.customerids_filename.clone());
 
         Ok(Self {
             mcc_customer_id,
@@ -72,12 +75,13 @@ impl ResolvedConfig {
     }
 
     pub fn require_queries_filename(&self) -> anyhow::Result<&str> {
-        self.queries_filename.as_deref()
-            .ok_or_else(|| anyhow::anyhow!(
+        self.queries_filename.as_deref().ok_or_else(|| {
+            anyhow::anyhow!(
                 "Query cookbook not available. Either:\n  \
                  1. Provide GAQL query directly: <QUERY>\n  \
                  2. Specify config profile with queries_filename: --profile <PROFILE_NAME>"
-            ))
+            )
+        })
     }
 }
 
