@@ -116,8 +116,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let api_context = match googleads::get_api_access(
         mcc_customer_id,
+        &resolved_config.token_cache_filename,
         user_email,
-        resolved_config.token_cache_filename.as_deref(),
     )
     .await
     {
@@ -125,17 +125,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(_e) => {
             log::info!("Refresh token became invalid. Clearing token cache and forcing re-auth");
             // remove cached token to force re-auth and try again
-            let token_cache_filename = googleads::resolve_token_cache_filename(
-                resolved_config.token_cache_filename.as_deref(),
-                user_email,
-            );
             let token_cache_path =
-                crate::config::config_file_path(&token_cache_filename).expect("token cache path");
+                crate::config::config_file_path(&resolved_config.token_cache_filename)
+                    .expect("token cache path");
             let _ = fs::remove_file(token_cache_path);
             googleads::get_api_access(
                 mcc_customer_id,
+                &resolved_config.token_cache_filename,
                 user_email,
-                resolved_config.token_cache_filename.as_deref(),
             )
             .await
             .expect("Refresh token expired and failed to kick off re-auth.")

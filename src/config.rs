@@ -28,7 +28,7 @@ pub struct MyConfig {
 pub struct ResolvedConfig {
     pub mcc_customer_id: String,
     pub user_email: Option<String>,
-    pub token_cache_filename: Option<String>,
+    pub token_cache_filename: String,
     pub queries_filename: Option<String>,
     pub customerids_filename: Option<String>,
 }
@@ -60,8 +60,22 @@ impl ResolvedConfig {
             .clone()
             .or_else(|| config.as_ref().and_then(|c| c.user.clone()));
 
+        // Resolve token cache filename with priority:
+        // 1. Explicit legacy token cache filename from config (highest priority)
+        // 2. Auto-generated from user email
+        // 3. Default filename (lowest priority)
+        let token_cache_filename = config
+            .as_ref()
+            .and_then(|c| c.token_cache_filename.clone())
+            .or_else(|| {
+                args.user
+                    .as_ref()
+                    .or_else(|| config.as_ref().and_then(|c| c.user.as_ref()))
+                    .map(|email| crate::googleads::generate_token_cache_filename(email))
+            })
+            .unwrap_or_else(|| "tokencache_default.json".to_string());
+
         // Config file fields (only available if profile specified)
-        let token_cache_filename = config.as_ref().and_then(|c| c.token_cache_filename.clone());
         let queries_filename = config.as_ref().and_then(|c| c.queries_filename.clone());
         let customerids_filename = config.as_ref().and_then(|c| c.customerids_filename.clone());
 

@@ -144,32 +144,12 @@ pub fn generate_token_cache_filename(user_email: &str) -> String {
     format!("tokencache_{}.json", sanitized)
 }
 
-/// Resolve token cache filename based on priority:
-/// 1. Explicit legacy token cache filename (highest priority)
-/// 2. Auto-generated from user email
-/// 3. Default filename (lowest priority)
-pub fn resolve_token_cache_filename(
-    legacy_filename: Option<&str>,
-    user_email: Option<&str>,
-) -> String {
-    if let Some(legacy) = legacy_filename {
-        legacy.to_string()
-    } else if let Some(email) = user_email {
-        generate_token_cache_filename(email)
-    } else {
-        "tokencache_default.json".to_string()
-    }
-}
-
 /// Get access to Google Ads API via OAuth2 flow and return API Credentials
 pub async fn get_api_access(
     mcc_customer_id: &str,
+    token_cache_filename: &str,
     user_email: Option<&str>,
-    legacy_token_cache_filename: Option<&str>,
 ) -> Result<GoogleAdsAPIAccess> {
-    // Determine token cache filename based on priority: legacy > user email > default
-    let token_cache_filename =
-        resolve_token_cache_filename(legacy_token_cache_filename, user_email);
     let client_secret_path =
         crate::config::config_file_path(FILENAME_CLIENT_SECRET).expect("clientsecret path");
 
@@ -179,7 +159,7 @@ pub async fn get_api_access(
             .expect("clientsecret.json");
 
     let token_cache_path =
-        crate::config::config_file_path(&token_cache_filename).expect("token cache path");
+        crate::config::config_file_path(token_cache_filename).expect("token cache path");
 
     let auth: Authenticator<<DefaultHyperClient as HyperClientBuilder>::Connector> =
         InstalledFlowAuthenticator::builder(app_secret, InstalledFlowReturnMethod::HTTPRedirect)
