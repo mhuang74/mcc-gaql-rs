@@ -1,7 +1,7 @@
 [package]
 name = "mcc-gaql"
 description = "Execute GAQL across MCC child accounts."
-version = "0.12.0"
+version = "0.12.1"
 authors = ["Michael S. Huang <mhuang74@gmail.com>"]
 edition = "2024"
 
@@ -19,12 +19,14 @@ dirs = "4.0"
 figment = { version = "0.10", features = ["toml", "env"] }
 flexi_logger = { version = "0.22", features = ["compress"] }
 futures = { version = "0.3", default-features = false, features = ["alloc"] }
-#googleads-rs = { version = "0.12", path = "../googleads-rs" }
-googleads-rs = { version = "0.12" }
+# googleads-rs = { version = "0.12.1", path = "../googleads-rs" }
+googleads-rs = { git = "https://github.com/mhuang74/googleads-rs.git", branch = "main" }
+# googleads-rs = { version = "0.12" }
 itertools = "0.10"
 log = "0.4"
-polars = { version = "0.42", features = ["lazy"] }
+polars = { version = "0.42", features = ["lazy", "serde-lazy"] }
 serde = { version = "1.0", features = ["derive"] }
+thiserror = "2.0"
 thousands = "0.2"
 tokio = { version = "1.0", features = [ "rt-multi-thread", "time", "fs", "macros", "net",] }
 tokio-stream = { version = "0.1", features = ["net"] }

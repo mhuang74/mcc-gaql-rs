@@ -1,0 +1,38 @@
+name: AI Code Review
+on: 
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]  # Triggers on PR events
+permissions:
+  contents: read
+  pull-requests: write  # Allows posting comments on PRs
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: AI PR Review
+        uses: jonit-dev/openrouter-github-action@main
+        with:
+          # Required inputs
+          github_token: ${{ secrets.GITHUB_TOKEN }} # Automatically provided
+          open_router_key: ${{ secrets.OPEN_ROUTER_KEY }} # Must be set in repository secrets
+
+          # Optional inputs with defaults
+          # model_id: 'openai/gpt-4o-mini' # Cheap and Fast
+          model_id: 'anthropic/claude-sonnet-4.5' # Catch nuanced bugs
+          max_tokens: '2048' # Default max tokens
+          review_label: 'ai-review' # Optional: Only review PRs with this label
+
+          # Optional custom prompt
+          custom_prompt: |
+            You are an experienced software developer in a variety of programming languages and methodologies. You create efficient, scalable, and fault-tolerant solutions.
+            Reply on how to improve the code (below).
+            Think step-by-step.
+            Give code examples of specific changes.
+            Limit suggestions to 3 high quality examples.
+           
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
