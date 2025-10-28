@@ -75,7 +75,8 @@ pub fn run_wizard() -> Result<()> {
     // Create config structure
     let config = MyConfig {
         mcc_customerid,
-        token_cache_filename,
+        user: None,
+        token_cache_filename: Some(token_cache_filename),
         customerids_filename,
         queries_filename,
     };
@@ -182,10 +183,13 @@ fn save_config(profile_name: &str, config: &MyConfig) -> Result<()> {
         "mcc_customerid".to_string(),
         Value::String(config.mcc_customerid.clone()),
     );
-    profile_table.insert(
-        "token_cache_filename".to_string(),
-        Value::String(config.token_cache_filename.clone()),
-    );
+
+    if let Some(ref filename) = config.token_cache_filename {
+        profile_table.insert(
+            "token_cache_filename".to_string(),
+            Value::String(filename.clone()),
+        );
+    }
 
     if let Some(ref filename) = config.customerids_filename {
         profile_table.insert(
@@ -273,7 +277,8 @@ token_cache_filename = "tokencache_myprofile.json"
         // Mock the config_file_path function by testing save_config directly
         let config = MyConfig {
             mcc_customerid: "1234567890".to_string(),
-            token_cache_filename: "tokencache_test_20250101.json".to_string(),
+            user: None,
+            token_cache_filename: Some("tokencache_test_20250101.json".to_string()),
             customerids_filename: Some("customerids.txt".to_string()),
             queries_filename: Some("queries.toml".to_string()),
         };
@@ -289,7 +294,7 @@ token_cache_filename = "tokencache_myprofile.json"
         );
         profile_table.insert(
             "token_cache_filename".to_string(),
-            Value::String(config.token_cache_filename.clone()),
+            Value::String(config.token_cache_filename.clone().unwrap()),
         );
         profile_table.insert(
             "customerids_filename".to_string(),
