@@ -54,7 +54,7 @@ pub struct MyConfig {
 }
 
 /// Resolved runtime configuration combining CLI args and config file
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResolvedConfig {
     pub mcc_customer_id: String,
     pub user_email: Option<String>,
@@ -336,5 +336,114 @@ mod tests {
                 .to_string()
                 .contains("Invalid customer ID length")
         );
+    }
+
+    #[test]
+    fn test_myconfig_serialization_all_fields() {
+        let config = MyConfig {
+            mcc_customerid: "1234567890".to_string(),
+            user: Some("user@example.com".to_string()),
+            token_cache_filename: None,
+            customerids_filename: Some("customerids.txt".to_string()),
+            queries_filename: Some("query_cookbook.toml".to_string()),
+        };
+
+        // Serialize to TOML string
+        let toml_str = toml::to_string(&config).expect("Failed to serialize");
+
+        // Deserialize back
+        let deserialized: MyConfig = toml::from_str(&toml_str).expect("Failed to deserialize");
+
+        // Verify round-trip
+        assert_eq!(config.mcc_customerid, deserialized.mcc_customerid);
+        assert_eq!(config.user, deserialized.user);
+        assert_eq!(config.token_cache_filename, deserialized.token_cache_filename);
+        assert_eq!(config.customerids_filename, deserialized.customerids_filename);
+        assert_eq!(config.queries_filename, deserialized.queries_filename);
+    }
+
+    #[test]
+    fn test_myconfig_serialization_minimal() {
+        let config = MyConfig {
+            mcc_customerid: "1234567890".to_string(),
+            user: Some("user@example.com".to_string()),
+            token_cache_filename: None,
+            customerids_filename: None,
+            queries_filename: None,
+        };
+
+        // Serialize to TOML string
+        let toml_str = toml::to_string(&config).expect("Failed to serialize");
+
+        // Verify optional fields are omitted (not present as keys)
+        assert!(!toml_str.contains("token_cache_filename"));
+        assert!(!toml_str.contains("customerids_filename"));
+        assert!(!toml_str.contains("queries_filename"));
+
+        // Deserialize back
+        let deserialized: MyConfig = toml::from_str(&toml_str).expect("Failed to deserialize");
+
+        // Verify round-trip
+        assert_eq!(config.mcc_customerid, deserialized.mcc_customerid);
+        assert_eq!(config.user, deserialized.user);
+        assert_eq!(config.token_cache_filename, None);
+        assert_eq!(config.customerids_filename, None);
+        assert_eq!(config.queries_filename, None);
+    }
+
+    #[test]
+    fn test_resolved_config_serialization() {
+        let config = ResolvedConfig {
+            mcc_customer_id: "1234567890".to_string(),
+            user_email: Some("user@example.com".to_string()),
+            token_cache_filename: "tokencache.json".to_string(),
+            queries_filename: Some("query_cookbook.toml".to_string()),
+            customerids_filename: Some("customerids.txt".to_string()),
+        };
+
+        // Serialize to TOML string
+        let toml_str = toml::to_string(&config).expect("Failed to serialize");
+
+        // Deserialize back
+        let deserialized: ResolvedConfig = toml::from_str(&toml_str).expect("Failed to deserialize");
+
+        // Verify round-trip
+        assert_eq!(config.mcc_customer_id, deserialized.mcc_customer_id);
+        assert_eq!(config.user_email, deserialized.user_email);
+        assert_eq!(config.token_cache_filename, deserialized.token_cache_filename);
+        assert_eq!(config.queries_filename, deserialized.queries_filename);
+        assert_eq!(config.customerids_filename, deserialized.customerids_filename);
+    }
+
+    #[test]
+    fn test_myconfig_with_user_field() {
+        // Test that configs with user field can be properly serialized/deserialized
+        let toml_str = r#"
+            mcc_customerid = "1234567890"
+            user = "user@example.com"
+        "#;
+
+        let config: MyConfig = toml::from_str(toml_str).expect("Failed to deserialize");
+
+        assert_eq!(config.mcc_customerid, "1234567890");
+        assert_eq!(config.user, Some("user@example.com".to_string()));
+        assert_eq!(config.token_cache_filename, None);
+        assert_eq!(config.customerids_filename, None);
+        assert_eq!(config.queries_filename, None);
+    }
+
+    #[test]
+    fn test_myconfig_backwards_compatibility() {
+        // Test that old configs without user field can still be loaded
+        let toml_str = r#"
+            mcc_customerid = "1234567890"
+            token_cache_filename = "tokencache.json"
+        "#;
+
+        let config: MyConfig = toml::from_str(toml_str).expect("Failed to deserialize");
+
+        assert_eq!(config.mcc_customerid, "1234567890");
+        assert_eq!(config.user, None);
+        assert_eq!(config.token_cache_filename, Some("tokencache.json".to_string()));
     }
 }
