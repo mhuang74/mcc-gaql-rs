@@ -4,6 +4,7 @@ use figment::{
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::fs;
 
 const CRATE_NAME: &str = env!("CARGO_PKG_NAME");
 pub const TOML_CONFIG_FILENAME: &str = "config.toml";
@@ -245,6 +246,141 @@ pub fn load(profile: &str) -> anyhow::Result<MyConfig> {
             profile
         )
     })
+}
+
+/// Display configuration in a human-readable format
+pub fn display_config(profile_name: Option<&str>) -> anyhow::Result<()> {
+    println!("Configuration Details");
+    println!("====================");
+    println!();
+
+    // Show config file location
+    if let Some(config_path) = config_file_path(TOML_CONFIG_FILENAME) {
+        println!("Config File: {}", config_path.display());
+        if config_path.exists() {
+            println!("  Status: Found");
+        } else {
+            println!("  Status: Not found");
+        }
+    } else {
+        println!("Config File: Unable to determine config directory");
+    }
+    println!();
+
+    // Show profile information
+    if let Some(profile) = profile_name {
+        println!("Profile: {}", profile);
+        println!();
+
+        // Try to load the profile
+        match load(profile) {
+            Ok(config) => {
+                println!("Profile Configuration:");
+                println!("  mcc_customerid: {}", config.mcc_customerid);
+
+                if let Some(user) = &config.user {
+                    println!("  user: {}", user);
+                } else {
+                    println!("  user: (not set)");
+                }
+
+                if let Some(token_cache) = &config.token_cache_filename {
+                    println!("  token_cache_filename: {}", token_cache);
+                } else {
+                    println!("  token_cache_filename: (auto-generated from user email)");
+                }
+
+                if let Some(customerids) = &config.customerids_filename {
+                    println!("  customerids_filename: {}", customerids);
+                    if let Some(path) = config_file_path(customerids) {
+                        println!("    Path: {}", path.display());
+                        println!("    Exists: {}", path.exists());
+                    }
+                } else {
+                    println!("  customerids_filename: (not set)");
+                }
+
+                if let Some(queries) = &config.queries_filename {
+                    println!("  queries_filename: {}", queries);
+                    if let Some(path) = config_file_path(queries) {
+                        println!("    Path: {}", path.display());
+                        println!("    Exists: {}", path.exists());
+                    }
+                } else {
+                    println!("  queries_filename: (not set)");
+                }
+            }
+            Err(e) => {
+                println!("Error loading profile: {}", e);
+            }
+        }
+    } else {
+        println!("Profile: (not specified)");
+        println!();
+        println!("No profile specified. Using CLI arguments and environment variables.");
+        println!("Run with --profile <NAME> to use a configuration profile.");
+    }
+
+    println!();
+    println!("Environment Variable Overrides:");
+    println!("  Prefix: {}", ENV_VAR_PREFIX);
+
+    // Check for common environment variables
+    let env_vars = [
+        "MCC_CUSTOMERID",
+        "USER",
+        "TOKEN_CACHE_FILENAME",
+        "CUSTOMERIDS_FILENAME",
+        "QUERIES_FILENAME",
+    ];
+
+    let mut found_any = false;
+    for var in &env_vars {
+        let full_var = format!("{}{}", ENV_VAR_PREFIX, var);
+        if let Ok(value) = std::env::var(&full_var) {
+            println!("  {}: {}", full_var, value);
+            found_any = true;
+        }
+    }
+
+    if !found_any {
+        println!("  (none set)");
+    }
+
+    println!();
+    println!("Common Files:");
+
+    // Check for common files
+    let common_files = [
+        ("clientsecret.json", "OAuth2 credentials"),
+        ("query_cookbook.toml", "Query cookbook"),
+        ("customerids.txt", "Customer IDs"),
+    ];
+
+    for (filename, description) in &common_files {
+        if let Some(path) = config_file_path(filename) {
+            let exists = path.exists();
+            let status = if exists { "Found" } else { "Not found" };
+            println!("  {} ({}): {}", description, status, path.display());
+        }
+    }
+
+    Ok(())
+}
+
+/// List all available profiles from the config file
+pub fn list_profiles() -> anyhow::Result<Vec<String>> {
+    let config_path = config_file_path(TOML_CONFIG_FILENAME)
+        .ok_or_else(|| anyhow::anyhow!("Unable to determine config directory"))?;
+
+    if !config_path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let content = fs::read_to_string(&config_path)?;
+    let toml_table: toml::map::Map<String, toml::Value> = toml::from_str(&content)?;
+
+    Ok(toml_table.keys().map(|k| k.to_string()).collect())
 }
 
 /// get the platform-correct config file path

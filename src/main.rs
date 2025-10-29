@@ -40,6 +40,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
+    // Handle --show-config flag to display configuration
+    if args.show_config {
+        config::display_config(args.profile.as_deref())?;
+        return Ok(());
+    }
+
     // Validate argument combinations
     args.validate()?;
 
