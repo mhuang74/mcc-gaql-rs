@@ -248,6 +248,54 @@ pub fn load(profile: &str) -> anyhow::Result<MyConfig> {
     })
 }
 
+/// Display profile configuration details
+fn display_profile_config(profile: &str) -> anyhow::Result<()> {
+    // Try to load the profile
+    match load(profile) {
+        Ok(config) => {
+            println!("Profile Configuration:");
+            println!("  mcc_customerid: {}", config.mcc_customerid);
+
+            if let Some(user) = &config.user {
+                println!("  user: {}", user);
+            } else {
+                println!("  user: (not set)");
+            }
+
+            if let Some(token_cache) = &config.token_cache_filename {
+                println!("  token_cache_filename: {}", token_cache);
+            } else {
+                println!("  token_cache_filename: (auto-generated from user email)");
+            }
+
+            if let Some(customerids) = &config.customerids_filename {
+                println!("  customerids_filename: {}", customerids);
+                if let Some(path) = config_file_path(customerids) {
+                    println!("    Path: {}", path.display());
+                    println!("    Exists: {}", path.exists());
+                }
+            } else {
+                println!("  customerids_filename: (not set)");
+            }
+
+            if let Some(queries) = &config.queries_filename {
+                println!("  queries_filename: {}", queries);
+                if let Some(path) = config_file_path(queries) {
+                    println!("    Path: {}", path.display());
+                    println!("    Exists: {}", path.exists());
+                }
+            } else {
+                println!("  queries_filename: (not set)");
+            }
+            Ok(())
+        }
+        Err(e) => {
+            println!("Error loading profile: {}", e);
+            Ok(())
+        }
+    }
+}
+
 /// Display configuration in a human-readable format
 pub fn display_config(profile_name: Option<&str>) -> anyhow::Result<()> {
     println!("Configuration Details");
@@ -269,56 +317,39 @@ pub fn display_config(profile_name: Option<&str>) -> anyhow::Result<()> {
 
     // Show profile information
     if let Some(profile) = profile_name {
+        // Show specific profile
         println!("Profile: {}", profile);
         println!();
+        display_profile_config(profile)?;
+    } else {
+        // Show all profiles
+        match list_profiles() {
+            Ok(profiles) if !profiles.is_empty() => {
+                println!("Profiles: {} found", profiles.len());
+                println!();
 
-        // Try to load the profile
-        match load(profile) {
-            Ok(config) => {
-                println!("Profile Configuration:");
-                println!("  mcc_customerid: {}", config.mcc_customerid);
-
-                if let Some(user) = &config.user {
-                    println!("  user: {}", user);
-                } else {
-                    println!("  user: (not set)");
-                }
-
-                if let Some(token_cache) = &config.token_cache_filename {
-                    println!("  token_cache_filename: {}", token_cache);
-                } else {
-                    println!("  token_cache_filename: (auto-generated from user email)");
-                }
-
-                if let Some(customerids) = &config.customerids_filename {
-                    println!("  customerids_filename: {}", customerids);
-                    if let Some(path) = config_file_path(customerids) {
-                        println!("    Path: {}", path.display());
-                        println!("    Exists: {}", path.exists());
+                for (idx, profile) in profiles.iter().enumerate() {
+                    if idx > 0 {
+                        println!();
+                        println!("---");
+                        println!();
                     }
-                } else {
-                    println!("  customerids_filename: (not set)");
+                    println!("Profile: {}", profile);
+                    println!();
+                    display_profile_config(profile)?;
                 }
-
-                if let Some(queries) = &config.queries_filename {
-                    println!("  queries_filename: {}", queries);
-                    if let Some(path) = config_file_path(queries) {
-                        println!("    Path: {}", path.display());
-                        println!("    Exists: {}", path.exists());
-                    }
-                } else {
-                    println!("  queries_filename: (not set)");
-                }
+            }
+            Ok(_) => {
+                println!("Profiles: (none found)");
+                println!();
+                println!("No profiles configured in config file.");
+                println!("Run 'mcc-gaql --setup' to create a new profile.");
             }
             Err(e) => {
-                println!("Error loading profile: {}", e);
+                println!("Profiles: Error reading config file");
+                println!("  Error: {}", e);
             }
         }
-    } else {
-        println!("Profile: (not specified)");
-        println!();
-        println!("No profile specified. Using CLI arguments and environment variables.");
-        println!("Run with --profile <NAME> to use a configuration profile.");
     }
 
     println!();
