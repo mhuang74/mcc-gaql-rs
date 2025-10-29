@@ -27,8 +27,25 @@ pub fn run_wizard() -> Result<()> {
     println!("Welcome to mcc-gaql configuration wizard!");
     println!();
 
-    // Determine profile name
-    let profile_name = determine_profile_name()?;
+    // Get existing profiles to validate uniqueness
+    let existing_profiles = get_existing_profile_names()?;
+
+    // Prompt user for profile name
+    let profile_name: String = Input::new()
+        .with_prompt("Enter a name for this profile")
+        .default("myprofile".to_string())
+        .validate_with(|input: &String| -> Result<(), String> {
+            let trimmed = input.trim();
+            if trimmed.is_empty() {
+                return Err("Profile name cannot be empty".to_string());
+            }
+            if existing_profiles.contains(&trimmed.to_string()) {
+                return Err(format!("Profile '{}' already exists. Please choose a different name.", trimmed));
+            }
+            Ok(())
+        })
+        .interact_text()?;
+
     println!("Using profile: {}", profile_name);
     println!();
 
@@ -137,38 +154,20 @@ pub fn run_wizard() -> Result<()> {
     Ok(())
 }
 
-/// Determine a unique profile name, defaulting to "myprofile" and adding _2, _3, etc. if it exists
-pub fn determine_profile_name() -> Result<String> {
+/// Get list of existing profile names from the default config file location
+fn get_existing_profile_names() -> Result<Vec<String>> {
     let config_path = config_file_path(TOML_CONFIG_FILENAME);
 
-    let base_name = "myprofile";
-
-    // If config file doesn't exist, use the base name
+    // If config file doesn't exist or path can't be determined, return empty list
     let Some(config_path) = config_path else {
-        return Ok(base_name.to_string());
+        return Ok(Vec::new());
     };
 
     if !config_path.exists() {
-        return Ok(base_name.to_string());
+        return Ok(Vec::new());
     }
 
-    // Load existing config to check what profiles exist
-    let existing_profiles = get_existing_profiles(&config_path)?;
-
-    // If base name doesn't exist, use it
-    if !existing_profiles.contains(&base_name.to_string()) {
-        return Ok(base_name.to_string());
-    }
-
-    // Find the next available numbered suffix
-    for i in 2..1000 {
-        let candidate = format!("{}_{}", base_name, i);
-        if !existing_profiles.contains(&candidate) {
-            return Ok(candidate);
-        }
-    }
-
-    Err(anyhow::anyhow!("Unable to find an available profile name"))
+    get_existing_profiles(&config_path)
 }
 
 /// Get list of existing profile names from config file
@@ -225,13 +224,6 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::TempDir;
-
-    #[test]
-    fn test_determine_profile_name_no_config() {
-        // When no config exists, should return "myprofile"
-        let profile = determine_profile_name().unwrap();
-        assert_eq!(profile, "myprofile");
-    }
 
     #[test]
     fn test_get_existing_profiles_empty() {
@@ -318,42 +310,5 @@ token_cache_filename = "tokencache_myprofile.json"
         assert!(content.contains("user@example.com"));
         assert!(content.contains("customerids.txt"));
         assert!(content.contains("queries.toml"));
-    }
-
-    #[test]
-    fn test_profile_name_suffix_logic() {
-        let temp_dir = TempDir::new().unwrap();
-        let config_path = temp_dir.path().join("config.toml");
-
-        // Create config with myprofile and myprofile_2
-        let config_content = r#"
-[myprofile]
-mcc_customerid = "1111111111"
-token_cache_filename = "tokencache1.json"
-
-[myprofile_2]
-mcc_customerid = "2222222222"
-token_cache_filename = "tokencache2.json"
-"#;
-
-        fs::write(&config_path, config_content).unwrap();
-
-        let profiles = get_existing_profiles(&config_path).unwrap();
-
-        // Simulate the logic from determine_profile_name
-        let base_name = "myprofile";
-        let mut next_name = base_name.to_string();
-
-        if profiles.contains(&next_name) {
-            for i in 2..1000 {
-                let candidate = format!("{}_{}", base_name, i);
-                if !profiles.contains(&candidate) {
-                    next_name = candidate;
-                    break;
-                }
-            }
-        }
-
-        assert_eq!(next_name, "myprofile_3");
     }
 }
