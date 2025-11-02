@@ -221,7 +221,7 @@ impl ResolvedConfig {
                      A user email must be specified to identify which Google Ads account credentials to use,\n\
                      OR a valid token cache file must exist.\n\
                      Please provide one of:\n  \
-                     1. CLI argument: --user <EMAIL>\n  \
+                     1. CLI argument: --user-email <EMAIL>\n  \
                      2. Config profile with 'user' field: --profile <PROFILE_NAME>\n  \
                      3. Existing token cache file: {}\n\n\
                      Without a user context or existing token cache, authentication cannot proceed.",
