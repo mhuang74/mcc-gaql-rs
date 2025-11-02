@@ -4,10 +4,13 @@ use mcc_gaql::config::{MyConfig, ResolvedConfig};
 
 #[test]
 fn test_mcc_priority_cli_overrides_config() {
-    let args = Cli::parse_from(["mcc-gaql", "--mcc", "1111111111"]);
+    let args = Cli::parse_from(["mcc-gaql", "--mcc-id", "1111111111"]);
     let config = Some(MyConfig {
-        mcc_customerid: "9999999999".to_string(),
-        user: None,
+        mcc_id: "9999999999".to_string(),
+        user_email: None,
+        customer_id: None,
+        format: None,
+        keep_going: None,
         token_cache_filename: None,
         customerids_filename: None,
         queries_filename: None,
@@ -51,7 +54,7 @@ fn test_token_cache_generation_from_user_email() {
         "mcc-gaql",
         "--user",
         "john.doe@example.com",
-        "--mcc",
+        "--mcc-id",
         "1234567890",
     ]);
 
@@ -66,7 +69,7 @@ fn test_token_cache_generation_from_user_email() {
 fn test_validate_requires_user_or_token_cache() {
     let args = Cli::parse_from([
         "mcc-gaql",
-        "--mcc",
+        "--mcc-id",
         "1234567890",
         "--customer-id",
         "7890123456",
@@ -76,6 +79,9 @@ fn test_validate_requires_user_or_token_cache() {
     let resolved = ResolvedConfig {
         mcc_customer_id: "1234567890".to_string(),
         user_email: None, // Missing user
+        customer_id: Some("7890123456".to_string()),
+        format: "table".to_string(),
+        keep_going: false,
         token_cache_filename: "tokencache_nonexistent.json".to_string(),
         queries_filename: None,
         customerids_filename: None,
@@ -111,7 +117,7 @@ fn test_validate_succeeds_with_existing_token_cache() {
 
     let args = Cli::parse_from([
         "mcc-gaql",
-        "--mcc",
+        "--mcc-id",
         "1234567890",
         "--customer-id",
         "7890123456",
@@ -121,6 +127,9 @@ fn test_validate_succeeds_with_existing_token_cache() {
     let resolved = ResolvedConfig {
         mcc_customer_id: "1234567890".to_string(),
         user_email: None, // No user, but token cache exists
+        customer_id: Some("7890123456".to_string()),
+        format: "table".to_string(),
+        keep_going: false,
         token_cache_filename: "tokencache_test_temp.json".to_string(),
         queries_filename: None,
         customerids_filename: None,

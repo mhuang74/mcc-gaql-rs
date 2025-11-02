@@ -49,9 +49,9 @@ pub struct Cli {
     #[clap(short, long)]
     pub output: Option<String>,
 
-    /// Output format: table, csv, json
-    #[clap(long, default_value = "table")]
-    pub format: OutputFormat,
+    /// Output format: table, csv, json (defaults to table, or config profile default if set)
+    #[clap(long)]
+    pub format: Option<OutputFormat>,
 
     /// Query using default MCC and Child CustomerIDs file specified for this profile
     #[clap(short, long)]
@@ -59,16 +59,16 @@ pub struct Cli {
 
     /// User email for OAuth2 authentication (auto-generates token cache)
     #[clap(short = 'u', long)]
-    pub user: Option<String>,
+    pub user_email: Option<String>,
 
     /// MCC (Manager) Customer ID for login-customer-id header.
     /// Required unless specified in config profile.
     /// For solo accounts, can be omitted if --customer-id is provided.
-    #[clap(short = 'm', long)]
-    pub mcc: Option<String>,
+    #[clap(short = 'm', long = "mcc-id")]
+    pub mcc_id: Option<String>,
 
     /// Apply query to a single account.
-    /// If no --mcc is specified, this will be used as the MCC (for solo accounts).
+    /// If no --mcc-id is specified, this will be used as the MCC (for solo accounts).
     /// To query across many accounts, specify a customerids_filename in config file, or query across all child accounts via --all-linked-child-accounts.
     #[clap(short, long)]
     pub customer_id: Option<String>,
@@ -134,7 +134,7 @@ impl Cli {
         if self.customer_id.is_some() && self.all_linked_child_accounts {
             return Err(anyhow::anyhow!(
                 "Use --customer-id to query a specific account.\n\
-                    Use --mcc with --all-linked-child-accounts to query all child accounts under mcc.\n\
+                    Use --mcc-id with --all-linked-child-accounts to query all child accounts under mcc.\n\
                     Please don't use --customer-id and --all-linked-child-accounts together."
             ));
         }
@@ -156,9 +156,9 @@ impl Cli {
         }
 
         // Warn if both profile and config-free mode arguments are mixed
-        if self.profile.is_some() && self.mcc.is_some() {
+        if self.profile.is_some() && self.mcc_id.is_some() {
             log::warn!(
-                "Both --profile and --mcc specified. CLI --mcc will override profile's MCC setting."
+                "Both --profile and --mcc-id specified. CLI --mcc-id will override profile's MCC setting."
             );
         }
 

@@ -43,9 +43,15 @@ pub fn validate_and_normalize_customer_id(customer_id: &str) -> anyhow::Result<S
 #[derive(Deserialize, Serialize, Debug)]
 pub struct MyConfig {
     /// MCC Account ID is mandatory
-    pub mcc_customerid: String,
+    pub mcc_id: String,
     /// Optional user email for OAuth2 (not required if valid token cache exists)
-    pub user: Option<String>,
+    pub user_email: Option<String>,
+    /// Optional default customer ID to query (can be overridden by --customer-id)
+    pub customer_id: Option<String>,
+    /// Optional default output format: table, csv, json (can be overridden by --format)
+    pub format: Option<String>,
+    /// Optional default keep-going behavior on errors (can be overridden by --keep-going)
+    pub keep_going: Option<bool>,
     /// Token Cache filename (optional - auto-generated from user if not specified)
     pub token_cache_filename: Option<String>,
     /// Optional file containing child customer_ids to query
@@ -59,6 +65,9 @@ pub struct MyConfig {
 pub struct ResolvedConfig {
     pub mcc_customer_id: String,
     pub user_email: Option<String>,
+    pub customer_id: Option<String>,
+    pub format: String,
+    pub keep_going: bool,
     pub token_cache_filename: String,
     pub queries_filename: Option<String>,
     pub customerids_filename: Option<String>,
@@ -73,21 +82,21 @@ impl ResolvedConfig {
         use anyhow::Context;
 
         // Resolve MCC with explicit priority and logging
-        let mcc_customer_id = if let Some(mcc) = &args.mcc {
-            // Explicit --mcc takes highest priority
-            log::debug!("Using MCC from --mcc argument: {}", mcc);
-            validate_and_normalize_customer_id(mcc).context("Invalid --mcc argument")?
-        } else if let Some(config_mcc) = config.as_ref().map(|c| &c.mcc_customerid) {
+        let mcc_customer_id = if let Some(mcc_id) = &args.mcc_id {
+            // Explicit --mcc-id takes highest priority
+            log::debug!("Using MCC from --mcc-id argument: {}", mcc_id);
+            validate_and_normalize_customer_id(mcc_id).context("Invalid --mcc-id argument")?
+        } else if let Some(config_mcc) = config.as_ref().map(|c| &c.mcc_id) {
             // Config file MCC is second priority
             log::debug!("Using MCC from config profile: {}", config_mcc);
             validate_and_normalize_customer_id(config_mcc)
-                .context("Invalid mcc_customerid in config file")?
+                .context("Invalid mcc_id in config file")?
         } else if let Some(customer_id) = &args.customer_id {
             // Fallback: use customer_id as MCC (for solo accounts)
             log::warn!(
-                "No --mcc specified. Using --customer-id ({}) as MCC. \
+                "No --mcc-id specified. Using --customer-id ({}) as MCC. \
                  This assumes the account is not under a manager account. \
-                 Use --mcc explicitly if this account has a manager.",
+                 Use --mcc-id explicitly if this account has a manager.",
                 customer_id
             );
             validate_and_normalize_customer_id(customer_id)
@@ -96,7 +105,7 @@ impl ResolvedConfig {
             // No MCC available anywhere
             return Err(anyhow::anyhow!(
                 "MCC customer ID required. Provide one of:\n  \
-                 1. CLI argument: --mcc <MCC_ID>\n  \
+                 1. CLI argument: --mcc-id <MCC_ID>\n  \
                  2. Config profile: --profile <PROFILE_NAME>\n  \
                  3. For solo accounts: --customer-id <CUSTOMER_ID> (will be used as MCC)"
             ));
@@ -104,9 +113,9 @@ impl ResolvedConfig {
 
         // Resolve user email: CLI > config
         let user_email = args
-            .user
+            .user_email
             .clone()
-            .or_else(|| config.as_ref().and_then(|c| c.user.clone()));
+            .or_else(|| config.as_ref().and_then(|c| c.user_email.clone()));
 
         // Resolve token cache filename with priority:
         // 1. Explicit legacy token cache filename from config (highest priority)
@@ -116,12 +125,36 @@ impl ResolvedConfig {
             .as_ref()
             .and_then(|c| c.token_cache_filename.clone())
             .or_else(|| {
-                args.user
+                args.user_email
                     .as_ref()
-                    .or_else(|| config.as_ref().and_then(|c| c.user.as_ref()))
+                    .or_else(|| config.as_ref().and_then(|c| c.user_email.as_ref()))
                     .map(|email| crate::googleads::generate_token_cache_filename(email))
             })
             .unwrap_or_else(|| "tokencache_default.json".to_string());
+
+        // Resolve customer_id: CLI > config
+        let customer_id = args
+            .customer_id
+            .clone()
+            .or_else(|| config.as_ref().and_then(|c| c.customer_id.clone()));
+
+        // Resolve format: CLI > config > default ("table")
+        let format = args
+            .format
+            .map(|f| match f {
+                crate::args::OutputFormat::Table => "table".to_string(),
+                crate::args::OutputFormat::Csv => "csv".to_string(),
+                crate::args::OutputFormat::Json => "json".to_string(),
+            })
+            .or_else(|| config.as_ref().and_then(|c| c.format.clone()))
+            .unwrap_or_else(|| "table".to_string());
+
+        // Resolve keep_going: CLI flag > config > default (false)
+        let keep_going = args.keep_going
+            || config
+                .as_ref()
+                .and_then(|c| c.keep_going)
+                .unwrap_or(false);
 
         // Config file fields (only available if profile specified)
         let queries_filename = config.as_ref().and_then(|c| c.queries_filename.clone());
@@ -130,6 +163,9 @@ impl ResolvedConfig {
         Ok(Self {
             mcc_customer_id,
             user_email,
+            customer_id,
+            format,
+            keep_going,
             token_cache_filename,
             queries_filename,
             customerids_filename,
@@ -254,7 +290,7 @@ pub fn load(profile: &str) -> anyhow::Result<MyConfig> {
                  \n\
                  Possible issues:\n\
                  - Profile '{}' may not exist in the config file\n\
-                 - Required fields may be missing (mcc_customerid is mandatory)\n\
+                 - Required fields may be missing (mcc_id is mandatory)\n\
                  - TOML syntax may be invalid\n\
                  \n\
                  Check your config file format and ensure the profile exists.",
@@ -272,9 +308,9 @@ fn display_profile_config(profile: &str) -> anyhow::Result<()> {
     match load(profile) {
         Ok(config) => {
             println!("Profile Configuration:");
-            println!("  mcc_customerid: {}", config.mcc_customerid);
+            println!("  mcc_id: {}", config.mcc_id);
 
-            if let Some(user) = &config.user {
+            if let Some(user) = &config.user_email {
                 println!("  user: {}", user);
             } else {
                 println!("  user: (not set)");
@@ -526,8 +562,11 @@ mod tests {
     #[test]
     fn test_myconfig_serialization_all_fields() {
         let config = MyConfig {
-            mcc_customerid: "1234567890".to_string(),
-            user: Some("user@example.com".to_string()),
+            mcc_id: "1234567890".to_string(),
+            user_email: Some("user@example.com".to_string()),
+            customer_id: Some("9876543210".to_string()),
+            format: Some("json".to_string()),
+            keep_going: Some(true),
             token_cache_filename: None,
             customerids_filename: Some("customerids.txt".to_string()),
             queries_filename: Some("query_cookbook.toml".to_string()),
@@ -540,8 +579,11 @@ mod tests {
         let deserialized: MyConfig = toml::from_str(&toml_str).expect("Failed to deserialize");
 
         // Verify round-trip
-        assert_eq!(config.mcc_customerid, deserialized.mcc_customerid);
-        assert_eq!(config.user, deserialized.user);
+        assert_eq!(config.mcc_id, deserialized.mcc_id);
+        assert_eq!(config.user_email, deserialized.user_email);
+        assert_eq!(config.customer_id, deserialized.customer_id);
+        assert_eq!(config.format, deserialized.format);
+        assert_eq!(config.keep_going, deserialized.keep_going);
         assert_eq!(config.token_cache_filename, deserialized.token_cache_filename);
         assert_eq!(config.customerids_filename, deserialized.customerids_filename);
         assert_eq!(config.queries_filename, deserialized.queries_filename);
@@ -550,8 +592,11 @@ mod tests {
     #[test]
     fn test_myconfig_serialization_minimal() {
         let config = MyConfig {
-            mcc_customerid: "1234567890".to_string(),
-            user: Some("user@example.com".to_string()),
+            mcc_id: "1234567890".to_string(),
+            user_email: Some("user@example.com".to_string()),
+            customer_id: None,
+            format: None,
+            keep_going: None,
             token_cache_filename: None,
             customerids_filename: None,
             queries_filename: None,
@@ -561,6 +606,9 @@ mod tests {
         let toml_str = toml::to_string(&config).expect("Failed to serialize");
 
         // Verify optional fields are omitted (not present as keys)
+        assert!(!toml_str.contains("customer_id"));
+        assert!(!toml_str.contains("format"));
+        assert!(!toml_str.contains("keep_going"));
         assert!(!toml_str.contains("token_cache_filename"));
         assert!(!toml_str.contains("customerids_filename"));
         assert!(!toml_str.contains("queries_filename"));
@@ -569,8 +617,11 @@ mod tests {
         let deserialized: MyConfig = toml::from_str(&toml_str).expect("Failed to deserialize");
 
         // Verify round-trip
-        assert_eq!(config.mcc_customerid, deserialized.mcc_customerid);
-        assert_eq!(config.user, deserialized.user);
+        assert_eq!(config.mcc_id, deserialized.mcc_id);
+        assert_eq!(config.user_email, deserialized.user_email);
+        assert_eq!(config.customer_id, None);
+        assert_eq!(config.format, None);
+        assert_eq!(config.keep_going, None);
         assert_eq!(config.token_cache_filename, None);
         assert_eq!(config.customerids_filename, None);
         assert_eq!(config.queries_filename, None);
@@ -581,6 +632,9 @@ mod tests {
         let config = ResolvedConfig {
             mcc_customer_id: "1234567890".to_string(),
             user_email: Some("user@example.com".to_string()),
+            customer_id: Some("9876543210".to_string()),
+            format: "json".to_string(),
+            keep_going: true,
             token_cache_filename: "tokencache.json".to_string(),
             queries_filename: Some("query_cookbook.toml".to_string()),
             customerids_filename: Some("customerids.txt".to_string()),
@@ -595,6 +649,9 @@ mod tests {
         // Verify round-trip
         assert_eq!(config.mcc_customer_id, deserialized.mcc_customer_id);
         assert_eq!(config.user_email, deserialized.user_email);
+        assert_eq!(config.customer_id, deserialized.customer_id);
+        assert_eq!(config.format, deserialized.format);
+        assert_eq!(config.keep_going, deserialized.keep_going);
         assert_eq!(config.token_cache_filename, deserialized.token_cache_filename);
         assert_eq!(config.queries_filename, deserialized.queries_filename);
         assert_eq!(config.customerids_filename, deserialized.customerids_filename);
@@ -604,14 +661,17 @@ mod tests {
     fn test_myconfig_with_user_field() {
         // Test that configs with user field can be properly serialized/deserialized
         let toml_str = r#"
-            mcc_customerid = "1234567890"
+            mcc_id = "1234567890"
             user = "user@example.com"
         "#;
 
         let config: MyConfig = toml::from_str(toml_str).expect("Failed to deserialize");
 
-        assert_eq!(config.mcc_customerid, "1234567890");
-        assert_eq!(config.user, Some("user@example.com".to_string()));
+        assert_eq!(config.mcc_id, "1234567890");
+        assert_eq!(config.user_email, Some("user@example.com".to_string()));
+        assert_eq!(config.customer_id, None);
+        assert_eq!(config.format, None);
+        assert_eq!(config.keep_going, None);
         assert_eq!(config.token_cache_filename, None);
         assert_eq!(config.customerids_filename, None);
         assert_eq!(config.queries_filename, None);
@@ -619,16 +679,19 @@ mod tests {
 
     #[test]
     fn test_myconfig_backwards_compatibility() {
-        // Test that old configs without user field can still be loaded
+        // Test that configs without optional fields can still be loaded
         let toml_str = r#"
-            mcc_customerid = "1234567890"
+            mcc_id = "1234567890"
             token_cache_filename = "tokencache.json"
         "#;
 
         let config: MyConfig = toml::from_str(toml_str).expect("Failed to deserialize");
 
-        assert_eq!(config.mcc_customerid, "1234567890");
-        assert_eq!(config.user, None);
+        assert_eq!(config.mcc_id, "1234567890");
+        assert_eq!(config.user_email, None);
+        assert_eq!(config.customer_id, None);
+        assert_eq!(config.format, None);
+        assert_eq!(config.keep_going, None);
         assert_eq!(config.token_cache_filename, Some("tokencache.json".to_string()));
     }
 }
