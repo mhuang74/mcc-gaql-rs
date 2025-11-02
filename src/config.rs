@@ -147,8 +147,13 @@ impl ResolvedConfig {
         // Resolve customer_id: CLI > config
         let customer_id = args
             .customer_id
-            .clone()
-            .or_else(|| config.as_ref().and_then(|c| c.customer_id.clone()));
+            .as_ref()
+            .or_else(|| config.as_ref().and_then(|c| c.customer_id.as_ref()))
+            .map(|id| {
+                validate_and_normalize_customer_id(id)
+                    .context("Invalid customer_id")
+            })
+            .transpose()?;
 
         // Resolve format: CLI > config > default ("table")
         let format = args
