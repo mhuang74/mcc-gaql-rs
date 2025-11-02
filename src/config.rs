@@ -222,7 +222,7 @@ impl ResolvedConfig {
                      OR a valid token cache file must exist.\n\
                      Please provide one of:\n  \
                      1. CLI argument: --user-email <EMAIL>\n  \
-                     2. Config profile with 'user' field: --profile <PROFILE_NAME>\n  \
+                     2. Config profile with 'user_email' field: --profile <PROFILE_NAME>\n  \
                      3. Existing token cache file: {}\n\n\
                      Without a user context or existing token cache, authentication cannot proceed.",
                     token_cache_path

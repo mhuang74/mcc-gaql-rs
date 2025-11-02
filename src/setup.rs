@@ -292,7 +292,7 @@ token_cache_filename = "tokencache_myprofile.json"
             Value::String(config.mcc_id.clone().unwrap()),
         );
         profile_table.insert(
-            "user".to_string(),
+            "user_email".to_string(),
             Value::String(config.user_email.clone().unwrap()),
         );
         profile_table.insert(
