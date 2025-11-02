@@ -261,7 +261,7 @@ impl ResolvedConfig {
             && !args.field_service
             && args.gaql_query.is_some()
             && !args.all_linked_child_accounts
-            && args.customer_id.is_none()
+            && self.customer_id.is_none()
             && self.customerids_filename.is_none()
         {
             return Err(anyhow::anyhow!(
@@ -745,6 +745,64 @@ mod tests {
         assert_eq!(config.format, None);
         assert_eq!(config.keep_going, None);
         assert_eq!(config.token_cache_filename, Some("tokencache.json".to_string()));
+    }
+
+    #[test]
+    fn test_validate_for_operation_with_customer_id_from_config() {
+        // Regression test: validation should check self.customer_id (resolved config)
+        // not args.customer_id (CLI args only)
+        //
+        // Bug scenario: customer_id is set in config file but not via CLI args.
+        // The validation was incorrectly checking args.customer_id instead of
+        // self.customer_id, causing it to fail even though a valid customer_id
+        // was configured.
+
+        use crate::args::Cli;
+
+        // Create args with GAQL query but NO customer_id CLI argument
+        let args = Cli {
+            gaql_query: Some("SELECT campaign.name FROM campaign".to_string()),
+            stored_query: None,
+            natural_language: false,
+            output: None,
+            format: None,
+            profile: None,
+            user_email: None,
+            mcc_id: Some("1234567890".to_string()),
+            customer_id: None, // Not specified via CLI
+            list_child_accounts: false,
+            field_service: false,
+            all_linked_child_accounts: false,
+            keep_going: false,
+            groupby: vec![],
+            sortby: vec![],
+            setup: false,
+            show_config: false,
+        };
+
+        // Create resolved config with customer_id from config file
+        let resolved_config = ResolvedConfig {
+            mcc_customer_id: "1234567890".to_string(),
+            user_email: Some("test@example.com".to_string()),
+            customer_id: Some("9876543210".to_string()), // From config file
+            format: "table".to_string(),
+            keep_going: false,
+            token_cache_filename: "test_token.json".to_string(),
+            queries_filename: None,
+            customerids_filename: None,
+        };
+
+        // Validation should succeed because resolved config has customer_id
+        // (even though args.customer_id is None)
+        let result = resolved_config.validate_for_operation(&args);
+
+        // This should NOT return an error about missing target accounts
+        assert!(
+            result.is_ok(),
+            "Validation should succeed when customer_id is in resolved config, \
+             even if not in CLI args. Got error: {:?}",
+            result.err()
+        );
     }
 
 }
