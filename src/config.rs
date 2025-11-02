@@ -44,9 +44,9 @@ pub fn validate_and_normalize_customer_id(customer_id: &str) -> anyhow::Result<S
 pub struct MyConfig {
     /// MCC Account ID is mandatory
     pub mcc_customerid: String,
-    /// Optional user email for OAuth2 (preferred over token_cache_filename)
+    /// Optional user email for OAuth2 (not required if valid token cache exists)
     pub user: Option<String>,
-    /// Token Cache filename (legacy - use 'user' instead)
+    /// Token Cache filename (optional - auto-generated from user if not specified)
     pub token_cache_filename: Option<String>,
     /// Optional file containing child customer_ids to query
     pub customerids_filename: Option<String>,
@@ -138,18 +138,36 @@ impl ResolvedConfig {
 
     /// Validate that resolved config supports the requested operation mode
     pub fn validate_for_operation(&self, args: &crate::args::Cli) -> anyhow::Result<()> {
-        // Validate that user context is always specified before running any operation
-        // This ensures we know which user's credentials we're using
+        // Validate that either user context is specified OR a valid token cache file exists
+        // If user email is not provided, check if token cache file exists
         if self.user_email.is_none() {
-            return Err(anyhow::anyhow!(
-                "User context required for authentication.\n\
-                 A user email must be specified to identify which Google Ads account credentials to use.\n\
-                 Please provide one of:\n  \
-                 1. CLI argument: --user <EMAIL>\n  \
-                 2. Config profile with 'user' field: --profile <PROFILE_NAME>\n\n\
-                 Without a user context, it's unclear which user's token is being used,\n\
-                 which may result in using incorrect credentials."
-            ));
+            // Check if token cache file exists
+            let token_cache_path = config_file_path(&self.token_cache_filename);
+            let token_cache_exists = token_cache_path
+                .as_ref()
+                .map(|p| p.exists())
+                .unwrap_or(false);
+
+            if !token_cache_exists {
+                return Err(anyhow::anyhow!(
+                    "User context or existing token cache required for authentication.\n\
+                     A user email must be specified to identify which Google Ads account credentials to use,\n\
+                     OR a valid token cache file must exist.\n\
+                     Please provide one of:\n  \
+                     1. CLI argument: --user <EMAIL>\n  \
+                     2. Config profile with 'user' field: --profile <PROFILE_NAME>\n  \
+                     3. Existing token cache file: {}\n\n\
+                     Without a user context or existing token cache, authentication cannot proceed.",
+                    token_cache_path
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_else(|| "unknown".to_string())
+                ));
+            } else {
+                log::info!(
+                    "Using existing token cache: {}",
+                    token_cache_path.unwrap().display()
+                );
+            }
         }
 
         // Validate natural language mode requirements
