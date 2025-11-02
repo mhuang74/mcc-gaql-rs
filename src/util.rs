@@ -94,8 +94,25 @@ where
 
             let lines = BufReader::new(&file).lines();
 
-            for line in lines.map_while(Result::ok) {
-                customer_ids.push(line);
+            for (line_num, line) in lines.enumerate() {
+                let line = line?;
+                let trimmed = line.trim();
+
+                // Skip empty lines
+                if trimmed.is_empty() {
+                    continue;
+                }
+
+                // Validate and normalize customer ID
+                let normalized = crate::config::validate_and_normalize_customer_id(trimmed)
+                    .map_err(|e| anyhow::anyhow!(
+                        "Invalid customer ID on line {} in file {}: {}",
+                        line_num + 1,
+                        filename.as_ref().display(),
+                        e
+                    ))?;
+
+                customer_ids.push(normalized);
             }
 
             log::debug!(
@@ -182,5 +199,75 @@ where
         Err(e) => {
             bail!("Unable to load named query file. Error: {}", e);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    #[tokio::test]
+    async fn test_get_child_account_ids_from_file_valid() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(temp_file, "1234567890").unwrap();
+        writeln!(temp_file, "123-456-7890").unwrap();
+        writeln!(temp_file, "9876543210").unwrap();
+        temp_file.flush().unwrap();
+
+        let result = get_child_account_ids_from_file(temp_file.path()).await;
+        assert!(result.is_ok());
+        let customer_ids = result.unwrap();
+        assert_eq!(customer_ids.len(), 3);
+        assert_eq!(customer_ids[0], "1234567890");
+        assert_eq!(customer_ids[1], "1234567890");  // Normalized from hyphens
+        assert_eq!(customer_ids[2], "9876543210");
+    }
+
+    #[tokio::test]
+    async fn test_get_child_account_ids_from_file_invalid_format() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(temp_file, "1234567890").unwrap();
+        writeln!(temp_file, "invalid123").unwrap();  // Invalid: contains letters
+        writeln!(temp_file, "9876543210").unwrap();
+        temp_file.flush().unwrap();
+
+        let result = get_child_account_ids_from_file(temp_file.path()).await;
+        assert!(result.is_err());
+        let error_msg = result.unwrap_err().to_string();
+        assert!(error_msg.contains("Invalid customer ID"));
+        assert!(error_msg.contains("line 2"));
+    }
+
+    #[tokio::test]
+    async fn test_get_child_account_ids_from_file_invalid_length() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(temp_file, "1234567890").unwrap();
+        writeln!(temp_file, "123456789").unwrap();  // Invalid: only 9 digits
+        temp_file.flush().unwrap();
+
+        let result = get_child_account_ids_from_file(temp_file.path()).await;
+        assert!(result.is_err());
+        let error_msg = result.unwrap_err().to_string();
+        assert!(error_msg.contains("Invalid customer ID"));
+        assert!(error_msg.contains("line 2"));
+    }
+
+    #[tokio::test]
+    async fn test_get_child_account_ids_from_file_empty_lines() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(temp_file, "1234567890").unwrap();
+        writeln!(temp_file).unwrap();  // Empty line - should be skipped
+        writeln!(temp_file, "   ").unwrap();  // Whitespace only - should be skipped
+        writeln!(temp_file, "9876543210").unwrap();
+        temp_file.flush().unwrap();
+
+        let result = get_child_account_ids_from_file(temp_file.path()).await;
+        assert!(result.is_ok());
+        let customer_ids = result.unwrap();
+        assert_eq!(customer_ids.len(), 2);
+        assert_eq!(customer_ids[0], "1234567890");
+        assert_eq!(customer_ids[1], "9876543210");
     }
 }

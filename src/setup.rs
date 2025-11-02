@@ -50,7 +50,7 @@ pub fn run_wizard() -> Result<()> {
     println!();
 
     // Ask for MCC customer ID
-    let mcc_customerid: String = Input::new()
+    let mcc_id: String = Input::new()
         .with_prompt("Enter your MCC Customer ID (digits only, without dashes)")
         .validate_with(|input: &String| -> Result<(), &str> {
             if input.trim().is_empty() {
@@ -116,8 +116,11 @@ pub fn run_wizard() -> Result<()> {
 
     // Create config structure
     let config = MyConfig {
-        mcc_customerid,
-        user: Some(user_email),
+        mcc_id: Some(mcc_id),
+        user_email: Some(user_email),
+        customer_id: None,
+        format: None,
+        keep_going: None,
         token_cache_filename: None,  // Let runtime auto-generate from user email
         customerids_filename,
         queries_filename,
@@ -244,11 +247,11 @@ mod tests {
 
         let config_content = r#"
 [test]
-mcc_customerid = "1234567890"
+mcc_id = "1234567890"
 token_cache_filename = "tokencache.json"
 
 [myprofile]
-mcc_customerid = "9876543210"
+mcc_id = "9876543210"
 token_cache_filename = "tokencache_myprofile.json"
 "#;
 
@@ -269,8 +272,11 @@ token_cache_filename = "tokencache_myprofile.json"
 
         // Mock the config_file_path function by testing save_config directly
         let config = MyConfig {
-            mcc_customerid: "1234567890".to_string(),
-            user: Some("user@example.com".to_string()),
+            mcc_id: Some("1234567890".to_string()),
+            user_email: Some("user@example.com".to_string()),
+            customer_id: None,
+            format: None,
+            keep_going: None,
             token_cache_filename: None,  // Now auto-generated at runtime
             customerids_filename: Some("customerids.txt".to_string()),
             queries_filename: Some("queries.toml".to_string()),
@@ -282,12 +288,12 @@ token_cache_filename = "tokencache_myprofile.json"
         let mut profile_table = Map::new();
 
         profile_table.insert(
-            "mcc_customerid".to_string(),
-            Value::String(config.mcc_customerid.clone()),
+            "mcc_id".to_string(),
+            Value::String(config.mcc_id.clone().unwrap()),
         );
         profile_table.insert(
             "user".to_string(),
-            Value::String(config.user.clone().unwrap()),
+            Value::String(config.user_email.clone().unwrap()),
         );
         profile_table.insert(
             "customerids_filename".to_string(),
