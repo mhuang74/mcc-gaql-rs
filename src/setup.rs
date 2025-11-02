@@ -116,7 +116,7 @@ pub fn run_wizard() -> Result<()> {
 
     // Create config structure
     let config = MyConfig {
-        mcc_id,
+        mcc_id: Some(mcc_id),
         user_email: Some(user_email),
         customer_id: None,
         format: None,
@@ -272,7 +272,7 @@ token_cache_filename = "tokencache_myprofile.json"
 
         // Mock the config_file_path function by testing save_config directly
         let config = MyConfig {
-            mcc_id: "1234567890".to_string(),
+            mcc_id: Some("1234567890".to_string()),
             user_email: Some("user@example.com".to_string()),
             customer_id: None,
             format: None,
@@ -289,7 +289,7 @@ token_cache_filename = "tokencache_myprofile.json"
 
         profile_table.insert(
             "mcc_id".to_string(),
-            Value::String(config.mcc_id.clone()),
+            Value::String(config.mcc_id.clone().unwrap()),
         );
         profile_table.insert(
             "user".to_string(),

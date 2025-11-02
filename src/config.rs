@@ -42,11 +42,12 @@ pub fn validate_and_normalize_customer_id(customer_id: &str) -> anyhow::Result<S
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct MyConfig {
-    /// MCC Account ID is mandatory
-    pub mcc_id: String,
+    /// MCC Account ID (optional for solo accounts - if omitted, customer_id will be used as MCC)
+    pub mcc_id: Option<String>,
     /// Optional user email for OAuth2 (not required if valid token cache exists)
     pub user_email: Option<String>,
     /// Optional default customer ID to query (can be overridden by --customer-id)
+    /// For solo accounts: if mcc_id is not specified, this will be used as the implied MCC
     pub customer_id: Option<String>,
     /// Optional default output format: table, csv, json (can be overridden by --format)
     pub format: Option<String>,
@@ -86,13 +87,13 @@ impl ResolvedConfig {
             // Explicit --mcc-id takes highest priority
             log::debug!("Using MCC from --mcc-id argument: {}", mcc_id);
             validate_and_normalize_customer_id(mcc_id).context("Invalid --mcc-id argument")?
-        } else if let Some(config_mcc) = config.as_ref().map(|c| &c.mcc_id) {
+        } else if let Some(config_mcc) = config.as_ref().and_then(|c| c.mcc_id.as_ref()) {
             // Config file MCC is second priority
             log::debug!("Using MCC from config profile: {}", config_mcc);
             validate_and_normalize_customer_id(config_mcc)
                 .context("Invalid mcc_id in config file")?
         } else if let Some(customer_id) = &args.customer_id {
-            // Fallback: use customer_id as MCC (for solo accounts)
+            // Fallback: use CLI customer_id as MCC (for solo accounts)
             log::warn!(
                 "No --mcc-id specified. Using --customer-id ({}) as MCC. \
                  This assumes the account is not under a manager account. \
@@ -101,13 +102,24 @@ impl ResolvedConfig {
             );
             validate_and_normalize_customer_id(customer_id)
                 .context("Invalid --customer-id argument")?
+        } else if let Some(config_customer_id) = config.as_ref().and_then(|c| c.customer_id.as_ref()) {
+            // Fallback: use config customer_id as MCC (for solo accounts)
+            log::warn!(
+                "No mcc_id specified. Using customer_id ({}) from config as MCC. \
+                 This assumes the account is not under a manager account. \
+                 Use mcc_id explicitly in config if this account has a manager.",
+                config_customer_id
+            );
+            validate_and_normalize_customer_id(config_customer_id)
+                .context("Invalid customer_id in config file")?
         } else {
             // No MCC available anywhere
             return Err(anyhow::anyhow!(
                 "MCC customer ID required. Provide one of:\n  \
                  1. CLI argument: --mcc-id <MCC_ID>\n  \
-                 2. Config profile: --profile <PROFILE_NAME>\n  \
-                 3. For solo accounts: --customer-id <CUSTOMER_ID> (will be used as MCC)"
+                 2. Config profile with mcc_id: --profile <PROFILE_NAME>\n  \
+                 3. For solo accounts: --customer-id <CUSTOMER_ID> (will be used as MCC)\n  \
+                 4. For solo accounts: customer_id in config profile (will be used as MCC)"
             ));
         };
 
@@ -308,7 +320,11 @@ fn display_profile_config(profile: &str) -> anyhow::Result<()> {
     match load(profile) {
         Ok(config) => {
             println!("Profile Configuration:");
-            println!("  mcc_id: {}", config.mcc_id);
+            if let Some(mcc_id) = &config.mcc_id {
+                println!("  mcc_id: {}", mcc_id);
+            } else {
+                println!("  mcc_id: (not set, will use customer_id as MCC)");
+            }
 
             if let Some(user) = &config.user_email {
                 println!("  user: {}", user);
@@ -562,7 +578,7 @@ mod tests {
     #[test]
     fn test_myconfig_serialization_all_fields() {
         let config = MyConfig {
-            mcc_id: "1234567890".to_string(),
+            mcc_id: Some("1234567890".to_string()),
             user_email: Some("user@example.com".to_string()),
             customer_id: Some("9876543210".to_string()),
             format: Some("json".to_string()),
@@ -592,7 +608,7 @@ mod tests {
     #[test]
     fn test_myconfig_serialization_minimal() {
         let config = MyConfig {
-            mcc_id: "1234567890".to_string(),
+            mcc_id: Some("1234567890".to_string()),
             user_email: Some("user@example.com".to_string()),
             customer_id: None,
             format: None,
@@ -658,16 +674,15 @@ mod tests {
     }
 
     #[test]
-    fn test_myconfig_with_user_field() {
-        // Test that configs with user field can be properly serialized/deserialized
+    fn test_myconfig_with_user_email_field() {
         let toml_str = r#"
             mcc_id = "1234567890"
-            user = "user@example.com"
+            user_email = "user@example.com"
         "#;
 
         let config: MyConfig = toml::from_str(toml_str).expect("Failed to deserialize");
 
-        assert_eq!(config.mcc_id, "1234567890");
+        assert_eq!(config.mcc_id, Some("1234567890".to_string()));
         assert_eq!(config.user_email, Some("user@example.com".to_string()));
         assert_eq!(config.customer_id, None);
         assert_eq!(config.format, None);
@@ -687,7 +702,7 @@ mod tests {
 
         let config: MyConfig = toml::from_str(toml_str).expect("Failed to deserialize");
 
-        assert_eq!(config.mcc_id, "1234567890");
+        assert_eq!(config.mcc_id, Some("1234567890".to_string()));
         assert_eq!(config.user_email, None);
         assert_eq!(config.customer_id, None);
         assert_eq!(config.format, None);

@@ -6,7 +6,7 @@ use mcc_gaql::config::{MyConfig, ResolvedConfig};
 fn test_mcc_priority_cli_overrides_config() {
     let args = Cli::parse_from(["mcc-gaql", "--mcc-id", "1111111111"]);
     let config = Some(MyConfig {
-        mcc_id: "9999999999".to_string(),
+        mcc_id: Some("9999999999".to_string()),
         user_email: None,
         customer_id: None,
         format: None,
@@ -26,7 +26,7 @@ fn test_mcc_fallback_to_customer_id_for_solo_accounts() {
         "mcc-gaql",
         "--customer-id",
         "2222222222",
-        "--user",
+        "--user-email",
         "test@example.com",
     ]);
 
@@ -35,8 +35,32 @@ fn test_mcc_fallback_to_customer_id_for_solo_accounts() {
 }
 
 #[test]
+fn test_config_customer_id_fallback_to_mcc() {
+    // Test that config customer_id is used as MCC when mcc_id is not set
+    let args = Cli::parse_from([
+        "mcc-gaql",
+        "--user-email",
+        "test@example.com",
+    ]);
+    let config = Some(MyConfig {
+        mcc_id: None,  // No MCC specified
+        user_email: Some("test@example.com".to_string()),
+        customer_id: Some("3333333333".to_string()),  // This should be used as MCC
+        format: None,
+        keep_going: None,
+        token_cache_filename: None,
+        customerids_filename: None,
+        queries_filename: None,
+    });
+
+    let resolved = ResolvedConfig::from_args_and_config(&args, config).unwrap();
+    assert_eq!(resolved.mcc_customer_id, "3333333333");
+    assert_eq!(resolved.customer_id, Some("3333333333".to_string()));
+}
+
+#[test]
 fn test_error_when_no_mcc_available() {
-    let args = Cli::parse_from(["mcc-gaql", "--user", "test@example.com"]);
+    let args = Cli::parse_from(["mcc-gaql", "--user-email", "test@example.com"]);
 
     let result = ResolvedConfig::from_args_and_config(&args, None);
     assert!(result.is_err());
@@ -52,7 +76,7 @@ fn test_error_when_no_mcc_available() {
 fn test_token_cache_generation_from_user_email() {
     let args = Cli::parse_from([
         "mcc-gaql",
-        "--user",
+        "--user-email",
         "john.doe@example.com",
         "--mcc-id",
         "1234567890",

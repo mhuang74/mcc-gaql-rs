@@ -187,9 +187,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    ///
-    /// handle 3 types of Google Ads query: list child accounts, field service, and GAQL query
-    /// 
+    // Handle 3 types of Google Ads query: list child accounts, field service, and GAQL query
     if args.list_child_accounts {
         // run Account listing query
 
