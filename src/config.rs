@@ -129,20 +129,33 @@ impl ResolvedConfig {
             .clone()
             .or_else(|| config.as_ref().and_then(|c| c.user_email.clone()));
 
-        // Resolve token cache filename with priority:
-        // 1. Explicit legacy token cache filename from config (highest priority)
-        // 2. Auto-generated from user email
-        // 3. Default filename (lowest priority)
-        let token_cache_filename = config
+        // Check if there's an explicit token cache filename from config
+        let explicit_token_cache = config
             .as_ref()
-            .and_then(|c| c.token_cache_filename.clone())
-            .or_else(|| {
-                args.user_email
-                    .as_ref()
-                    .or_else(|| config.as_ref().and_then(|c| c.user_email.as_ref()))
-                    .map(|email| crate::googleads::generate_token_cache_filename(email))
-            })
-            .unwrap_or_else(|| "tokencache_default.json".to_string());
+            .and_then(|c| c.token_cache_filename.clone());
+
+        // Resolve token cache filename with priority:
+        // 1. Explicit token cache filename from config (highest priority)
+        // 2. Auto-generated from user email
+        // 3. ERROR if neither is available (don't use default that may lack permissions)
+        let token_cache_filename = if let Some(explicit_cache) = explicit_token_cache {
+            // Explicit token cache from config - use it
+            explicit_cache
+        } else if let Some(email) = user_email.as_ref() {
+            // Auto-generate from user email
+            crate::googleads::generate_token_cache_filename(email)
+        } else {
+            // Neither user email nor explicit token cache provided
+            return Err(anyhow::anyhow!(
+                "User email or explicit token cache filename required for authentication.\n\
+                 Please provide one of:\n  \
+                 1. User email: --user-email <EMAIL>\n  \
+                 2. User email in config profile: user_email field\n  \
+                 3. Explicit token cache in config profile: token_cache_filename field\n\n\
+                 A default token cache file will NOT be used as it may not have \
+                 the correct permissions for the account being queried."
+            ));
+        };
 
         // Resolve customer_id: CLI > config
         let customer_id = args

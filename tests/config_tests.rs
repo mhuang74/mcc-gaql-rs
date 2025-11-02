@@ -4,7 +4,7 @@ use mcc_gaql::config::{MyConfig, ResolvedConfig};
 
 #[test]
 fn test_mcc_priority_cli_overrides_config() {
-    let args = Cli::parse_from(["mcc-gaql", "--mcc-id", "1111111111"]);
+    let args = Cli::parse_from(["mcc-gaql", "--mcc-id", "1111111111", "--user-email", "test@example.com"]);
     let config = Some(MyConfig {
         mcc_id: Some("9999999999".to_string()),
         user_email: None,
@@ -342,4 +342,46 @@ fn test_valid_mcc_id_from_config_with_hyphens() {
     assert!(result.is_ok());
     let resolved = result.unwrap();
     assert_eq!(resolved.mcc_customer_id, "1112223333");  // Should be normalized
+}
+
+#[test]
+fn test_error_when_no_user_or_explicit_token_cache() {
+    // Test that it errors out when neither user email nor explicit token cache is provided
+    let args = Cli::parse_from([
+        "mcc-gaql",
+        "--mcc-id",
+        "1234567890",
+    ]);
+
+    let result = ResolvedConfig::from_args_and_config(&args, None);
+    assert!(result.is_err());
+    let error_msg = result.unwrap_err().to_string();
+    assert!(error_msg.contains("User email or explicit token cache filename required"));
+    assert!(error_msg.contains("default token cache file will NOT be used"));
+}
+
+#[test]
+fn test_explicit_token_cache_without_user_succeeds() {
+    // Test that explicit token cache works without user email
+    let args = Cli::parse_from([
+        "mcc-gaql",
+        "--mcc-id",
+        "1234567890",
+    ]);
+    let config = Some(MyConfig {
+        mcc_id: Some("1234567890".to_string()),
+        user_email: None,  // No user email
+        customer_id: None,
+        format: None,
+        keep_going: None,
+        token_cache_filename: Some("tokencache_explicit.json".to_string()),  // Explicit token cache
+        customerids_filename: None,
+        queries_filename: None,
+    });
+
+    let result = ResolvedConfig::from_args_and_config(&args, config);
+    assert!(result.is_ok());
+    let resolved = result.unwrap();
+    assert_eq!(resolved.token_cache_filename, "tokencache_explicit.json");
+    assert_eq!(resolved.user_email, None);
 }
