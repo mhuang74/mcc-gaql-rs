@@ -45,6 +45,7 @@ pub struct MyConfig {
     /// MCC Account ID (optional for solo accounts - if omitted, customer_id will be used as MCC)
     pub mcc_id: Option<String>,
     /// Optional user email for OAuth2 (not required if valid token cache exists)
+    /// Note: The old field name 'user' is deprecated. Please use 'user_email' in config files.
     pub user_email: Option<String>,
     /// Optional default customer ID to query (can be overridden by --customer-id)
     /// For solo accounts: if mcc_id is not specified, this will be used as the implied MCC
@@ -350,6 +351,12 @@ fn display_profile_config(profile: &str) -> anyhow::Result<()> {
                 println!("  user: (not set)");
             }
 
+            if let Some(customer_id) = &config.customer_id {
+                println!("  customer_id: {}", customer_id);
+            } else {
+                println!("  customer_id: (not set)");
+            }
+
             if let Some(token_cache) = &config.token_cache_filename {
                 println!("  token_cache_filename: {}", token_cache);
             } else {
@@ -374,6 +381,18 @@ fn display_profile_config(profile: &str) -> anyhow::Result<()> {
                 }
             } else {
                 println!("  queries_filename: (not set)");
+            }
+
+            if let Some(format) = &config.format {
+                println!("  format: {}", format);
+            } else {
+                println!("  format: (not set, defaults to table)");
+            }
+
+            if let Some(keep_going) = config.keep_going {
+                println!("  keep_going: {}", keep_going);
+            } else {
+                println!("  keep_going: (not set, defaults to false)");
             }
             Ok(())
         }
@@ -727,4 +746,5 @@ mod tests {
         assert_eq!(config.keep_going, None);
         assert_eq!(config.token_cache_filename, Some("tokencache.json".to_string()));
     }
+
 }
