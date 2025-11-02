@@ -1,5 +1,4 @@
 use anyhow::{Context, Result};
-use chrono::Local;
 use dialoguer::{Confirm, Input};
 use std::fs;
 use std::path::PathBuf;
@@ -7,13 +6,46 @@ use toml::{Value, map::Map};
 
 use crate::config::{MyConfig, TOML_CONFIG_FILENAME, config_file_path};
 
+/// Check if a file exists and provide guidance
+fn validate_optional_file(filename: &str, file_description: &str) -> Result<()> {
+    if let Some(path) = config_file_path(filename) {
+        if !path.exists() {
+            println!(
+                "Note: {} does not exist yet at {:?}",
+                file_description, path
+            );
+            println!("You will need to create this file before using it.");
+        } else {
+            println!("Found existing {} at {:?}", file_description, path);
+        }
+    }
+    Ok(())
+}
+
 /// Run the interactive configuration wizard
 pub fn run_wizard() -> Result<()> {
     println!("Welcome to mcc-gaql configuration wizard!");
     println!();
 
-    // Determine profile name
-    let profile_name = determine_profile_name()?;
+    // Get existing profiles to validate uniqueness
+    let existing_profiles = get_existing_profile_names()?;
+
+    // Prompt user for profile name
+    let profile_name: String = Input::new()
+        .with_prompt("Enter a name for this profile")
+        .default("myprofile".to_string())
+        .validate_with(|input: &String| -> Result<(), String> {
+            let trimmed = input.trim();
+            if trimmed.is_empty() {
+                return Err("Profile name cannot be empty".to_string());
+            }
+            if existing_profiles.contains(&trimmed.to_string()) {
+                return Err(format!("Profile '{}' already exists. Please choose a different name.", trimmed));
+            }
+            Ok(())
+        })
+        .interact_text()?;
+
     println!("Using profile: {}", profile_name);
     println!();
 
@@ -31,13 +63,21 @@ pub fn run_wizard() -> Result<()> {
         })
         .interact_text()?;
 
-    // Generate token cache filename from profile name + date stamp
-    let token_cache_filename = format!(
-        "tokencache_{}_{}.json",
-        profile_name,
-        Local::now().format("%Y%m%d")
-    );
-    println!("Token cache file will be: {}", token_cache_filename);
+    // Ask for user email (required for OAuth2 authentication)
+    let user_email: String = Input::new()
+        .with_prompt("Enter your email for OAuth2 authentication")
+        .validate_with(|input: &String| -> Result<(), &str> {
+            if input.trim().is_empty() {
+                return Err("Email is required for authentication");
+            }
+            if !input.contains('@') {
+                return Err("Please enter a valid email address");
+            }
+            Ok(())
+        })
+        .interact_text()?;
+
+    println!("Token cache will be auto-generated from your email");
     println!();
 
     // Ask for optional customer IDs filename
@@ -51,6 +91,7 @@ pub fn run_wizard() -> Result<()> {
             .with_prompt("Enter customer IDs filename")
             .default("customerids.txt".to_string())
             .interact_text()?;
+        validate_optional_file(&filename, "customer IDs file")?;
         Some(filename)
     } else {
         None
@@ -67,6 +108,7 @@ pub fn run_wizard() -> Result<()> {
             .with_prompt("Enter queries cookbook filename")
             .default("query_cookbook.toml".to_string())
             .interact_text()?;
+        validate_optional_file(&filename, "queries cookbook file")?;
         Some(filename)
     } else {
         None
@@ -75,8 +117,8 @@ pub fn run_wizard() -> Result<()> {
     // Create config structure
     let config = MyConfig {
         mcc_customerid,
-        user: None,
-        token_cache_filename: Some(token_cache_filename),
+        user: Some(user_email),
+        token_cache_filename: None,  // Let runtime auto-generate from user email
         customerids_filename,
         queries_filename,
     };
@@ -112,38 +154,20 @@ pub fn run_wizard() -> Result<()> {
     Ok(())
 }
 
-/// Determine a unique profile name, defaulting to "myprofile" and adding _2, _3, etc. if it exists
-pub fn determine_profile_name() -> Result<String> {
+/// Get list of existing profile names from the default config file location
+fn get_existing_profile_names() -> Result<Vec<String>> {
     let config_path = config_file_path(TOML_CONFIG_FILENAME);
 
-    let base_name = "myprofile";
-
-    // If config file doesn't exist, use the base name
+    // If config file doesn't exist or path can't be determined, return empty list
     let Some(config_path) = config_path else {
-        return Ok(base_name.to_string());
+        return Ok(Vec::new());
     };
 
     if !config_path.exists() {
-        return Ok(base_name.to_string());
+        return Ok(Vec::new());
     }
 
-    // Load existing config to check what profiles exist
-    let existing_profiles = get_existing_profiles(&config_path)?;
-
-    // If base name doesn't exist, use it
-    if !existing_profiles.contains(&base_name.to_string()) {
-        return Ok(base_name.to_string());
-    }
-
-    // Find the next available numbered suffix
-    for i in 2..1000 {
-        let candidate = format!("{}_{}", base_name, i);
-        if !existing_profiles.contains(&candidate) {
-            return Ok(candidate);
-        }
-    }
-
-    Err(anyhow::anyhow!("Unable to find an available profile name"))
+    get_existing_profiles(&config_path)
 }
 
 /// Get list of existing profile names from config file
@@ -177,36 +201,12 @@ fn save_config(profile_name: &str, config: &MyConfig) -> Result<()> {
         Map::new()
     };
 
-    // Create profile section
-    let mut profile_table = Map::new();
-    profile_table.insert(
-        "mcc_customerid".to_string(),
-        Value::String(config.mcc_customerid.clone()),
-    );
-
-    if let Some(ref filename) = config.token_cache_filename {
-        profile_table.insert(
-            "token_cache_filename".to_string(),
-            Value::String(filename.clone()),
-        );
-    }
-
-    if let Some(ref filename) = config.customerids_filename {
-        profile_table.insert(
-            "customerids_filename".to_string(),
-            Value::String(filename.clone()),
-        );
-    }
-
-    if let Some(ref filename) = config.queries_filename {
-        profile_table.insert(
-            "queries_filename".to_string(),
-            Value::String(filename.clone()),
-        );
-    }
+    // Serialize config to TOML value using serde
+    let profile_value = Value::try_from(config)
+        .context("Failed to serialize config")?;
 
     // Add or update profile in config
-    config_table.insert(profile_name.to_string(), Value::Table(profile_table));
+    config_table.insert(profile_name.to_string(), profile_value);
 
     // Write config file
     let toml_string =
@@ -224,13 +224,6 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::TempDir;
-
-    #[test]
-    fn test_determine_profile_name_no_config() {
-        // When no config exists, should return "myprofile"
-        let profile = determine_profile_name().unwrap();
-        assert_eq!(profile, "myprofile");
-    }
 
     #[test]
     fn test_get_existing_profiles_empty() {
@@ -277,8 +270,8 @@ token_cache_filename = "tokencache_myprofile.json"
         // Mock the config_file_path function by testing save_config directly
         let config = MyConfig {
             mcc_customerid: "1234567890".to_string(),
-            user: None,
-            token_cache_filename: Some("tokencache_test_20250101.json".to_string()),
+            user: Some("user@example.com".to_string()),
+            token_cache_filename: None,  // Now auto-generated at runtime
             customerids_filename: Some("customerids.txt".to_string()),
             queries_filename: Some("queries.toml".to_string()),
         };
@@ -293,8 +286,8 @@ token_cache_filename = "tokencache_myprofile.json"
             Value::String(config.mcc_customerid.clone()),
         );
         profile_table.insert(
-            "token_cache_filename".to_string(),
-            Value::String(config.token_cache_filename.clone().unwrap()),
+            "user".to_string(),
+            Value::String(config.user.clone().unwrap()),
         );
         profile_table.insert(
             "customerids_filename".to_string(),
@@ -314,45 +307,8 @@ token_cache_filename = "tokencache_myprofile.json"
         let content = fs::read_to_string(&config_path).unwrap();
         assert!(content.contains("[testprofile]"));
         assert!(content.contains("1234567890"));
-        assert!(content.contains("tokencache_test_20250101.json"));
+        assert!(content.contains("user@example.com"));
         assert!(content.contains("customerids.txt"));
         assert!(content.contains("queries.toml"));
-    }
-
-    #[test]
-    fn test_profile_name_suffix_logic() {
-        let temp_dir = TempDir::new().unwrap();
-        let config_path = temp_dir.path().join("config.toml");
-
-        // Create config with myprofile and myprofile_2
-        let config_content = r#"
-[myprofile]
-mcc_customerid = "1111111111"
-token_cache_filename = "tokencache1.json"
-
-[myprofile_2]
-mcc_customerid = "2222222222"
-token_cache_filename = "tokencache2.json"
-"#;
-
-        fs::write(&config_path, config_content).unwrap();
-
-        let profiles = get_existing_profiles(&config_path).unwrap();
-
-        // Simulate the logic from determine_profile_name
-        let base_name = "myprofile";
-        let mut next_name = base_name.to_string();
-
-        if profiles.contains(&next_name) {
-            for i in 2..1000 {
-                let candidate = format!("{}_{}", base_name, i);
-                if !profiles.contains(&candidate) {
-                    next_name = candidate;
-                    break;
-                }
-            }
-        }
-
-        assert_eq!(next_name, "myprofile_3");
     }
 }

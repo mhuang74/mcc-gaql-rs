@@ -100,6 +100,10 @@ pub struct Cli {
     /// Set up configuration with interactive wizard
     #[clap(long)]
     pub setup: bool,
+
+    /// Display current configuration and exit
+    #[clap(long)]
+    pub show_config: bool,
 }
 
 pub fn parse() -> Cli {
@@ -109,6 +113,7 @@ pub fn parse() -> Cli {
         && cli.gaql_query.is_none()
         && !cli.list_child_accounts
         && !cli.setup
+        && !cli.show_config
     {
         let mut buffer = String::new();
         io::stdin()
