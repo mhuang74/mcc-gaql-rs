@@ -61,6 +61,12 @@ const FILENAME_CLIENT_SECRET: &str = "clientsecret.json";
 // const FILENAME_TOKEN_CACHE: &str = "tokencache.json";
 static GOOGLE_ADS_API_SCOPE: &str = "https://www.googleapis.com/auth/adwords";
 
+// Embed the client secret at compile time if the file exists
+// Place clientsecret.json in the project root directory before building
+// If not present at compile time, the code will fall back to loading from config directory at runtime
+#[cfg(not(feature = "external_client_secret"))]
+const EMBEDDED_CLIENT_SECRET: Option<&str> = option_env!("MCC_GAQL_EMBED_CLIENT_SECRET");
+
 // incomplete. Only what I need for the moment.
 const GOOGLE_ADS_METRICS_INTEGER_FIELDS: &[&str] = &[
     "clicks",
@@ -150,13 +156,31 @@ pub async fn get_api_access(
     token_cache_filename: &str,
     user_email: Option<&str>,
 ) -> Result<GoogleAdsAPIAccess> {
-    let client_secret_path =
-        crate::config::config_file_path(FILENAME_CLIENT_SECRET).expect("clientsecret path");
-
-    let app_secret: ApplicationSecret =
+    // Try embedded secret first (if compiled with credentials), then fall back to file
+    #[cfg(not(feature = "external_client_secret"))]
+    let app_secret: ApplicationSecret = if let Some(embedded_json) = EMBEDDED_CLIENT_SECRET {
+        log::debug!("Using embedded client secret");
+        yup_oauth2::parse_application_secret(embedded_json)
+            .expect("Failed to parse embedded client secret")
+    } else {
+        log::debug!("No embedded client secret found, loading from file");
+        let client_secret_path =
+            crate::config::config_file_path(FILENAME_CLIENT_SECRET).expect("clientsecret path");
         yup_oauth2::read_application_secret(client_secret_path.as_path())
             .await
-            .expect("clientsecret.json");
+            .expect("clientsecret.json file not found and no embedded secret available")
+    };
+
+    // For builds with external_client_secret feature, always load from file
+    #[cfg(feature = "external_client_secret")]
+    let app_secret: ApplicationSecret = {
+        log::debug!("Loading client secret from file (external_client_secret feature enabled)");
+        let client_secret_path =
+            crate::config::config_file_path(FILENAME_CLIENT_SECRET).expect("clientsecret path");
+        yup_oauth2::read_application_secret(client_secret_path.as_path())
+            .await
+            .expect("clientsecret.json")
+    };
 
     let token_cache_path =
         crate::config::config_file_path(token_cache_filename).expect("token cache path");

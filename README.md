@@ -30,6 +30,44 @@ cargo build --release
 ./target/release/mcc-gaql --version
 ```
 
+### Embedding OAuth2 Credentials (Optional)
+
+For easier distribution, you can embed your Google Ads OAuth2 credentials directly into the binary at compile time. This eliminates the need to place `clientsecret.json` in the config directory on every machine.
+
+**Security Note:** This is safe for OAuth2 "Installed/Desktop" application credentials. The `client_secret` in these credentials is not highly confidential - Google's documentation explicitly states it cannot be kept secret in native/desktop apps. The actual security comes from the OAuth2 authorization flow and user consent. User-specific tokens (stored in `tokencache_*.json`) remain protected and separate.
+
+#### Steps to Embed Credentials:
+
+1. Get OAuth2 credentials from Google Cloud Console (Desktop/Installed application type)
+2. Place `clientsecret.json` in the project root directory
+3. Build the project:
+
+```bash
+# Place your credentials file
+cp ~/Downloads/clientsecret.json ./clientsecret.json
+
+# Build with embedded credentials
+cargo build --release
+
+# The binary now contains the credentials
+./target/release/mcc-gaql --version
+```
+
+The build script will automatically detect `clientsecret.json` and embed it. You'll see a build message:
+```
+warning: mcc-gaql@0.12.2: Found clientsecret.json - embedding OAuth2 credentials into binary
+```
+
+#### Runtime Behavior:
+
+- **With embedded credentials**: Binary works standalone, no external `clientsecret.json` needed
+- **Without embedded credentials**: Binary falls back to loading from config directory at runtime
+- **Feature flag**: Build with `--features external_client_secret` to disable embedding and always load from file
+
+#### Example clientsecret.json structure:
+
+See `clientsecret.json.example` in the repository for the expected format.
+
 ## Getting Started
 
 ### Quick Start: Setup Wizard

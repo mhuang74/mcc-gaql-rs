@@ -161,10 +161,24 @@ pub fn run_wizard() -> Result<()> {
     println!("  mcc-gaql --profile {}", profile_name);
     println!();
     println!("Next steps:");
-    println!(
-        "  1. Place your OAuth2 credentials in: {:?}",
-        config_file_path("clientsecret.json")
-    );
+
+    // Check if OAuth2 credentials are embedded in the binary
+    #[cfg(not(feature = "external_client_secret"))]
+    let has_embedded_secret = option_env!("MCC_GAQL_EMBED_CLIENT_SECRET").is_some();
+
+    #[cfg(feature = "external_client_secret")]
+    let has_embedded_secret = false;
+
+    if has_embedded_secret {
+        println!("  1. OAuth2 credentials are embedded in this binary (no clientsecret.json needed)");
+    } else {
+        println!(
+            "  1. Place your OAuth2 credentials in: {:?}",
+            config_file_path("clientsecret.json")
+        );
+        println!("     (Or rebuild with credentials embedded - see README for details)");
+    }
+
     if config.customerids_filename.is_some() {
         println!(
             "  2. Create your customer IDs file: {:?}",
