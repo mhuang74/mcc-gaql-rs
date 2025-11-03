@@ -4,7 +4,7 @@ use std::fs;
 use std::path::PathBuf;
 use toml::{Value, map::Map};
 
-use crate::config::{MyConfig, TOML_CONFIG_FILENAME, config_file_path};
+use crate::config::{MyConfig, TOML_CONFIG_FILENAME, config_file_path, validate_and_normalize_customer_id};
 
 /// Check if a file exists and provide guidance
 fn validate_optional_file(filename: &str, file_description: &str) -> Result<()> {
@@ -49,20 +49,6 @@ pub fn run_wizard() -> Result<()> {
     println!("Using profile: {}", profile_name);
     println!();
 
-    // Ask for MCC customer ID
-    let mcc_id: String = Input::new()
-        .with_prompt("Enter your MCC Customer ID (digits only, without dashes)")
-        .validate_with(|input: &String| -> Result<(), &str> {
-            if input.trim().is_empty() {
-                return Err("MCC Customer ID is required");
-            }
-            if !input.chars().all(|c| c.is_ascii_digit()) {
-                return Err("MCC Customer ID should contain only digits");
-            }
-            Ok(())
-        })
-        .interact_text()?;
-
     // Ask for user email (required for OAuth2 authentication)
     let user_email: String = Input::new()
         .with_prompt("Enter your email for OAuth2 authentication")
@@ -79,6 +65,44 @@ pub fn run_wizard() -> Result<()> {
 
     println!("Token cache will be auto-generated from your email");
     println!();
+
+    // Ask for customer ID (required)
+    let customer_id: String = Input::new()
+        .with_prompt("Enter your Customer ID (e.g., 1234567890 or 123-456-7890)")
+        .validate_with(|input: &String| -> Result<(), String> {
+            if input.trim().is_empty() {
+                return Err("Customer ID is required".to_string());
+            }
+            validate_and_normalize_customer_id(input)
+                .map(|_| ())
+                .map_err(|e| e.to_string())
+        })
+        .interact_text()
+        .map(|id| validate_and_normalize_customer_id(&id).unwrap())?;
+
+    // Ask for optional MCC ID
+    let use_mcc = Confirm::new()
+        .with_prompt("Is this account under an MCC (Manager) account?")
+        .default(false)
+        .interact()?;
+
+    let mcc_id = if use_mcc {
+        let mcc_id_input: String = Input::new()
+            .with_prompt("Enter your MCC Customer ID (e.g., 1234567890 or 123-456-7890)")
+            .validate_with(|input: &String| -> Result<(), String> {
+                if input.trim().is_empty() {
+                    return Err("MCC Customer ID cannot be empty".to_string());
+                }
+                validate_and_normalize_customer_id(input)
+                    .map(|_| ())
+                    .map_err(|e| e.to_string())
+            })
+            .interact_text()
+            .map(|id| validate_and_normalize_customer_id(&id).unwrap())?;
+        Some(mcc_id_input)
+    } else {
+        None
+    };
 
     // Ask for optional customer IDs filename
     let use_customerids_file = Confirm::new()
@@ -116,9 +140,9 @@ pub fn run_wizard() -> Result<()> {
 
     // Create config structure
     let config = MyConfig {
-        mcc_id: Some(mcc_id),
+        mcc_id,
         user_email: Some(user_email),
-        customer_id: None,
+        customer_id: Some(customer_id),
         format: None,
         keep_going: None,
         token_cache_filename: None,  // Let runtime auto-generate from user email
