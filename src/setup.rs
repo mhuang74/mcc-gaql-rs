@@ -148,6 +148,7 @@ pub fn run_wizard() -> Result<()> {
         token_cache_filename: None,  // Let runtime auto-generate from user email
         customerids_filename,
         queries_filename,
+        dev_token: None,  // Use fallback or environment variable
     };
 
     // Save configuration
@@ -318,6 +319,7 @@ token_cache_filename = "tokencache_myprofile.json"
             token_cache_filename: None,  // Now auto-generated at runtime
             customerids_filename: Some("customerids.txt".to_string()),
             queries_filename: Some("queries.toml".to_string()),
+            dev_token: None,
         };
 
         // We can't directly test save_config without mocking config_file_path,

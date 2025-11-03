@@ -60,6 +60,10 @@ pub struct MyConfig {
     pub customerids_filename: Option<String>,
     /// Optional TOML file with stored queries
     pub queries_filename: Option<String>,
+    /// Optional Google Ads Developer Token
+    /// If not specified, will check env var MCC_GAQL_DEV_TOKEN or use fallback
+    /// Get your token at: https://developers.google.com/google-ads/api/docs/get-started/dev-token
+    pub dev_token: Option<String>,
 }
 
 /// Resolved runtime configuration combining CLI args and config file
@@ -73,6 +77,7 @@ pub struct ResolvedConfig {
     pub token_cache_filename: String,
     pub queries_filename: Option<String>,
     pub customerids_filename: Option<String>,
+    pub dev_token: Option<String>,
 }
 
 impl ResolvedConfig {
@@ -190,6 +195,7 @@ impl ResolvedConfig {
         // Config file fields (only available if profile specified)
         let queries_filename = config.as_ref().and_then(|c| c.queries_filename.clone());
         let customerids_filename = config.as_ref().and_then(|c| c.customerids_filename.clone());
+        let dev_token = config.as_ref().and_then(|c| c.dev_token.clone());
 
         Ok(Self {
             mcc_customer_id,
@@ -200,6 +206,7 @@ impl ResolvedConfig {
             token_cache_filename,
             queries_filename,
             customerids_filename,
+            dev_token,
         })
     }
 
@@ -623,6 +630,7 @@ mod tests {
             token_cache_filename: None,
             customerids_filename: Some("customerids.txt".to_string()),
             queries_filename: Some("query_cookbook.toml".to_string()),
+            dev_token: Some("test-dev-token".to_string()),
         };
 
         // Serialize to TOML string
@@ -653,6 +661,7 @@ mod tests {
             token_cache_filename: None,
             customerids_filename: None,
             queries_filename: None,
+            dev_token: None,
         };
 
         // Serialize to TOML string
@@ -691,6 +700,7 @@ mod tests {
             token_cache_filename: "tokencache.json".to_string(),
             queries_filename: Some("query_cookbook.toml".to_string()),
             customerids_filename: Some("customerids.txt".to_string()),
+            dev_token: Some("test-dev-token".to_string()),
         };
 
         // Serialize to TOML string
@@ -790,6 +800,7 @@ mod tests {
             token_cache_filename: "test_token.json".to_string(),
             queries_filename: None,
             customerids_filename: None,
+            dev_token: None,
         };
 
         // Validation should succeed because resolved config has customer_id

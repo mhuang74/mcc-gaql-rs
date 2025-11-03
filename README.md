@@ -120,6 +120,7 @@ Configuration is stored in:
 [default]
 queries_filename = 'query_cookbook.toml'
 user_email = 'your.email@gmail.com'
+dev_token = 'YOUR_GOOGLE_ADS_DEV_TOKEN'  # Optional - can also use env var
 
 # Profile for MCC account
 [mycompany_mcc]
@@ -127,6 +128,7 @@ mcc_id = '123-456-7890'
 customer_id = '987-654-3210'
 customerids_filename = 'customer_ids.txt'
 user_email = 'mcc.account@company.com'
+dev_token = 'YOUR_DEV_TOKEN'  # Optional - overrides default
 
 # Profile for a specific single account
 [brand_account]
@@ -138,6 +140,18 @@ user_email = 'brand@company.com'
 customer_id = '444-555-6666'
 user_email = 'client@example.org'
 ```
+
+#### Developer Token Configuration
+
+**Required:** A Google Ads Developer Token is required to use this tool.
+
+The token can be configured via (in priority order):
+
+1. **Config file**: Add `dev_token = "YOUR_TOKEN"` to your profile
+2. **Runtime environment variable**: `export MCC_GAQL_DEV_TOKEN="YOUR_TOKEN"`
+3. **Compile-time embedding**: `MCC_GAQL_DEV_TOKEN="YOUR_TOKEN" cargo build`
+
+Get your developer token at: https://developers.google.com/google-ads/api/docs/get-started/dev-token
 
 #### Manual Configuration
 

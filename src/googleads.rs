@@ -54,8 +54,14 @@ ORDER BY customer_client.level, customer_client.id
 ";
 
 const ENDPOINT: &str = "https://googleads.googleapis.com:443";
-// dev token borrowed from https://github.com/selesnow/rgoogleads/blob/master/R/gads_auth.R
-const DEV_TOKEN: &str = "EBkkx-znu2cZcEY7e74smg";
+
+// Developer Token configuration with priority order:
+// 1. Config: Pass via dev_token parameter (from config file)
+// 2. Runtime: Check MCC_GAQL_DEV_TOKEN env var at runtime
+// 3. Compile-time: Set MCC_GAQL_DEV_TOKEN env var during build
+//
+// Get your own dev token at: https://developers.google.com/google-ads/api/docs/get-started/dev-token
+const EMBEDDED_DEV_TOKEN: Option<&str> = option_env!("MCC_GAQL_DEV_TOKEN");
 
 const FILENAME_CLIENT_SECRET: &str = "clientsecret.json";
 // const FILENAME_TOKEN_CACHE: &str = "tokencache.json";
@@ -150,11 +156,44 @@ pub fn generate_token_cache_filename(user_email: &str) -> String {
     format!("tokencache_{}.json", sanitized)
 }
 
+/// Get developer token with priority order:
+/// 1. Provided parameter (from config file)
+/// 2. Runtime environment variable MCC_GAQL_DEV_TOKEN
+/// 3. Compile-time embedded token
+///
+/// Returns error if no token is available from any source
+fn get_dev_token(config_token: Option<&str>) -> Result<String> {
+    if let Some(token) = config_token {
+        log::debug!("Using developer token from config");
+        return Ok(token.to_string());
+    }
+
+    if let Ok(token) = std::env::var("MCC_GAQL_DEV_TOKEN") {
+        log::debug!("Using developer token from runtime environment variable");
+        return Ok(token);
+    }
+
+    if let Some(token) = EMBEDDED_DEV_TOKEN {
+        log::debug!("Using developer token embedded at compile time");
+        return Ok(token.to_string());
+    }
+
+    bail!(
+        "Google Ads Developer Token required but not found. Provide via:\n  \
+         1. Config file: Add 'dev_token = \"YOUR_TOKEN\"' to your profile\n  \
+         2. Runtime env: export MCC_GAQL_DEV_TOKEN=\"YOUR_TOKEN\"\n  \
+         3. Build time: MCC_GAQL_DEV_TOKEN=\"YOUR_TOKEN\" cargo build\n\n  \
+         Get your developer token at:\n  \
+         https://developers.google.com/google-ads/api/docs/get-started/dev-token"
+    )
+}
+
 /// Get access to Google Ads API via OAuth2 flow and return API Credentials
 pub async fn get_api_access(
     mcc_customer_id: &str,
     token_cache_filename: &str,
     user_email: Option<&str>,
+    dev_token: Option<&str>,
 ) -> Result<GoogleAdsAPIAccess> {
     // Try embedded secret first (if compiled with credentials), then fall back to file
     #[cfg(not(feature = "external_client_secret"))]
@@ -191,7 +230,9 @@ pub async fn get_api_access(
             .build()
             .await?;
 
-    let header_value_dev_token = MetadataValue::try_from(DEV_TOKEN)?;
+    // Get developer token using priority order: config > runtime env > compile-time
+    let dev_token_value = get_dev_token(dev_token)?;
+    let header_value_dev_token = MetadataValue::try_from(&dev_token_value)?;
     let header_value_login_customer = MetadataValue::try_from(mcc_customer_id)?;
 
     let tls_config = tonic::transport::ClientTlsConfig::new().with_native_roots();
