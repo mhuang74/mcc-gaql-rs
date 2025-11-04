@@ -14,6 +14,7 @@ fn test_mcc_priority_cli_overrides_config() {
         token_cache_filename: None,
         customerids_filename: None,
         queries_filename: None,
+        dev_token: None,
     });
 
     let resolved = ResolvedConfig::from_args_and_config(&args, config).unwrap();
@@ -51,6 +52,7 @@ fn test_config_customer_id_fallback_to_mcc() {
         token_cache_filename: None,
         customerids_filename: None,
         queries_filename: None,
+        dev_token: None,
     });
 
     let resolved = ResolvedConfig::from_args_and_config(&args, config).unwrap();
@@ -109,6 +111,7 @@ fn test_validate_requires_user_or_token_cache() {
         token_cache_filename: "tokencache_nonexistent.json".to_string(),
         queries_filename: None,
         customerids_filename: None,
+        dev_token: None,
     };
 
     let result = resolved.validate_for_operation(&args);
@@ -157,6 +160,7 @@ fn test_validate_succeeds_with_existing_token_cache() {
         token_cache_filename: "tokencache_test_temp.json".to_string(),
         queries_filename: None,
         customerids_filename: None,
+        dev_token: None,
     };
 
     let result = resolved.validate_for_operation(&args);
@@ -288,6 +292,7 @@ fn test_invalid_customer_id_from_config() {
         token_cache_filename: None,
         customerids_filename: None,
         queries_filename: None,
+        dev_token: None,
     });
 
     let result = ResolvedConfig::from_args_and_config(&args, config);
@@ -312,6 +317,7 @@ fn test_invalid_mcc_id_from_config() {
         token_cache_filename: None,
         customerids_filename: None,
         queries_filename: None,
+        dev_token: None,
     });
 
     let result = ResolvedConfig::from_args_and_config(&args, config);
@@ -336,6 +342,7 @@ fn test_valid_mcc_id_from_config_with_hyphens() {
         token_cache_filename: None,
         customerids_filename: None,
         queries_filename: None,
+        dev_token: None,
     });
 
     let result = ResolvedConfig::from_args_and_config(&args, config);
@@ -377,6 +384,7 @@ fn test_explicit_token_cache_without_user_succeeds() {
         token_cache_filename: Some("tokencache_explicit.json".to_string()),  // Explicit token cache
         customerids_filename: None,
         queries_filename: None,
+        dev_token: None,
     });
 
     let result = ResolvedConfig::from_args_and_config(&args, config);

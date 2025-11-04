@@ -159,7 +159,7 @@ impl QueryEntry {
 /// get named queries from file, as a Map of String
 pub async fn get_queries_from_file<P>(filename: P) -> Result<HashMap<String, QueryEntry>>
 where
-    P: AsRef<Path>,
+    P: AsRef<Path> + std::fmt::Debug,
 {
     match File::open(&filename) {
         Ok(file) => {
@@ -197,7 +197,7 @@ where
             Ok(query_map)
         }
         Err(e) => {
-            bail!("Unable to load named query file. Error: {}", e);
+            bail!("Unable to load named query file: {:?}. Error: {}", filename, e);
         }
     }
 }

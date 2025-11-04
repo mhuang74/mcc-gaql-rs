@@ -40,3 +40,9 @@ rig-core = "0.7.0"
 
 [dev-dependencies]
 tempfile = "3.8"
+
+[features]
+# When enabled, always load OAuth2 credentials from config directory at runtime
+# instead of using embedded credentials. Useful for builds that should not
+# bundle credentials for security or distribution reasons.
+external_client_secret = []

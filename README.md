@@ -30,6 +30,76 @@ cargo build --release
 ./target/release/mcc-gaql --version
 ```
 
+### Embedding Credentials for Standalone Binaries (Optional)
+
+For easier distribution, you can embed both your OAuth2 credentials and Developer Token directly into the binary at compile time. This creates a truly standalone binary that end users can run without any configuration.
+
+**Security Note:** This is safe for OAuth2 "Installed/Desktop" application credentials. The `client_secret` in these credentials is not highly confidential - Google's documentation explicitly states it cannot be kept secret in native/desktop apps. The actual security comes from the OAuth2 authorization flow and user consent. User-specific tokens (stored in `tokencache_*.json`) remain protected and separate.
+
+#### What Gets Embedded:
+
+1. **OAuth2 Client Secret** - Via `MCC_GAQL_EMBED_CLIENT_SECRET`
+2. **Developer Token** - Via `MCC_GAQL_DEV_TOKEN`
+
+#### Steps to Embed Credentials:
+
+1. Get OAuth2 credentials from Google Cloud Console (Desktop/Installed application type)
+2. Get your Developer Token from Google Ads API Center
+3. Set environment variables during build:
+
+```bash
+# Option 1: Set both env vars from files
+MCC_GAQL_EMBED_CLIENT_SECRET="$(cat clientsecret.json)" \
+MCC_GAQL_DEV_TOKEN="your-dev-token-here" \
+cargo build --release
+
+# Option 2: Export env vars in your shell
+export MCC_GAQL_EMBED_CLIENT_SECRET="$(cat clientsecret.json)"
+export MCC_GAQL_DEV_TOKEN="your-dev-token-here"
+cargo build --release
+
+# Option 3: Use a .env file (with direnv or similar)
+echo "MCC_GAQL_EMBED_CLIENT_SECRET=$(cat clientsecret.json)" > .env
+echo "MCC_GAQL_DEV_TOKEN=your-dev-token-here" >> .env
+direnv allow  # if using direnv
+cargo build --release
+
+# The binary now contains both credentials
+./target/release/mcc-gaql --version
+```
+
+The build script will detect the environment variables and embed them. You'll see build messages:
+```
+warning: Embedding OAuth2 credentials from MCC_GAQL_EMBED_CLIENT_SECRET environment variable
+warning: Embedding Google Ads Developer Token from MCC_GAQL_DEV_TOKEN environment variable
+```
+
+#### GitHub Actions / CI/CD:
+
+For automated builds, set both environment variables from GitHub Secrets:
+
+```yaml
+- name: Build release binary
+  env:
+    MCC_GAQL_EMBED_CLIENT_SECRET: ${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}
+    MCC_GAQL_DEV_TOKEN: ${{ secrets.GOOGLE_ADS_DEV_TOKEN }}
+  run: cargo build --release
+```
+
+**Repository Setup:** Add these secrets in your GitHub repository settings:
+- `GOOGLE_ADS_CLIENT_SECRET` - JSON content of your clientsecret.json
+- `GOOGLE_ADS_DEV_TOKEN` - Your Google Ads Developer Token
+
+#### Runtime Behavior:
+
+- **With embedded credentials**: Binary works standalone, no external `clientsecret.json` needed
+- **Without embedded credentials**: Binary falls back to loading from config directory at runtime
+- **Feature flag**: Build with `--features external_client_secret` to disable embedding and always load from file
+
+#### Example clientsecret.json structure:
+
+See `clientsecret.json.example` in the repository for the expected format.
+
 ## Getting Started
 
 ### Quick Start: Setup Wizard
@@ -82,6 +152,7 @@ Configuration is stored in:
 [default]
 queries_filename = 'query_cookbook.toml'
 user_email = 'your.email@gmail.com'
+dev_token = 'YOUR_GOOGLE_ADS_DEV_TOKEN'  # Optional - can also use env var
 
 # Profile for MCC account
 [mycompany_mcc]
@@ -89,6 +160,7 @@ mcc_id = '123-456-7890'
 customer_id = '987-654-3210'
 customerids_filename = 'customer_ids.txt'
 user_email = 'mcc.account@company.com'
+dev_token = 'YOUR_DEV_TOKEN'  # Optional - overrides default
 
 # Profile for a specific single account
 [brand_account]
@@ -100,6 +172,18 @@ user_email = 'brand@company.com'
 customer_id = '444-555-6666'
 user_email = 'client@example.org'
 ```
+
+#### Developer Token Configuration
+
+**Required:** A Google Ads Developer Token is required to use this tool.
+
+The token can be configured via (in priority order):
+
+1. **Config file**: Add `dev_token = "YOUR_TOKEN"` to your profile
+2. **Runtime environment variable**: `export MCC_GAQL_DEV_TOKEN="YOUR_TOKEN"`
+3. **Compile-time embedding**: `MCC_GAQL_DEV_TOKEN="YOUR_TOKEN" cargo build`
+
+Get your developer token at: https://developers.google.com/google-ads/api/docs/get-started/dev-token
 
 #### Manual Configuration
 

@@ -146,6 +146,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         mcc_customer_id,
         &resolved_config.token_cache_filename,
         user_email,
+        resolved_config.dev_token.as_deref(),
     )
     .await
     .context(format!(
@@ -175,6 +176,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 mcc_customer_id,
                 &resolved_config.token_cache_filename,
                 user_email,
+                resolved_config.dev_token.as_deref(),
             )
             .await
             .context(format!(
