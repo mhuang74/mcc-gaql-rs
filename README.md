@@ -21,88 +21,11 @@ mv mcc-gaql /usr/local/bin/
 mcc-gaql --version
 ```
 
-### Build from Source
+> **For developers**: See [DEVELOPER.md](DEVELOPER.md) for building from source and embedding credentials.
 
-```bash
-git clone https://github.com/mhuang74/mcc-gaql-rs.git
-cd mcc-gaql-rs
-cargo build --release
-./target/release/mcc-gaql --version
-```
+## Quick Start
 
-### Embedding Credentials for Standalone Binaries (Optional)
-
-For easier distribution, you can embed both your OAuth2 credentials and Developer Token directly into the binary at compile time. This creates a truly standalone binary that end users can run without any configuration.
-
-**Security Note:** This is safe for OAuth2 "Installed/Desktop" application credentials. The `client_secret` in these credentials is not highly confidential - Google's documentation explicitly states it cannot be kept secret in native/desktop apps. The actual security comes from the OAuth2 authorization flow and user consent. User-specific tokens (stored in `tokencache_*.json`) remain protected and separate.
-
-#### What Gets Embedded:
-
-1. **OAuth2 Client Secret** - Via `MCC_GAQL_EMBED_CLIENT_SECRET`
-2. **Developer Token** - Via `MCC_GAQL_DEV_TOKEN`
-
-#### Steps to Embed Credentials:
-
-1. Get OAuth2 credentials from Google Cloud Console (Desktop/Installed application type)
-2. Get your Developer Token from Google Ads API Center
-3. Set environment variables during build:
-
-```bash
-# Option 1: Set both env vars from files
-MCC_GAQL_EMBED_CLIENT_SECRET="$(cat clientsecret.json)" \
-MCC_GAQL_DEV_TOKEN="your-dev-token-here" \
-cargo build --release
-
-# Option 2: Export env vars in your shell
-export MCC_GAQL_EMBED_CLIENT_SECRET="$(cat clientsecret.json)"
-export MCC_GAQL_DEV_TOKEN="your-dev-token-here"
-cargo build --release
-
-# Option 3: Use a .env file (with direnv or similar)
-echo "MCC_GAQL_EMBED_CLIENT_SECRET=$(cat clientsecret.json)" > .env
-echo "MCC_GAQL_DEV_TOKEN=your-dev-token-here" >> .env
-direnv allow  # if using direnv
-cargo build --release
-
-# The binary now contains both credentials
-./target/release/mcc-gaql --version
-```
-
-The build script will detect the environment variables and embed them. You'll see build messages:
-```
-warning: Embedding OAuth2 credentials from MCC_GAQL_EMBED_CLIENT_SECRET environment variable
-warning: Embedding Google Ads Developer Token from MCC_GAQL_DEV_TOKEN environment variable
-```
-
-#### GitHub Actions / CI/CD:
-
-For automated builds, set both environment variables from GitHub Secrets:
-
-```yaml
-- name: Build release binary
-  env:
-    MCC_GAQL_EMBED_CLIENT_SECRET: ${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}
-    MCC_GAQL_DEV_TOKEN: ${{ secrets.GOOGLE_ADS_DEV_TOKEN }}
-  run: cargo build --release
-```
-
-**Repository Setup:** Add these secrets in your GitHub repository settings:
-- `GOOGLE_ADS_CLIENT_SECRET` - JSON content of your clientsecret.json
-- `GOOGLE_ADS_DEV_TOKEN` - Your Google Ads Developer Token
-
-#### Runtime Behavior:
-
-- **With embedded credentials**: Binary works standalone, no external `clientsecret.json` needed
-- **Without embedded credentials**: Binary falls back to loading from config directory at runtime
-- **Feature flag**: Build with `--features external_client_secret` to disable embedding and always load from file
-
-#### Example clientsecret.json structure:
-
-See `clientsecret.json.example` in the repository for the expected format.
-
-## Getting Started
-
-### Quick Start: Setup Wizard
+### Setup Wizard
 
 The easiest way to get started is using the interactive setup wizard:
 
@@ -129,23 +52,185 @@ mcc-gaql --show-config --profile local-business
 mcc-gaql --profile local-business 'SELECT
   customer.id,
   customer.descriptive_name,
-	campaign.id,
+  campaign.id,
   campaign.name,
-  campaign.advertising_channel_type,
-  campaign.status,
-  campaign.primary_status
-FROM
-  campaign'
+  campaign.status
+FROM campaign'
 ```
 
-### Configuration File
+## Basic Use Cases
+
+### Query Campaign Performance (Last 30 Days)
+
+Get campaign performance metrics for the last 30 days:
+
+```bash
+# Using a profile
+mcc-gaql --profile mycompany_mcc \
+  "SELECT campaign.id, campaign.name, metrics.impressions, metrics.clicks, metrics.cost_micros
+   FROM campaign
+   WHERE segments.date DURING LAST_30_DAYS
+   ORDER BY metrics.impressions DESC"
+
+# Export to CSV
+mcc-gaql --profile mycompany_mcc \
+  --output campaign_performance_30d.csv \
+  --format csv \
+  "SELECT campaign.id, campaign.name, metrics.impressions, metrics.clicks, metrics.cost_micros
+   FROM campaign
+   WHERE segments.date DURING LAST_30_DAYS"
+```
+
+### List All Child Accounts Under MCC
+
+```bash
+# Using profile
+mcc-gaql --profile mycompany_mcc --list-child-accounts
+
+# Config-less: all params via CLI
+mcc-gaql \
+  --mcc-id "111-222-3333" \
+  --user-email "mcc@company.com" \
+  --list-child-accounts
+```
+
+### Query All Linked Child Accounts
+
+```bash
+mcc-gaql --profile mycompany_mcc \
+  --all-linked-child-accounts \
+  --output all_campaigns.csv \
+  "SELECT customer.id, campaign.name, campaign.status FROM campaign"
+
+# Config-less version
+mcc-gaql \
+  --mcc-id "111-222-3333" \
+  --user-email "mcc@company.com" \
+  --all-linked-child-accounts \
+  --output all_campaigns.csv \
+  "SELECT customer.id, campaign.name, campaign.status FROM campaign"
+```
+
+### Query Single Account Without Config File
+
+Run queries without any configuration file by passing all required parameters:
+
+```bash
+# Query single account
+mcc-gaql \
+  --customer-id "123-456-7890" \
+  --user-email "your.email@gmail.com" \
+  "SELECT campaign.name, campaign.status FROM campaign"
+
+# Query via MCC across specific customer
+mcc-gaql \
+  --mcc-id "111-222-3333" \
+  --customer-id "123-456-7890" \
+  --user-email "mcc@company.com" \
+  "SELECT campaign.name FROM campaign"
+```
+
+## Advanced Use Cases
+
+### Query Asset-based Ad Extensions
+
+```bash
+mcc-gaql --profile mycompany_mcc \
+  "SELECT ad_group_ad.ad.id, ad_group_ad.ad.name, metrics.impressions
+   FROM ad_group_ad
+   WHERE ad_group_ad.ad.type = 'RESPONSIVE_DISPLAY_AD'
+   AND segments.date DURING LAST_30_DAYS"
+```
+
+### Analyze Performance Max Campaign Adoption
+
+```bash
+mcc-gaql --profile mycompany_mcc \
+  --all-linked-child-accounts \
+  --output pmax_adoption.csv \
+  "SELECT customer.id, campaign.id, campaign.name, campaign.advertising_channel_type
+   FROM campaign
+   WHERE campaign.advertising_channel_type = 'PERFORMANCE_MAX'"
+```
+
+### Natural Language Queries
+
+Using natural language (requires LLM integration):
+
+```bash
+mcc-gaql -n "campaign changes from last 14 days with current campaign status and bidding strategy" -o recent_changes.csv
+```
+
+### Query with Stored Queries
+
+```bash
+mcc-gaql -q recent_campaign_changes -o all_recent_changes.csv
+```
+
+### Field Service Queries
+
+Query for all available metric fields:
+
+```bash
+mcc-gaql --profile myprofile \
+  --field-service "select name, category, selectable, filterable, selectable_with
+                   where category IN ('METRIC')
+                   order by name" > metric_fields.txt
+```
+
+### Error Handling and Formatting
+
+```bash
+# Keep processing on errors
+mcc-gaql --profile myprofile \
+  --keep-going \
+  --all-linked-child-accounts \
+  "SELECT campaign.name, campaign.status FROM campaign"
+
+# Format output as JSON or table
+mcc-gaql --profile myprofile --format json "SELECT ..."  # json, csv, or table
+
+# Sort and group results
+mcc-gaql --profile myprofile \
+  --sortby "metrics.impressions" \
+  --groupby "campaign.name" \
+  "SELECT campaign.name, metrics.impressions FROM campaign"
+```
+
+## CLI Reference
+
+### Common Options
+
+| Option | Description |
+|--------|-------------|
+| `--profile <name>` | Use a specific profile from config.toml |
+| `--mcc-id <id>` | MCC account ID |
+| `--customer-id <id>` | Customer account ID |
+| `--user-email <email>` | User email for OAuth2 |
+| `--all-linked-child-accounts` | Query all child accounts under MCC |
+| `--list-child-accounts` | List all child accounts |
+| `--output <file>` | Output file path |
+| `--format <format>` | Output format: json, csv, or table |
+| `--sortby <field>` | Sort results by field |
+| `--groupby <field>` | Group results by field |
+| `--keep-going` | Continue processing on errors |
+| `-q <query_name>` | Use stored query from queries file |
+| `-n <natural_language>` | Natural language query (requires LLM) |
+| `--field-service <query>` | Query Google Ads field service |
+| `--setup` | Run interactive setup wizard |
+| `--show-config` | Show configuration |
+| `--version` | Show version |
+
+## Configuration
+
+### Configuration File Location
 
 Configuration is stored in:
 * `$HOME/Library/Application Support/mcc-gaql/config.toml` (macOS)
-*  `~/.config/mcc-gaql/config.toml` (Linux)
-*  `%APPDATA%/mcc-gaql/config.toml` (Windows)
+* `~/.config/mcc-gaql/config.toml` (Linux)
+* `%APPDATA%/mcc-gaql/config.toml` (Windows)
 
-#### Example config.toml
+### Example config.toml
 
 ```toml
 # Default settings applied to all profiles
@@ -173,19 +258,31 @@ customer_id = '444-555-6666'
 user_email = 'client@example.org'
 ```
 
-#### Developer Token Configuration
+### Profile Inheritance
 
-**Required:** A Google Ads Developer Token is required to use this tool.
+The `[default]` section provides settings that are inherited by all profiles. Individual profiles can override these settings. This is useful for:
 
-The token can be configured via (in priority order):
+- Setting a common `user_email` for all profiles
+- Sharing a `dev_token` across profiles
+- Setting default `queries_filename` for stored queries
 
-1. **Config file**: Add `dev_token = "YOUR_TOKEN"` to your profile
-2. **Runtime environment variable**: `export MCC_GAQL_DEV_TOKEN="YOUR_TOKEN"`
-3. **Compile-time embedding**: `MCC_GAQL_DEV_TOKEN="YOUR_TOKEN" cargo build`
+### Profile Management
 
-Get your developer token at: https://developers.google.com/google-ads/api/docs/get-started/dev-token
+```bash
+# Create a new profile (interactive)
+mcc-gaql --setup
 
-#### Manual Configuration
+# Show all profiles
+mcc-gaql --show-config
+
+# Show specific profile
+mcc-gaql --show-config --profile mycompany_mcc
+
+# Edit config manually
+vim "$HOME/Library/Application Support/mcc-gaql/config.toml"
+```
+
+### Manual Configuration
 
 You can also edit the config file directly:
 
@@ -197,162 +294,23 @@ vim "$HOME/Library/Application Support/mcc-gaql/config.toml"
 mcc-gaql --show-config
 ```
 
-## Example Use Cases
+## Debugging
 
-### Query Campaign Performance (Last 30 Days)
-
-Get campaign performance metrics for the last 30 days:
+Enable debug logging to troubleshoot issues:
 
 ```bash
-# Using a profile
-mcc-gaql --profile mycompany_mcc \
-  "SELECT campaign.id, campaign.name, metrics.impressions, metrics.clicks, metrics.cost_micros
-   FROM campaign
-   WHERE segments.date DURING LAST_30_DAYS
-   ORDER BY metrics.impressions DESC"
-
-# Config-less: all params via CLI
-mcc-gaql \
-  --mcc-id "123-456-7890" \
-  --customer-id "987-654-3210" \
-  --user-email "your.email@gmail.com" \
-  "SELECT campaign.id, campaign.name, metrics.impressions, metrics.clicks, metrics.cost_micros
-   FROM campaign
-   WHERE segments.date DURING LAST_30_DAYS
-   ORDER BY metrics.impressions DESC"
-
-# Export to CSV
-mcc-gaql --profile mycompany_mcc \
-  --output campaign_performance_30d.csv \
-  --format csv \
-  "SELECT campaign.id, campaign.name, metrics.impressions, metrics.clicks, metrics.cost_micros
-   FROM campaign
-   WHERE segments.date DURING LAST_30_DAYS"
-```
-
-### Config-less Usage Examples
-
-Run queries without any configuration file by passing all required parameters:
-
-```bash
-# Query single account
-mcc-gaql \
-  --customer-id "123-456-7890" \
-  --user-email "your.email@gmail.com" \
-  "SELECT campaign.name, campaign.status FROM campaign"
-
-# Query via MCC across specific customer
-mcc-gaql \
-  --mcc-id "111-222-3333" \
-  --customer-id "123-456-7890" \
-  --user-email "mcc@company.com" \
-  "SELECT campaign.name FROM campaign"
-
-# List all child accounts under MCC
-mcc-gaql \
-  --mcc-id "111-222-3333" \
-  --user-email "mcc@company.com" \
-  --list-child-accounts
-
-# Query all linked child accounts
-mcc-gaql \
-  --mcc-id "111-222-3333" \
-  --user-email "mcc@company.com" \
-  --all-linked-child-accounts \
-  --output all_campaigns.csv \
-  "SELECT customer.id, campaign.name, campaign.status FROM campaign"
-```
-
-### Additional Use Cases
-
-Query for Asset-based Ad Extensions traffic:
-```bash
-mcc-gaql --profile mycompany_mcc \
-  "SELECT ad_group_ad.ad.id, ad_group_ad.ad.name, metrics.impressions
-   FROM ad_group_ad
-   WHERE ad_group_ad.ad.type = 'RESPONSIVE_DISPLAY_AD'
-   AND segments.date DURING LAST_30_DAYS"
-```
-
-Look at adoption trend of Performance Max Campaigns:
-```bash
-mcc-gaql --profile mycompany_mcc \
-  --all-linked-child-accounts \
-  --output pmax_adoption.csv \
-  "SELECT customer.id, campaign.id, campaign.name, campaign.advertising_channel_type
-   FROM campaign
-   WHERE campaign.advertising_channel_type = 'PERFORMANCE_MAX'"
-```
-
-### Advanced Examples
-
-Using natural language (requires LLM integration):
-```bash
-mcc-gaql -n "campaign changes from last 14 days with current campaign status and bidding strategy" -o recent_changes.csv
-```
-
-Query with stored queries:
-```bash
-mcc-gaql -q recent_campaign_changes -o all_recent_changes.csv
-```
-
-Enable debug logging:
-```bash
+# Set log level via environment variable
 MCC_GAQL_LOG_LEVEL="info,mcc_gaql=debug" mcc-gaql --profile mycompany_mcc -q my_query
-```
 
-## Profile Management
-
-### Create a New Profile
-
-```bash
-# Interactive setup
-mcc-gaql --setup
-
-# Or edit config.toml manually
-vim "$HOME/Library/Application Support/mcc-gaql/config.toml"
-```
-
-### Review Profile Configuration
-
-```bash
-# Show all profiles
-mcc-gaql --show-config
-
-# Show specific profile
-mcc-gaql --show-config --profile mycompany_mcc
-```
-
-### Use a Profile
-
-```bash
-# Use profile for query
-mcc-gaql --profile mycompany_mcc "SELECT campaign.name FROM campaign"
-
-# Combine profile with additional options
-mcc-gaql --profile mycompany_mcc --output results.csv --format csv "SELECT ..."
-```
-
-## Command Reference
-
-```bash
-# List child accounts
-mcc-gaql --profile myprofile --list-child-accounts
-
-# Query for all available metric fields
-mcc-gaql --profile myprofile --field-service "select name, category, selectable, filterable, selectable_with where category IN ('METRIC') order by name" > metric_fields.txt
-
-# Keep processing on errors
-mcc-gaql --profile myprofile --keep-going --all-linked-child-accounts "SELECT ..."
-
-# Format output
-mcc-gaql --profile myprofile --format json "SELECT ..."  # json, csv, or table
-
-# Sort and group results
-mcc-gaql --profile myprofile --sortby "metrics.impressions" --groupby "campaign.name" "SELECT ..."
+# Available log levels: error, warn, info, debug, trace
+MCC_GAQL_LOG_LEVEL="debug" mcc-gaql --profile myprofile "SELECT ..."
 ```
 
 ## Alternatives
 
 * [gaql-cli](https://github.com/getyourguide/gaql-cli)
 * [Google Ads API Report Fetcher (gaarf)](https://github.com/google/ads-api-report-fetcher)
+
+## Contributing
+
+See [DEVELOPER.md](DEVELOPER.md) for development setup, project structure, and contribution guidelines.
