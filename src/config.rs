@@ -472,10 +472,9 @@ pub fn display_config(profile_name: Option<&str>) -> anyhow::Result<()> {
 
     // Check for common environment variables
     let env_vars = [
-        "MCC_CUSTOMERID",
-        "USER",
-        "TOKEN_CACHE_FILENAME",
-        "CUSTOMERIDS_FILENAME",
+        "EMBED_CLIENT_SECRET",
+        "DEV_TOKEN",
+        "LOG_LEVEL",
         "QUERIES_FILENAME",
     ];
 
@@ -492,23 +491,6 @@ pub fn display_config(profile_name: Option<&str>) -> anyhow::Result<()> {
         println!("  (none set)");
     }
 
-    println!();
-    println!("Common Files:");
-
-    // Check for common files
-    let common_files = [
-        ("clientsecret.json", "OAuth2 credentials"),
-        ("query_cookbook.toml", "Query cookbook"),
-        ("customerids.txt", "Customer IDs"),
-    ];
-
-    for (filename, description) in &common_files {
-        if let Some(path) = config_file_path(filename) {
-            let exists = path.exists();
-            let status = if exists { "Found" } else { "Not found" };
-            println!("  {} ({}): {}", description, status, path.display());
-        }
-    }
 
     Ok(())
 }

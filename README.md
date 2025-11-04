@@ -39,23 +39,40 @@ For easier distribution, you can embed your Google Ads OAuth2 credentials direct
 #### Steps to Embed Credentials:
 
 1. Get OAuth2 credentials from Google Cloud Console (Desktop/Installed application type)
-2. Place `clientsecret.json` in the project root directory
+2. Set the `MCC_GAQL_EMBED_CLIENT_SECRET` environment variable during build
 3. Build the project:
 
 ```bash
-# Place your credentials file
-cp ~/Downloads/clientsecret.json ./clientsecret.json
+# Option 1: Set env var from file
+MCC_GAQL_EMBED_CLIENT_SECRET="$(cat clientsecret.json)" cargo build --release
 
-# Build with embedded credentials
+# Option 2: Export env var in your shell
+export MCC_GAQL_EMBED_CLIENT_SECRET="$(cat clientsecret.json)"
+cargo build --release
+
+# Option 3: Use a .env file (with direnv or similar)
+echo "MCC_GAQL_EMBED_CLIENT_SECRET=$(cat clientsecret.json)" > .env
+direnv allow  # if using direnv
 cargo build --release
 
 # The binary now contains the credentials
 ./target/release/mcc-gaql --version
 ```
 
-The build script will automatically detect `clientsecret.json` and embed it. You'll see a build message:
+The build script will detect the environment variable and embed it. You'll see a build message:
 ```
-warning: mcc-gaql@0.12.2: Found clientsecret.json - embedding OAuth2 credentials into binary
+warning: Embedding OAuth2 credentials from MCC_GAQL_EMBED_CLIENT_SECRET environment variable
+```
+
+#### GitHub Actions / CI/CD:
+
+For automated builds, set the environment variable from a GitHub Secret:
+
+```yaml
+- name: Build release binary
+  env:
+    MCC_GAQL_EMBED_CLIENT_SECRET: ${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}
+  run: cargo build --release
 ```
 
 #### Runtime Behavior:

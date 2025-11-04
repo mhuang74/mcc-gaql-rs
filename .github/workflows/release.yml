@@ -23,6 +23,8 @@ jobs:
         run: brew install protobuf
 
       - name: Build release binary
+        env:
+          MCC_GAQL_EMBED_CLIENT_SECRET: ${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}
         run: cargo build --release --target aarch64-apple-darwin
 
       - name: Extract version from tag

@@ -1,28 +1,19 @@
-use std::fs;
-use std::path::Path;
+use std::env;
 
 fn main() {
-    // Check if clientsecret.json exists in the project root
-    let client_secret_path = Path::new("clientsecret.json");
+    // Tell cargo to rerun if this environment variable changes
+    println!("cargo:rerun-if-env-changed=MCC_GAQL_EMBED_CLIENT_SECRET");
 
-    if client_secret_path.exists() {
-        println!("cargo:warning=Found clientsecret.json - embedding OAuth2 credentials into binary");
+    // Check if MCC_GAQL_EMBED_CLIENT_SECRET environment variable is set
+    if let Ok(client_secret_json) = env::var("MCC_GAQL_EMBED_CLIENT_SECRET") {
+        println!("cargo:warning=Embedding OAuth2 credentials from MCC_GAQL_EMBED_CLIENT_SECRET environment variable");
 
-        // Read the file content
-        match fs::read_to_string(client_secret_path) {
-            Ok(content) => {
-                // Set environment variable that will be picked up by option_env! in the code
-                println!("cargo:rustc-env=MCC_GAQL_EMBED_CLIENT_SECRET={}", content);
-                println!("cargo:rerun-if-changed=clientsecret.json");
-            }
-            Err(e) => {
-                println!("cargo:warning=Failed to read clientsecret.json: {}", e);
-                println!("cargo:warning=Binary will require clientsecret.json in config directory at runtime");
-            }
-        }
+        // Set environment variable that will be picked up by option_env! in the code
+        println!("cargo:rustc-env=MCC_GAQL_EMBED_CLIENT_SECRET={}", client_secret_json);
     } else {
-        println!("cargo:warning=clientsecret.json not found in project root");
+        println!("cargo:warning=MCC_GAQL_EMBED_CLIENT_SECRET environment variable not set");
         println!("cargo:warning=Binary will require clientsecret.json in config directory at runtime");
-        println!("cargo:warning=To embed credentials: place clientsecret.json in project root before building");
+        println!("cargo:warning=To embed credentials: set MCC_GAQL_EMBED_CLIENT_SECRET during build");
+        println!("cargo:warning=Example: MCC_GAQL_EMBED_CLIENT_SECRET=\"$(cat clientsecret.json)\" cargo build --release");
     }
 }

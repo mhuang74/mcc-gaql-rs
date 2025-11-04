@@ -64,7 +64,6 @@ const ENDPOINT: &str = "https://googleads.googleapis.com:443";
 const EMBEDDED_DEV_TOKEN: Option<&str> = option_env!("MCC_GAQL_DEV_TOKEN");
 
 const FILENAME_CLIENT_SECRET: &str = "clientsecret.json";
-// const FILENAME_TOKEN_CACHE: &str = "tokencache.json";
 static GOOGLE_ADS_API_SCOPE: &str = "https://www.googleapis.com/auth/adwords";
 
 // Embed the client secret at compile time if the file exists
