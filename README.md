@@ -30,50 +30,65 @@ cargo build --release
 ./target/release/mcc-gaql --version
 ```
 
-### Embedding OAuth2 Credentials (Optional)
+### Embedding Credentials for Standalone Binaries (Optional)
 
-For easier distribution, you can embed your Google Ads OAuth2 credentials directly into the binary at compile time. This eliminates the need to place `clientsecret.json` in the config directory on every machine.
+For easier distribution, you can embed both your OAuth2 credentials and Developer Token directly into the binary at compile time. This creates a truly standalone binary that end users can run without any configuration.
 
 **Security Note:** This is safe for OAuth2 "Installed/Desktop" application credentials. The `client_secret` in these credentials is not highly confidential - Google's documentation explicitly states it cannot be kept secret in native/desktop apps. The actual security comes from the OAuth2 authorization flow and user consent. User-specific tokens (stored in `tokencache_*.json`) remain protected and separate.
+
+#### What Gets Embedded:
+
+1. **OAuth2 Client Secret** - Via `MCC_GAQL_EMBED_CLIENT_SECRET`
+2. **Developer Token** - Via `MCC_GAQL_DEV_TOKEN`
 
 #### Steps to Embed Credentials:
 
 1. Get OAuth2 credentials from Google Cloud Console (Desktop/Installed application type)
-2. Set the `MCC_GAQL_EMBED_CLIENT_SECRET` environment variable during build
-3. Build the project:
+2. Get your Developer Token from Google Ads API Center
+3. Set environment variables during build:
 
 ```bash
-# Option 1: Set env var from file
-MCC_GAQL_EMBED_CLIENT_SECRET="$(cat clientsecret.json)" cargo build --release
+# Option 1: Set both env vars from files
+MCC_GAQL_EMBED_CLIENT_SECRET="$(cat clientsecret.json)" \
+MCC_GAQL_DEV_TOKEN="your-dev-token-here" \
+cargo build --release
 
-# Option 2: Export env var in your shell
+# Option 2: Export env vars in your shell
 export MCC_GAQL_EMBED_CLIENT_SECRET="$(cat clientsecret.json)"
+export MCC_GAQL_DEV_TOKEN="your-dev-token-here"
 cargo build --release
 
 # Option 3: Use a .env file (with direnv or similar)
 echo "MCC_GAQL_EMBED_CLIENT_SECRET=$(cat clientsecret.json)" > .env
+echo "MCC_GAQL_DEV_TOKEN=your-dev-token-here" >> .env
 direnv allow  # if using direnv
 cargo build --release
 
-# The binary now contains the credentials
+# The binary now contains both credentials
 ./target/release/mcc-gaql --version
 ```
 
-The build script will detect the environment variable and embed it. You'll see a build message:
+The build script will detect the environment variables and embed them. You'll see build messages:
 ```
 warning: Embedding OAuth2 credentials from MCC_GAQL_EMBED_CLIENT_SECRET environment variable
+warning: Embedding Google Ads Developer Token from MCC_GAQL_DEV_TOKEN environment variable
 ```
 
 #### GitHub Actions / CI/CD:
 
-For automated builds, set the environment variable from a GitHub Secret:
+For automated builds, set both environment variables from GitHub Secrets:
 
 ```yaml
 - name: Build release binary
   env:
     MCC_GAQL_EMBED_CLIENT_SECRET: ${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}
+    MCC_GAQL_DEV_TOKEN: ${{ secrets.GOOGLE_ADS_DEV_TOKEN }}
   run: cargo build --release
 ```
+
+**Repository Setup:** Add these secrets in your GitHub repository settings:
+- `GOOGLE_ADS_CLIENT_SECRET` - JSON content of your clientsecret.json
+- `GOOGLE_ADS_DEV_TOKEN` - Your Google Ads Developer Token
 
 #### Runtime Behavior:
 
