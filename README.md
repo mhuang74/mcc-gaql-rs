@@ -368,6 +368,17 @@ vim "$HOME/Library/Application Support/mcc-gaql/config.toml"
 mcc-gaql --show-config
 ```
 
+### Environment Variable Override
+
+All values in the config file may also be overriden via environment variables with prefix `MCC_GAQL_`.
+
+For example:
+```bash
+export MCC_GAQL_QUERIES_FILENAME="my_queries.toml"
+export MCC_GAQL_FORMAT="csv"
+export MCC_GAQL_KEEP_GOING="true"
+```
+
 ## Stored Queries File
 
 Example TOML file with formatting guide.
