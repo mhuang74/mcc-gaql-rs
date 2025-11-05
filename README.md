@@ -120,51 +120,122 @@ Run queries without any configuration file by passing all required parameters:
 mcc-gaql \
   --customer-id "123-456-7890" \
   --user-email "your.email@gmail.com" \
-  "SELECT campaign.name, campaign.status FROM campaign"
+  "SELECT customer.id, campaign.name, campaign.status FROM campaign"
 
 # Query via MCC across specific customer
 mcc-gaql \
   --mcc-id "111-222-3333" \
   --customer-id "123-456-7890" \
   --user-email "mcc@company.com" \
-  "SELECT campaign.name FROM campaign"
+  "SELECT customer.id, campaign.name, campaign.status FROM campaign"
 ```
 
 ## Advanced Use Cases
 
-### Query Asset-based Ad Extensions
+### Query Asset performance of Responsive Search Ads
 
 ```bash
 mcc-gaql --profile mycompany_mcc \
-  "SELECT ad_group_ad.ad.id, ad_group_ad.ad.name, metrics.impressions
-   FROM ad_group_ad
-   WHERE ad_group_ad.ad.type = 'RESPONSIVE_DISPLAY_AD'
-   AND segments.date DURING LAST_30_DAYS"
+  "
+  SELECT 
+    customer.id, 
+    customer.descriptive_name, 
+    campaign.id, 
+    campaign.name, 
+    campaign.advertising_channel_type, 
+    ad_group.id, 
+    ad_group.name, 
+    ad_group.type,
+    ad_group_ad.ad.id,
+    ad_group_ad.ad.responsive_search_ad.headlines, 
+    ad_group_ad.ad.responsive_search_ad.descriptions, 
+    ad_group_ad.ad.responsive_search_ad.path1, 
+    ad_group_ad.ad.responsive_search_ad.path2, 
+    metrics.impressions, 
+    metrics.clicks, 
+    metrics.ctr, 
+    metrics.cost_micros, 
+    metrics.average_cpc 
+  FROM ad_group_ad 
+  WHERE 
+    ad_group_ad.ad.type IN ('RESPONSIVE_SEARCH_AD') 
+    AND segments.date DURING LAST_30_DAYS 
+  ORDER BY 
+    campaign.name, 
+    ad_group.name, 
+    metrics.ctr DESC 
+  "
 ```
 
-### Analyze Performance Max Campaign Adoption
+### Analyze Performance of PMax Campaigns
 
 ```bash
 mcc-gaql --profile mycompany_mcc \
   --all-linked-child-accounts \
-  --output pmax_adoption.csv \
-  "SELECT customer.id, campaign.id, campaign.name, campaign.advertising_channel_type
-   FROM campaign
-   WHERE campaign.advertising_channel_type = 'PERFORMANCE_MAX'"
+  --output pmax_performance.csv \
+  "
+  SELECT 
+    customer.id, 
+    customer.descriptive_name, 
+    campaign.id, 
+    campaign.advertising_channel_type, 
+    campaign.name, 
+    metrics.impressions, 
+    metrics.clicks, 
+    metrics.cost_micros,
+    metrics.average_cpc,
+    metrics.conversions,
+    metrics.cost_per_conversion,
+    customer.currency_code 
+  FROM campaign 
+  WHERE 
+    segments.date DURING LAST_30_DAYS 
+    AND campaign.advertising_channel_type IN ('PERFORMANCE_MAX') 
+    AND metrics.clicks > 100
+  ORDER BY 
+    metrics.clicks DESC 
+  "
 ```
 
-### Natural Language Queries
-
-Using natural language (requires LLM integration):
-
+### Compare CPA between Campaign Types across Accounts
 ```bash
-mcc-gaql -n "campaign changes from last 14 days with current campaign status and bidding strategy" -o recent_changes.csv
+mcc-gaql --profile mycompany_mcc \
+  --all-linked-child-accounts \
+  --sortby "metrics.cost_per_conversion" \
+  --groupby "campaign.advertising_channel_type" \
+  --format csv \
+  --output compare_cpa_between_campaign_types.csv \
+  "
+  SELECT 
+    customer.id, 
+    customer.descriptive_name, 
+    campaign.id, 
+    campaign.advertising_channel_type, 
+    campaign.name, 
+    metrics.impressions, 
+    metrics.clicks, 
+    metrics.cost_micros,
+    metrics.average_cpc,
+    metrics.conversions,
+    metrics.cost_per_conversion,
+    customer.currency_code 
+  FROM campaign 
+  WHERE 
+    segments.date DURING LAST_30_DAYS 
+    AND metrics.clicks > 100
+  ORDER BY 
+    campaign.advertising_channel_type DESC 
+  "
 ```
 
-### Query with Stored Queries
+### Use Stored Queries
+
+Queries should be stored in the config directory in a TOML file and referenced in config file via `queries_filename`, or set via environment variable `MCC_GAQL_QUERIES_FILENAME`. See [Configuration](#configuration) for examples.
+
+See [Stored Queries File](#stored-queries-file) section for an example TOML file with properly formatted query entries.
 
 ```bash
-mcc-gaql -q recent_campaign_changes -o all_recent_changes.csv
+mcc-gaql -p mycompany_mcc -q keywords_with_top_traffic_last_week --format csv -o top_keywords.csv
 ```
 
 ### Field Service Queries
@@ -173,9 +244,11 @@ Query for all available metric fields:
 
 ```bash
 mcc-gaql --profile myprofile \
-  --field-service "select name, category, selectable, filterable, selectable_with
+  --field-service \
+  "select name, category, selectable, filterable, selectable_with
                    where category IN ('METRIC')
-                   order by name" > metric_fields.txt
+                   order by name
+  " > metric_fields.txt
 ```
 
 ### Error Handling and Formatting
@@ -190,11 +263,12 @@ mcc-gaql --profile myprofile \
 # Format output as JSON or table
 mcc-gaql --profile myprofile --format json "SELECT ..."  # json, csv, or table
 
-# Sort and group results
-mcc-gaql --profile myprofile \
-  --sortby "metrics.impressions" \
-  --groupby "campaign.name" \
-  "SELECT campaign.name, metrics.impressions FROM campaign"
+### Natural Language Queries (Experimental)
+
+Using natural language (requires LLM integration):
+
+```bash
+mcc-gaql -n "campaign changes from last 14 days with current campaign status and bidding strategy" -o recent_changes.csv
 ```
 
 ## CLI Reference
@@ -293,6 +367,81 @@ vim "$HOME/Library/Application Support/mcc-gaql/config.toml"
 # Or find config location
 mcc-gaql --show-config
 ```
+
+## Stored Queries File
+
+Example TOML file with formatting guide.
+```toml
+###
+#
+# GAQL Query Cookbook
+#
+# Michael S. Huang (mhuang74@gmail.com)
+#
+#
+# Naming Convention = <grain>_with_<description>, e.g. accounts_with_traffic_last_week
+#
+# FORMAT
+#
+# [query_name_using_snake_case]
+# description = """
+# Provide a description of query
+# """
+# query = """
+# actual GAQL query
+# """
+#
+
+[accounts_with_traffic_last_week]
+description = """
+Accounts with Traffic Last Week
+"""
+query = """
+SELECT 
+	customer.id, 
+	customer.descriptive_name, 
+	metrics.impressions, 
+	metrics.clicks, 
+	metrics.cost_micros,
+	customer.currency_code 
+FROM customer 
+WHERE 
+	segments.date during LAST_7_DAYS
+	AND metrics.impressions > 1
+"""
+
+[keywords_with_top_traffic_last_week]
+description = """
+Top Keywords
+"""
+query = """
+SELECT
+	customer.id,
+	customer.descriptive_name,
+	campaign.id,
+	campaign.name,
+	campaign.advertising_channel_type,
+	ad_group.id,
+	ad_group.name,
+	ad_group.type,
+	ad_group_criterion.criterion_id,
+	ad_group_criterion.keyword.text,
+	metrics.impressions,
+	metrics.clicks,
+	metrics.cost_micros,
+  metrics.conversions,
+  metrics.cost_per_conversion,
+  metrics.conversions_value,
+	customer.currency_code 
+FROM keyword_view
+WHERE
+	segments.date DURING LAST_7_DAYS
+	and metrics.clicks > 100
+ORDER BY
+	metrics.clicks DESC
+"""
+```
+
 
 ## Debugging
 
