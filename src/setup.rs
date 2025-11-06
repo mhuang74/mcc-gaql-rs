@@ -149,6 +149,8 @@ pub fn run_wizard() -> Result<()> {
         customerids_filename,
         queries_filename,
         dev_token: None,  // Use fallback or environment variable
+        field_metadata_cache: None,  // Use default cache location
+        field_metadata_ttl_days: None,  // Use default TTL (7 days)
     };
 
     // Save configuration
@@ -320,6 +322,8 @@ token_cache_filename = "tokencache_myprofile.json"
             customerids_filename: Some("customerids.txt".to_string()),
             queries_filename: Some("queries.toml".to_string()),
             dev_token: None,
+            field_metadata_cache: None,
+            field_metadata_ttl_days: None,
         };
 
         // We can't directly test save_config without mocking config_file_path,

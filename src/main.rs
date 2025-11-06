@@ -21,6 +21,7 @@ use tonic::{codegen::InterceptedService, transport::Channel};
 
 use mcc_gaql::args::{self, OutputFormat};
 use mcc_gaql::config::{self, ResolvedConfig};
+use mcc_gaql::field_metadata::FieldMetadataCache;
 use mcc_gaql::googleads;
 use mcc_gaql::setup;
 use mcc_gaql::prompt2gaql;
@@ -48,6 +49,86 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Validate argument combinations
     args.validate()?;
+
+    // Handle field metadata operations early (before loading full config)
+    // These operations need minimal config
+    if args.export_field_metadata || args.show_fields.is_some() || args.refresh_field_cache {
+        // Load minimal config for field metadata operations
+        let config = if let Some(profile) = &args.profile {
+            Some(config::load(profile).context(format!("Loading config for profile: {profile}"))?)
+        } else {
+            None
+        };
+        let resolved_config = ResolvedConfig::from_args_and_config(&args, config)?;
+
+        // Obtain API access for field metadata operations
+        let api_context = if args.refresh_field_cache || args.export_field_metadata || args.show_fields.is_some() {
+            resolved_config.validate_for_operation(&args)?;
+            Some(googleads::get_api_access(
+                &resolved_config.mcc_customer_id,
+                &resolved_config.token_cache_filename,
+                resolved_config.user_email.as_deref(),
+                resolved_config.dev_token.as_deref(),
+            ).await.context("Authentication required for field metadata operations")?)
+        } else {
+            None
+        };
+
+        let cache_path = std::path::PathBuf::from(&resolved_config.field_metadata_cache);
+
+        if args.refresh_field_cache {
+            println!("Refreshing field metadata cache from Google Ads API...");
+            let cache = FieldMetadataCache::fetch_from_api(api_context.as_ref().unwrap()).await?;
+            cache.save_to_disk(&cache_path).await?;
+            println!("Field metadata cache refreshed successfully at: {}", cache_path.display());
+            println!("Fetched {} fields from {} resources", cache.fields.len(), cache.get_resources().len());
+            return Ok(());
+        }
+
+        if args.export_field_metadata {
+            println!("Loading field metadata cache...");
+            let cache = FieldMetadataCache::load_or_fetch(
+                api_context.as_ref(),
+                &cache_path,
+                resolved_config.field_metadata_ttl_days,
+            ).await?;
+            println!("{}", cache.export_summary());
+            return Ok(());
+        }
+
+        if let Some(resource) = args.show_fields {
+            println!("Loading field metadata cache...");
+            let cache = FieldMetadataCache::load_or_fetch(
+                api_context.as_ref(),
+                &cache_path,
+                resolved_config.field_metadata_ttl_days,
+            ).await?;
+
+            let fields = cache.get_resource_fields(&resource);
+            if fields.is_empty() {
+                println!("No fields found for resource: {}", resource);
+                println!("\nAvailable resources:");
+                for r in cache.get_resources() {
+                    println!("  - {}", r);
+                }
+            } else {
+                println!("Fields for resource '{}':\n", resource);
+                println!("{:<50} {:<15} {:<10} {:<10} {:<10}", "Field Name", "Data Type", "Selectable", "Filterable", "Sortable");
+                println!("{}", "-".repeat(95));
+                for field in &fields {
+                    println!("{:<50} {:<15} {:<10} {:<10} {:<10}",
+                        field.name,
+                        field.data_type,
+                        if field.selectable { "Yes" } else { "No" },
+                        if field.filterable { "Yes" } else { "No" },
+                        if field.sortable { "Yes" } else { "No" },
+                    );
+                }
+                println!("\nTotal: {} fields", fields.len());
+            }
+            return Ok(());
+        }
+    }
 
     // Only load config if profile is explicitly specified
     let config = if let Some(profile) = &args.profile {
@@ -122,10 +203,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
 
+        // Load field metadata cache for enhanced query generation
+        let cache_path = std::path::PathBuf::from(&resolved_config.field_metadata_cache);
+        let field_cache = match FieldMetadataCache::load_or_fetch(
+            None, // No API context yet, use cached data
+            &cache_path,
+            resolved_config.field_metadata_ttl_days,
+        ).await {
+            Ok(cache) => {
+                log::info!("Loaded field metadata cache with {} fields", cache.fields.len());
+                Some(cache)
+            }
+            Err(e) => {
+                log::warn!("Could not load field metadata cache: {}. Proceeding without schema awareness.", e);
+                log::warn!("Run 'mcc-gaql --refresh-field-cache' to create the cache.");
+                None
+            }
+        };
+
         let prompt = args.gaql_query.as_ref().unwrap();
         log::debug!("Construct GAQL from prompt: {:?}", prompt);
 
-        let query = prompt2gaql::convert_to_gaql(&openai_api_key, example_queries, prompt).await?;
+        // Use enhanced conversion with field metadata if available
+        let query = if field_cache.is_some() {
+            log::info!("Using enhanced natural query with field metadata");
+            prompt2gaql::convert_to_gaql_enhanced(&openai_api_key, example_queries, field_cache, prompt).await?
+        } else {
+            log::info!("Using basic natural query without field metadata");
+            prompt2gaql::convert_to_gaql(&openai_api_key, example_queries, prompt).await?
+        };
 
         log::info!("Generated GAQL Query: {:?}", query);
 

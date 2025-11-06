@@ -64,6 +64,12 @@ pub struct MyConfig {
     /// If not specified, will check env var MCC_GAQL_DEV_TOKEN or use fallback
     /// Get your token at: https://developers.google.com/google-ads/api/docs/get-started/dev-token
     pub dev_token: Option<String>,
+    /// Optional field metadata cache file path
+    /// Default: ~/.cache/mcc-gaql/field_metadata.json
+    pub field_metadata_cache: Option<String>,
+    /// Optional field metadata cache TTL in days
+    /// Default: 7 days
+    pub field_metadata_ttl_days: Option<i64>,
 }
 
 /// Resolved runtime configuration combining CLI args and config file
@@ -78,6 +84,8 @@ pub struct ResolvedConfig {
     pub queries_filename: Option<String>,
     pub customerids_filename: Option<String>,
     pub dev_token: Option<String>,
+    pub field_metadata_cache: String,
+    pub field_metadata_ttl_days: i64,
 }
 
 impl ResolvedConfig {
@@ -197,6 +205,22 @@ impl ResolvedConfig {
         let customerids_filename = config.as_ref().and_then(|c| c.customerids_filename.clone());
         let dev_token = config.as_ref().and_then(|c| c.dev_token.clone());
 
+        // Field metadata cache settings
+        let field_metadata_cache = config
+            .as_ref()
+            .and_then(|c| c.field_metadata_cache.clone())
+            .or_else(|| {
+                crate::field_metadata::get_default_cache_path()
+                    .ok()
+                    .map(|p| p.display().to_string())
+            })
+            .unwrap_or_else(|| "~/.cache/mcc-gaql/field_metadata.json".to_string());
+
+        let field_metadata_ttl_days = config
+            .as_ref()
+            .and_then(|c| c.field_metadata_ttl_days)
+            .unwrap_or(7);
+
         Ok(Self {
             mcc_customer_id,
             user_email,
@@ -207,6 +231,8 @@ impl ResolvedConfig {
             queries_filename,
             customerids_filename,
             dev_token,
+            field_metadata_cache,
+            field_metadata_ttl_days,
         })
     }
 
@@ -613,6 +639,8 @@ mod tests {
             customerids_filename: Some("customerids.txt".to_string()),
             queries_filename: Some("query_cookbook.toml".to_string()),
             dev_token: Some("test-dev-token".to_string()),
+            field_metadata_cache: None,
+            field_metadata_ttl_days: None,
         };
 
         // Serialize to TOML string
@@ -644,6 +672,8 @@ mod tests {
             customerids_filename: None,
             queries_filename: None,
             dev_token: None,
+            field_metadata_cache: None,
+            field_metadata_ttl_days: None,
         };
 
         // Serialize to TOML string
@@ -683,6 +713,8 @@ mod tests {
             queries_filename: Some("query_cookbook.toml".to_string()),
             customerids_filename: Some("customerids.txt".to_string()),
             dev_token: Some("test-dev-token".to_string()),
+            field_metadata_cache: "~/.cache/mcc-gaql/field_metadata.json".to_string(),
+            field_metadata_ttl_days: 7,
         };
 
         // Serialize to TOML string
@@ -770,6 +802,9 @@ mod tests {
             sortby: vec![],
             setup: false,
             show_config: false,
+            refresh_field_cache: false,
+            show_fields: None,
+            export_field_metadata: false,
         };
 
         // Create resolved config with customer_id from config file
@@ -783,6 +818,8 @@ mod tests {
             queries_filename: None,
             customerids_filename: None,
             dev_token: None,
+            field_metadata_cache: "~/.cache/mcc-gaql/field_metadata.json".to_string(),
+            field_metadata_ttl_days: 7,
         };
 
         // Validation should succeed because resolved config has customer_id

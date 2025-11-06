@@ -15,6 +15,8 @@ fn test_mcc_priority_cli_overrides_config() {
         customerids_filename: None,
         queries_filename: None,
         dev_token: None,
+        field_metadata_cache: None,
+        field_metadata_ttl_days: None,
     });
 
     let resolved = ResolvedConfig::from_args_and_config(&args, config).unwrap();
@@ -53,6 +55,8 @@ fn test_config_customer_id_fallback_to_mcc() {
         customerids_filename: None,
         queries_filename: None,
         dev_token: None,
+        field_metadata_cache: None,
+        field_metadata_ttl_days: None,
     });
 
     let resolved = ResolvedConfig::from_args_and_config(&args, config).unwrap();
@@ -112,6 +116,8 @@ fn test_validate_requires_user_or_token_cache() {
         queries_filename: None,
         customerids_filename: None,
         dev_token: None,
+        field_metadata_cache: "~/.cache/mcc-gaql/field_metadata.json".to_string(),
+        field_metadata_ttl_days: 7,
     };
 
     let result = resolved.validate_for_operation(&args);
@@ -161,6 +167,8 @@ fn test_validate_succeeds_with_existing_token_cache() {
         queries_filename: None,
         customerids_filename: None,
         dev_token: None,
+        field_metadata_cache: "~/.cache/mcc-gaql/field_metadata.json".to_string(),
+        field_metadata_ttl_days: 7,
     };
 
     let result = resolved.validate_for_operation(&args);
@@ -293,6 +301,8 @@ fn test_invalid_customer_id_from_config() {
         customerids_filename: None,
         queries_filename: None,
         dev_token: None,
+        field_metadata_cache: None,
+        field_metadata_ttl_days: None,
     });
 
     let result = ResolvedConfig::from_args_and_config(&args, config);
@@ -318,6 +328,8 @@ fn test_invalid_mcc_id_from_config() {
         customerids_filename: None,
         queries_filename: None,
         dev_token: None,
+        field_metadata_cache: None,
+        field_metadata_ttl_days: None,
     });
 
     let result = ResolvedConfig::from_args_and_config(&args, config);
@@ -343,6 +355,8 @@ fn test_valid_mcc_id_from_config_with_hyphens() {
         customerids_filename: None,
         queries_filename: None,
         dev_token: None,
+        field_metadata_cache: None,
+        field_metadata_ttl_days: None,
     });
 
     let result = ResolvedConfig::from_args_and_config(&args, config);
@@ -385,6 +399,8 @@ fn test_explicit_token_cache_without_user_succeeds() {
         customerids_filename: None,
         queries_filename: None,
         dev_token: None,
+        field_metadata_cache: None,
+        field_metadata_ttl_days: None,
     });
 
     let result = ResolvedConfig::from_args_and_config(&args, config);
