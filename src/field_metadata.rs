@@ -53,15 +53,18 @@ impl FieldMetadata {
 
     /// Get the resource name for this field (e.g., "campaign" from "campaign.name")
     pub fn get_resource(&self) -> Option<String> {
-        if self.resource_name.is_some() {
-            return self.resource_name.clone();
-        }
+        let parsed_resource = 
+            if let Some(_idx) = self.name.find('.') {
+                self.name
+                .split('.').next() // Get the first substring delimited by '.'
+                .map(|s| s.to_string())
+            } else {
+                None
+            };
 
-        if let Some(idx) = self.name.find('.') {
-            Some(self.name[..idx].to_string())
-        } else {
-            None
-        }
+        log::debug!("Field:{:?} -> Resource: {}", self.name, parsed_resource.as_deref().unwrap_or("n/a"));
+
+        parsed_resource
     }
 }
 
@@ -137,8 +140,7 @@ impl FieldMetadataCache {
         );
 
         // Query all fields
-        let query = "SELECT name, category, data_type, selectable, filterable, sortable, selectable_with, metrics_compatible, resource_name FROM google_ads_field";
-
+        let query = "select name, category, data_type, selectable, filterable, sortable, selectable_with order by name";
         let response = client
             .search_google_ads_fields(SearchGoogleAdsFieldsRequest {
                 query: query.to_owned(),
@@ -207,8 +209,8 @@ impl FieldMetadataCache {
 
             fields.insert(row.name, field_meta);
         }
-
-        log::info!("Fetched {} fields from {} resources", fields.len(), resources.len());
+        
+        log::info!("Fetched {} fields from {} resources", fields.len(), resources.keys().len());
 
         Ok(Self {
             last_updated: Utc::now(),
@@ -540,7 +542,7 @@ mod tests {
     #[test]
     fn test_field_metadata_resource_extraction() {
         let field = FieldMetadata {
-            name: "campaign.name".to_string(),
+            name: "ad.app_ad.headlines".to_string(),
             category: "ATTRIBUTE".to_string(),
             data_type: "STRING".to_string(),
             selectable: true,
@@ -551,7 +553,7 @@ mod tests {
             resource_name: None,
         };
 
-        assert_eq!(field.get_resource(), Some("campaign".to_string()));
+        assert_eq!(field.get_resource(), Some("ad".to_string()));
         assert!(field.is_attribute());
         assert!(!field.is_metric());
     }
