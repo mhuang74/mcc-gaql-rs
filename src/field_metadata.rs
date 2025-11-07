@@ -61,7 +61,7 @@ impl FieldMetadata {
                 None
             };
 
-        log::debug!("Field:{:?} -> Resource: {}", self.name, parsed_resource.as_deref().unwrap_or("n/a"));
+        // log::debug!("Field:{:?} -> Resource: {}", self.name, parsed_resource.as_deref().unwrap_or("n/a"));
 
         parsed_resource
     }
