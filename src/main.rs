@@ -60,6 +60,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             None
         };
         let resolved_config = ResolvedConfig::from_args_and_config(&args, config)?;
+        log::debug!("Handle Field Metadata command. Resolved configuration: {resolved_config:?}");
 
         // Obtain API access for field metadata operations
         let api_context = if args.refresh_field_cache || args.export_field_metadata || args.show_fields.is_some() {
