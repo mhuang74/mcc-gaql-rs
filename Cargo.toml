@@ -34,7 +34,7 @@ toml = "0.5"
 tonic = { version = "0.14", features = ["transport", "tls-ring", "tls-native-roots"] }
 serde_json = "1.0"
 yup-oauth2 = "6.7"
-rig-core = "0.7.0"
+rig-core = "0.23.1"
 # rig-lancedb = "0.2.3"
 # lancedb = "0.15.0"
 

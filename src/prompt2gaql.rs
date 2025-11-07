@@ -2,9 +2,10 @@ use std::vec;
 
 use rig::{
     agent::Agent,
+    client::{CompletionClient, EmbeddingsClient},
     completion::{Completion, Prompt},
     embeddings::{EmbedError, EmbeddingsBuilder, TextEmbedder, embed::Embed},
-    providers::openai::{Client, CompletionModel, GPT_4O_MINI, TEXT_EMBEDDING_ADA_002},
+    providers::openai::{responses_api::ResponsesCompletionModel, Client, GPT_4O_MINI, TEXT_EMBEDDING_ADA_002},
     vector_store::in_memory_store::InMemoryVectorStore,
 };
 
@@ -20,7 +21,7 @@ impl Embed for QueryEntry {
 }
 
 struct RAGAgent {
-    agent: Agent<CompletionModel>,
+    agent: Agent<ResponsesCompletionModel>,
 }
 
 impl RAGAgent {
@@ -45,7 +46,7 @@ impl RAGAgent {
 
         let agent = client.agent(GPT_4O_MINI)
             .preamble("
-                You are a Google Ads GAQL query assistant here to assist the user to translate natural language query requests into valid GAQL. 
+                You are a Google Ads GAQL query assistant here to assist the user to translate natural language query requests into valid GAQL.
                 Respond with GAQL query as plain text, without any formatting or code blocks.
                 You will find example GAQL that could be useful in the attachments below.
             ")
@@ -60,9 +61,9 @@ impl RAGAgent {
         // HACK: dump full LLM prompt via CompletionRequest
         let completion_request = self.agent.completion(prompt, vec![]).await?.build();
         log::debug!(
-            "LLM Preamble: {:?}, Prompt: {:?}",
+            "LLM Request: preamble={:?}, chat_history={:?}",
             completion_request.preamble,
-            completion_request.prompt_with_context()
+            completion_request.chat_history
         );
 
         // Prompt the agent
@@ -84,7 +85,7 @@ pub async fn convert_to_gaql(
 
 /// Enhanced RAG Agent with field metadata awareness
 struct EnhancedRAGAgent {
-    agent: Agent<CompletionModel>,
+    agent: Agent<ResponsesCompletionModel>,
     field_cache: Option<FieldMetadataCache>,
 }
 
@@ -143,7 +144,7 @@ impl EnhancedRAGAgent {
                     ));
                 }
             }
-            preamble.push_str("\n");
+            preamble.push('\n');
 
             preamble.push_str("COMMON SEGMENTS:\n");
             let common_segments = ["date", "week", "month", "quarter", "year", "device", "ad_network_type"];
@@ -153,7 +154,7 @@ impl EnhancedRAGAgent {
                     preamble.push_str(&format!("- {}: {}\n", field.name, field.data_type));
                 }
             }
-            preamble.push_str("\n");
+            preamble.push('\n');
         }
 
         preamble.push_str("RULES:\n");
@@ -226,7 +227,7 @@ impl EnhancedRAGAgent {
                     }
                 }
             }
-            context.push_str("\n");
+            context.push('\n');
 
             // Check for temporal keywords
             let query_lower = user_query.to_lowercase();
@@ -255,9 +256,9 @@ impl EnhancedRAGAgent {
         // HACK: dump full LLM prompt via CompletionRequest
         let completion_request = self.agent.completion(&enhanced_prompt, vec![]).await?.build();
         log::debug!(
-            "LLM Preamble: {:?}, Prompt: {:?}",
+            "LLM Request: preamble={:?}, chat_history={:?}",
             completion_request.preamble,
-            completion_request.prompt_with_context()
+            completion_request.chat_history
         );
 
         // Prompt the agent
