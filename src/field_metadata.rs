@@ -25,7 +25,6 @@ pub struct FieldMetadata {
     pub selectable: bool,
     pub filterable: bool,
     pub sortable: bool,
-    pub selectable_with: Vec<String>,
     pub metrics_compatible: bool,
     pub resource_name: Option<String>,
 }
@@ -140,7 +139,7 @@ impl FieldMetadataCache {
         );
 
         // Query all fields
-        let query = "select name, category, data_type, selectable, filterable, sortable, selectable_with order by name";
+        let query = "select name, category, data_type, selectable, filterable, sortable order by name";
         let response = client
             .search_google_ads_fields(SearchGoogleAdsFieldsRequest {
                 query: query.to_owned(),
@@ -190,7 +189,6 @@ impl FieldMetadataCache {
                 selectable: row.selectable,
                 filterable: row.filterable,
                 sortable: row.sortable,
-                selectable_with: row.selectable_with.clone(),
                 metrics_compatible,
                 resource_name: if row.resource_name.is_empty() {
                     None
@@ -548,7 +546,6 @@ mod tests {
             selectable: true,
             filterable: true,
             sortable: true,
-            selectable_with: vec![],
             metrics_compatible: true,
             resource_name: None,
         };
@@ -567,7 +564,6 @@ mod tests {
             selectable: true,
             filterable: false,
             sortable: true,
-            selectable_with: vec![],
             metrics_compatible: false,
             resource_name: None,
         };
@@ -591,7 +587,6 @@ mod tests {
                 selectable: true,
                 filterable: true,
                 sortable: true,
-                selectable_with: vec![],
                 metrics_compatible: true,
                 resource_name: None,
             },
@@ -606,7 +601,6 @@ mod tests {
                 selectable: true,
                 filterable: false,
                 sortable: true,
-                selectable_with: vec![],
                 metrics_compatible: false,
                 resource_name: None,
             },
