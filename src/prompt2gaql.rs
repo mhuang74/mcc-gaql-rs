@@ -48,7 +48,13 @@ impl RAGAgent {
         let agent = openrouter_client.agent(openrouter::GEMINI_FLASH_2_0)
             .preamble("
                 You are a Google Ads GAQL query assistant here to assist the user to translate natural language query requests into valid GAQL.
-                Respond with GAQL query as plain text, without any formatting or code blocks.
+
+                CRITICAL: Respond with ONLY the GAQL query as plain text. Do not include:
+                - Markdown code blocks (```sql or ``` or ```)
+                - Quotes (single or double)
+                - Explanatory text before or after the query
+                - Any other formatting
+
                 You will find example GAQL that could be useful in the attachments below.
             ")
             .dynamic_context(10, index)
@@ -167,7 +173,11 @@ impl EnhancedRAGAgent {
         preamble.push_str("- DURING operator for date ranges (e.g., DURING LAST_30_DAYS)\n\n");
 
         preamble.push_str("OUTPUT:\n");
-        preamble.push_str("Respond with valid GAQL query as plain text, without formatting or code blocks.\n");
+        preamble.push_str("CRITICAL: Respond with ONLY the GAQL query as plain text. Do not include:\n");
+        preamble.push_str("- Markdown code blocks (```sql or ``` or ```)\n");
+        preamble.push_str("- Quotes (single or double)\n");
+        preamble.push_str("- Explanatory text before or after the query\n");
+        preamble.push_str("- Any other formatting\n\n");
         preamble.push_str("You will find example GAQL queries that could be useful in the attachments below.\n");
 
         preamble
