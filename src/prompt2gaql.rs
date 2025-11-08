@@ -49,11 +49,17 @@ impl RAGAgent {
             .preamble("
                 You are a Google Ads GAQL query assistant here to assist the user to translate natural language query requests into valid GAQL.
 
-                CRITICAL: Respond with ONLY the GAQL query as plain text. Do not include:
-                - Markdown code blocks (```sql or ``` or ```)
-                - Quotes (single or double)
-                - Explanatory text before or after the query
-                - Any other formatting
+                CRITICAL RULES:
+                - NEVER invent or create field names
+                - ONLY use field names from the example queries provided below
+                - If you're unsure about a field name, use the closest match from the examples
+
+                OUTPUT REQUIREMENTS:
+                - Respond with ONLY the GAQL query as plain text
+                - Do not include markdown code blocks (```sql or ```gaql or ```)
+                - Do not include quotes (single or double)
+                - Do not include explanatory text before or after the query
+                - Do not include any other formatting
 
                 You will find example GAQL that could be useful in the attachments below.
             ")
@@ -161,6 +167,8 @@ impl EnhancedRAGAgent {
                 }
             }
             preamble.push('\n');
+
+            preamble.push_str("CRITICAL: NEVER invent or create field names. ONLY use field names from the schema information above and example queries below.\n\n");
         }
 
         preamble.push_str("RULES:\n");
@@ -174,7 +182,7 @@ impl EnhancedRAGAgent {
 
         preamble.push_str("OUTPUT:\n");
         preamble.push_str("CRITICAL: Respond with ONLY the GAQL query as plain text. Do not include:\n");
-        preamble.push_str("- Markdown code blocks (```sql or ``` or ```)\n");
+        preamble.push_str("- Markdown code blocks (```sql or ```gaql or ```)\n");
         preamble.push_str("- Quotes (single or double)\n");
         preamble.push_str("- Explanatory text before or after the query\n");
         preamble.push_str("- Any other formatting\n\n");
