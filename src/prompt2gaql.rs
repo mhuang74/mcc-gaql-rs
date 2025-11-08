@@ -5,7 +5,7 @@ use rig::{
     client::{CompletionClient, EmbeddingsClient},
     completion::{Completion, Prompt},
     embeddings::{EmbedError, EmbeddingsBuilder, TextEmbedder, embed::Embed},
-    providers::openai::{responses_api::ResponsesCompletionModel, Client, GPT_4O_MINI, TEXT_EMBEDDING_ADA_002},
+    providers::openrouter::{self, responses_api::ResponsesCompletionModel, Client, GEMINI_2_0_FLASH},
     vector_store::in_memory_store::InMemoryVectorStore,
 };
 
@@ -26,11 +26,10 @@ struct RAGAgent {
 
 impl RAGAgent {
     pub async fn init(
-        openai_api_key: &str,
         query_cookbook: Vec<QueryEntry>,
     ) -> Result<Self, anyhow::Error> {
-        let client = Client::new(openai_api_key);
-        let embedding_model = client.embedding_model(TEXT_EMBEDDING_ADA_002);
+        let client = openrouter::Client::from_env();
+        let embedding_model = client.embedding_model(openrouter::TEXT_EMBEDDING_ADA_002);
 
         // Generate embeddings for the definitions of all the documents using the specified embedding model.
         let embeddings = EmbeddingsBuilder::new(embedding_model.clone())
@@ -44,7 +43,7 @@ impl RAGAgent {
         // Create vector store index
         let index = vector_store.index(embedding_model);
 
-        let agent = client.agent(GPT_4O_MINI)
+        let agent = client.agent(openrouter::GEMINI_2_0_FLASH)
             .preamble("
                 You are a Google Ads GAQL query assistant here to assist the user to translate natural language query requests into valid GAQL.
                 Respond with GAQL query as plain text, without any formatting or code blocks.
@@ -72,12 +71,11 @@ impl RAGAgent {
 }
 
 pub async fn convert_to_gaql(
-    openai_api_key: &str,
     example_queries: Vec<QueryEntry>,
     prompt: &str,
 ) -> Result<String, anyhow::Error> {
     // Initialize RAGAgent
-    let rag_agent = RAGAgent::init(openai_api_key, example_queries).await?;
+    let rag_agent = RAGAgent::init(example_queries).await?;
 
     // Use RAGAgent to prompt
     rag_agent.prompt(prompt).await
@@ -91,12 +89,11 @@ struct EnhancedRAGAgent {
 
 impl EnhancedRAGAgent {
     pub async fn init(
-        openai_api_key: &str,
         query_cookbook: Vec<QueryEntry>,
         field_cache: Option<FieldMetadataCache>,
     ) -> Result<Self, anyhow::Error> {
-        let client = Client::new(openai_api_key);
-        let embedding_model = client.embedding_model(TEXT_EMBEDDING_ADA_002);
+        let client = openrouter::Client::from_env();
+        let embedding_model = client.embedding_model(openrouter::TEXT_EMBEDDING_ADA_002);
 
         // Generate embeddings for the query cookbook
         let embeddings = EmbeddingsBuilder::new(embedding_model.clone())
@@ -114,7 +111,7 @@ impl EnhancedRAGAgent {
         let preamble = Self::build_preamble(&field_cache);
 
         let agent = client
-            .agent(GPT_4O_MINI)
+            .agent(openrouter::GEMINI_2_0_FLASH)
             .preamble(&preamble)
             .dynamic_context(10, index)
             .temperature(0.1)
@@ -268,13 +265,12 @@ impl EnhancedRAGAgent {
 
 /// Convert natural language to GAQL with field metadata awareness
 pub async fn convert_to_gaql_enhanced(
-    openai_api_key: &str,
     example_queries: Vec<QueryEntry>,
     field_cache: Option<FieldMetadataCache>,
     prompt: &str,
 ) -> Result<String, anyhow::Error> {
     // Initialize Enhanced RAGAgent
-    let rag_agent = EnhancedRAGAgent::init(openai_api_key, example_queries, field_cache).await?;
+    let rag_agent = EnhancedRAGAgent::init(example_queries, field_cache).await?;
 
     // Use Enhanced RAGAgent to prompt
     rag_agent.prompt(prompt).await
