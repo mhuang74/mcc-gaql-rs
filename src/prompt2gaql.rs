@@ -2,12 +2,13 @@ use std::vec;
 
 use rig::{
     agent::Agent,
-    client::{CompletionClient, EmbeddingsClient},
+    client::CompletionClient,
     completion::{Completion, Prompt},
     embeddings::{EmbedError, EmbeddingsBuilder, TextEmbedder, embed::Embed},
-    providers::openrouter::{self, responses_api::ResponsesCompletionModel, Client, GEMINI_2_0_FLASH},
+    providers::openrouter::{self, completion::CompletionModel},
     vector_store::in_memory_store::InMemoryVectorStore,
 };
+use rig_fastembed::FastembedModel;
 
 use crate::field_metadata::FieldMetadataCache;
 use crate::util::QueryEntry;
@@ -21,15 +22,16 @@ impl Embed for QueryEntry {
 }
 
 struct RAGAgent {
-    agent: Agent<ResponsesCompletionModel>,
+    agent: Agent<CompletionModel>,
 }
 
 impl RAGAgent {
     pub async fn init(
         query_cookbook: Vec<QueryEntry>,
     ) -> Result<Self, anyhow::Error> {
-        let client = openrouter::Client::from_env();
-        let embedding_model = client.embedding_model(openrouter::TEXT_EMBEDDING_ADA_002);
+        let openrouter_client = openrouter::Client::from_env();
+        let fastembed_client = rig_fastembed::Client::new();
+        let embedding_model = fastembed_client.embedding_model(&FastembedModel::AllMiniLML6V2Q);
 
         // Generate embeddings for the definitions of all the documents using the specified embedding model.
         let embeddings = EmbeddingsBuilder::new(embedding_model.clone())
@@ -43,7 +45,7 @@ impl RAGAgent {
         // Create vector store index
         let index = vector_store.index(embedding_model);
 
-        let agent = client.agent(openrouter::GEMINI_2_0_FLASH)
+        let agent = openrouter_client.agent(openrouter::GEMINI_FLASH_2_0)
             .preamble("
                 You are a Google Ads GAQL query assistant here to assist the user to translate natural language query requests into valid GAQL.
                 Respond with GAQL query as plain text, without any formatting or code blocks.
@@ -83,7 +85,7 @@ pub async fn convert_to_gaql(
 
 /// Enhanced RAG Agent with field metadata awareness
 struct EnhancedRAGAgent {
-    agent: Agent<ResponsesCompletionModel>,
+    agent: Agent<CompletionModel>,
     field_cache: Option<FieldMetadataCache>,
 }
 
@@ -92,8 +94,9 @@ impl EnhancedRAGAgent {
         query_cookbook: Vec<QueryEntry>,
         field_cache: Option<FieldMetadataCache>,
     ) -> Result<Self, anyhow::Error> {
-        let client = openrouter::Client::from_env();
-        let embedding_model = client.embedding_model(openrouter::TEXT_EMBEDDING_ADA_002);
+        let openrouter_client = openrouter::Client::from_env();
+        let fastembed_client = rig_fastembed::Client::new();
+        let embedding_model = fastembed_client.embedding_model(&FastembedModel::AllMiniLML6V2Q);
 
         // Generate embeddings for the query cookbook
         let embeddings = EmbeddingsBuilder::new(embedding_model.clone())
@@ -110,8 +113,8 @@ impl EnhancedRAGAgent {
         // Build enhanced preamble with field metadata
         let preamble = Self::build_preamble(&field_cache);
 
-        let agent = client
-            .agent(openrouter::GEMINI_2_0_FLASH)
+        let agent = openrouter_client
+            .agent(openrouter::GEMINI_FLASH_2_0)
             .preamble(&preamble)
             .dynamic_context(10, index)
             .temperature(0.1)

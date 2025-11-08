@@ -35,7 +35,7 @@ tonic = { version = "0.14", features = ["transport", "tls-ring", "tls-native-roo
 serde_json = "1.0"
 yup-oauth2 = "6.7"
 rig-core = "0.23.1"
-rig-openrouter = "0.23.1"
+rig-fastembed = "0.2.15"
 # rig-lancedb = "0.2.3"
 # lancedb = "0.15.0"
 

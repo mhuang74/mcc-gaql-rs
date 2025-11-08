@@ -184,8 +184,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // convert natural language prompt into GAQL
     if args.natural_language {
-        // Use OpenAI for LLM
-        let openai_api_key = env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY not set");
+        // Use OpenRouter for LLM (API key loaded from environment)
+        env::var("OPENROUTER_API_KEY").expect("OPENROUTER_API_KEY not set");
         // Safe to unwrap: validated by validate_for_operation()
         let query_filename = resolved_config
             .queries_filename
@@ -228,10 +228,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Use enhanced conversion with field metadata if available
         let query = if field_cache.is_some() {
             log::info!("Using enhanced natural query with field metadata");
-            prompt2gaql::convert_to_gaql_enhanced(&openai_api_key, example_queries, field_cache, prompt).await?
+            prompt2gaql::convert_to_gaql_enhanced(example_queries, field_cache, prompt).await?
         } else {
             log::info!("Using basic natural query without field metadata");
-            prompt2gaql::convert_to_gaql(&openai_api_key, example_queries, prompt).await?
+            prompt2gaql::convert_to_gaql(example_queries, prompt).await?
         };
 
         log::info!("Generated GAQL Query: {:?}", query);
