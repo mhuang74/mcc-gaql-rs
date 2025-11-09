@@ -259,6 +259,35 @@ pub struct FieldDocument {
     pub description: String,
 }
 
+/// Flat representation of FieldDocument for LanceDB storage/retrieval
+#[derive(Clone, Serialize, Deserialize)]
+struct FieldDocumentFlat {
+    pub id: String,
+    pub description: String,
+    pub category: String,
+    pub data_type: String,
+    pub selectable: bool,
+    pub filterable: bool,
+    pub sortable: bool,
+    pub metrics_compatible: bool,
+    pub resource_name: Option<String>,
+}
+
+impl From<FieldDocumentFlat> for FieldMetadata {
+    fn from(flat: FieldDocumentFlat) -> Self {
+        FieldMetadata {
+            name: flat.id,
+            category: flat.category,
+            data_type: flat.data_type,
+            selectable: flat.selectable,
+            filterable: flat.filterable,
+            sortable: flat.sortable,
+            metrics_compatible: flat.metrics_compatible,
+            resource_name: flat.resource_name,
+        }
+    }
+}
+
 impl FieldDocument {
     /// Create a new field document with synthetic description
     pub fn new(field: FieldMetadata) -> Self {
@@ -375,6 +404,7 @@ impl Embed for FieldDocument {
 
 struct RAGAgent {
     agent: Agent<CompletionModel>,
+    query_index: LanceDbVectorIndex<rig_fastembed::EmbeddingModel>,
 }
 
 impl RAGAgent {
@@ -386,7 +416,7 @@ impl RAGAgent {
         let embedding_model = fastembed_client.embedding_model(&FastembedModel::AllMiniLML6V2Q);
 
         // Build or load query vector store with LanceDB caching
-        let index = build_or_load_query_vector_store(query_cookbook, embedding_model).await?;
+        let query_index = build_or_load_query_vector_store(query_cookbook, embedding_model).await?;
 
         let agent = openrouter_client.agent(openrouter::GEMINI_FLASH_2_0)
             .preamble("
@@ -404,26 +434,48 @@ impl RAGAgent {
                 - Do not include explanatory text before or after the query
                 - Do not include any other formatting
 
-                You will find example GAQL that could be useful in the attachments below.
+                You will find example GAQL queries in the context provided with each request.
             ")
-            // .dynamic_context(10, index)
             .temperature(0.1)
             .build();
 
-        Ok(RAGAgent { agent })
+        Ok(RAGAgent { agent, query_index })
     }
 
     pub async fn prompt(&self, prompt: &str) -> Result<String, anyhow::Error> {
+        // Manually retrieve relevant queries from LanceDB
+        use rig::vector_store::VectorSearchRequest;
+        let search_request = VectorSearchRequest::builder()
+            .query(prompt)
+            .samples(10)
+            .build()
+            .expect("Failed to build search request");
+
+        let relevant_queries = self.query_index.top_n::<QueryEntry>(search_request).await
+            .map_err(|e| anyhow::anyhow!("Failed to retrieve relevant queries: {}", e))?;
+
+        // Format relevant queries as context
+        let mut context = String::from("RELEVANT EXAMPLE QUERIES:\n\n");
+        for (score, _id, query_entry) in relevant_queries.iter().take(10) {
+            context.push_str(&format!(
+                "Example (relevance: {:.3}):\nDescription: {}\nQuery: {}\n\n",
+                score, query_entry.description, query_entry.query
+            ));
+        }
+
+        // Build enhanced prompt with context
+        let enhanced_prompt = format!("{}\n\nUSER REQUEST: {}", context, prompt);
+
         // HACK: dump full LLM prompt via CompletionRequest
-        let completion_request = self.agent.completion(prompt, vec![]).await?.build();
+        let completion_request = self.agent.completion(&enhanced_prompt, vec![]).await?.build();
         log::debug!(
             "LLM Request: preamble={:?}, chat_history={:?}",
             completion_request.preamble,
             completion_request.chat_history
         );
 
-        // Prompt the agent
-        let response = self.agent.prompt(prompt).await.map_err(anyhow::Error::new)?;
+        // Prompt the agent with enhanced context
+        let response = self.agent.prompt(&enhanced_prompt).await.map_err(anyhow::Error::new)?;
 
         // Strip markdown code blocks from response
         Ok(strip_markdown_code_blocks(&response))
@@ -444,6 +496,7 @@ pub async fn convert_to_gaql(
 /// Enhanced RAG Agent with field metadata awareness
 struct EnhancedRAGAgent {
     agent: Agent<CompletionModel>,
+    query_index: LanceDbVectorIndex<rig_fastembed::EmbeddingModel>,
     field_cache: Option<FieldMetadataCache>,
     field_vector_store: Option<LanceDbVectorIndex<rig_fastembed::EmbeddingModel>>,
     embedding_model: rig_fastembed::EmbeddingModel,
@@ -462,7 +515,7 @@ impl EnhancedRAGAgent {
 
         // Build or load query cookbook vector store with LanceDB caching
         log::info!("Initializing query cookbook embeddings for {} queries", query_cookbook.len());
-        let index = build_or_load_query_vector_store(query_cookbook, embedding_model.clone()).await?;
+        let query_index = build_or_load_query_vector_store(query_cookbook, embedding_model.clone()).await?;
 
         // Build or load field embeddings if field cache is available
         let field_vector_store = if let Some(ref cache) = field_cache {
@@ -478,7 +531,6 @@ impl EnhancedRAGAgent {
         let agent = openrouter_client
             .agent(openrouter::GEMINI_FLASH_2_0)
             .preamble(&preamble)
-            // .dynamic_context(10, index)
             .temperature(0.1)
             .build();
 
@@ -486,6 +538,7 @@ impl EnhancedRAGAgent {
 
         Ok(EnhancedRAGAgent {
             agent,
+            query_index,
             field_cache,
             field_vector_store,
             embedding_model,
@@ -501,38 +554,13 @@ impl EnhancedRAGAgent {
             preamble.push_str("SCHEMA INFORMATION:\n");
             preamble.push_str(&format!("Available resources: {}\n\n", cache.get_resources().join(", ")));
 
-            preamble.push_str("COMMON METRICS:\n");
-            let common_metrics = ["impressions", "clicks", "cost_micros", "conversions", "ctr", "average_cpc", "conversions_value"];
-            for metric in common_metrics {
-                let field_name = format!("metrics.{}", metric);
-                if let Some(field) = cache.get_field(&field_name) {
-                    preamble.push_str(&format!("- {}: {} ({})\n",
-                        field.name,
-                        field.data_type,
-                        if field.selectable { "selectable" } else { "not selectable" }
-                    ));
-                }
-            }
-            preamble.push('\n');
-
-            preamble.push_str("COMMON SEGMENTS:\n");
-            let common_segments = ["date", "week", "month", "quarter", "year", "device", "ad_network_type"];
-            for segment in common_segments {
-                let field_name = format!("segments.{}", segment);
-                if let Some(field) = cache.get_field(&field_name) {
-                    preamble.push_str(&format!("- {}: {}\n", field.name, field.data_type));
-                }
-            }
-            preamble.push('\n');
-
-            preamble.push_str("ADDITIONAL FIELDS:\n");
-            preamble.push_str("For each query, you will be provided with additional relevant fields selected specifically for your request.\n");
-            preamble.push_str("These fields are chosen based on semantic similarity to your query and may include specialized metrics, segments, and attributes.\n\n");
+            preamble.push_str("AVAILABLE FIELDS:\n");
+            preamble.push_str("For each query, you will be provided with relevant fields selected specifically for your request.\n");
+            preamble.push_str("These fields are chosen based on semantic similarity to your query and may include metrics, segments, and attributes.\n\n");
 
             preamble.push_str("CRITICAL: NEVER invent or create field names. ONLY use field names from:\n");
-            preamble.push_str("1. The common fields listed above\n");
-            preamble.push_str("2. The relevant fields provided for your specific query\n");
-            preamble.push_str("3. Field names from the example queries below\n\n");
+            preamble.push_str("1. The relevant fields provided for your specific query\n");
+            preamble.push_str("2. Field names from the example queries\n\n");
         }
 
         preamble.push_str("RULES:\n");
@@ -566,13 +594,14 @@ impl EnhancedRAGAgent {
                 .build()
                 .expect("Failed to build search request");
 
-            match field_index.top_n::<FieldDocument>(search_request).await {
+            match field_index.top_n::<FieldDocumentFlat>(search_request).await {
                 Ok(results) => {
                     log::debug!("Retrieved {} relevant fields for query: {}", results.len(), user_query);
-                    // Results are (score, id, document) tuples
+                    // Results are (score, id, FieldDocumentFlat) tuples
+                    // Convert FieldDocumentFlat to FieldMetadata
                     let field_results: Vec<FieldMetadata> = results
                         .into_iter()
-                        .map(|(_, _, doc)| doc.field)
+                        .map(|(_, _, flat_doc)| FieldMetadata::from(flat_doc))
                         .collect();
                     field_results
                 }
@@ -707,12 +736,34 @@ impl EnhancedRAGAgent {
     }
 
     pub async fn prompt(&self, prompt: &str) -> Result<String, anyhow::Error> {
+        // Manually retrieve relevant queries from LanceDB
+        use rig::vector_store::VectorSearchRequest;
+        let search_request = VectorSearchRequest::builder()
+            .query(prompt)
+            .samples(10)
+            .build()
+            .expect("Failed to build search request");
+
+        let relevant_queries = self.query_index.top_n::<QueryEntry>(search_request).await
+            .map_err(|e| anyhow::anyhow!("Failed to retrieve relevant queries: {}", e))?;
+
         // Retrieve relevant fields via RAG (20-30 fields)
         let relevant_fields = self.retrieve_relevant_fields(prompt, 30).await;
 
-        // Build additional context with RAG-retrieved fields
+        // Build enhanced prompt with all context
         let mut enhanced_prompt = String::new();
         enhanced_prompt.push_str(&format!("USER QUERY: {}\n\n", prompt));
+
+        // Add relevant example queries
+        if !relevant_queries.is_empty() {
+            enhanced_prompt.push_str("RELEVANT EXAMPLE QUERIES:\n\n");
+            for (score, _id, query_entry) in relevant_queries.iter().take(10) {
+                enhanced_prompt.push_str(&format!(
+                    "Example (relevance: {:.3}):\nDescription: {}\nQuery: {}\n\n",
+                    score, query_entry.description, query_entry.query
+                ));
+            }
+        }
 
         // Add RAG-retrieved relevant fields
         if !relevant_fields.is_empty() {

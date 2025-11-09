@@ -266,16 +266,47 @@ pub async fn create_table(
     db: &Connection,
     table_name: &str,
     record_batch: RecordBatch,
-    schema: Arc<Schema>,
+    _schema: Arc<Schema>,
 ) -> Result<Table> {
-    // Use RecordBatchIterator to create the table
-    let rec_iter = RecordBatchIterator::new(
-        vec![Ok(record_batch)],
-        schema,
-    );
+    // Create table using Box<dyn RecordBatchReader>
+    use arrow_array::RecordBatchReader;
+    use std::sync::Arc as StdArc;
+
+    struct SingleBatchReader {
+        schema: StdArc<Schema>,
+        batch: Option<RecordBatch>,
+    }
+
+    impl Iterator for SingleBatchReader {
+        type Item = std::result::Result<RecordBatch, arrow_schema::ArrowError>;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            self.batch.take().map(Ok)
+        }
+    }
+
+    impl RecordBatchReader for SingleBatchReader {
+        fn schema(&self) -> StdArc<Schema> {
+            self.schema.clone()
+        }
+    }
+
+    let schema = record_batch.schema();
+    let reader = SingleBatchReader {
+        schema: schema.clone(),
+        batch: Some(record_batch),
+    };
+
+    // Drop existing table if it exists, then create new one
+    if let Ok(_existing) = db.open_table(table_name).execute().await {
+        log::debug!("Dropping existing table '{}'", table_name);
+        db.drop_table(table_name)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to drop existing table {}: {}", table_name, e))?;
+    }
 
     let table = db
-        .create_table(table_name, rec_iter)
+        .create_table(table_name, Box::new(reader))
         .execute()
         .await
         .map_err(|e| anyhow::anyhow!("Failed to create table {}: {}", table_name, e))?;
