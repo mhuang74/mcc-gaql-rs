@@ -14,6 +14,31 @@ use serde::{Deserialize, Serialize};
 use crate::field_metadata::{FieldMetadata, FieldMetadataCache};
 use crate::util::QueryEntry;
 
+/// Strip markdown code block notation from LLM responses
+/// Handles formats like:
+/// ```gaql
+/// SELECT ...
+/// ```
+/// or ```sql ... ``` or just ``` ... ```
+fn strip_markdown_code_blocks(text: &str) -> String {
+    let trimmed = text.trim();
+
+    // Check for code block with backticks
+    if let Some(content) = trimmed.strip_prefix("```") {
+        // Find the first newline after the opening ``` (which may have a language specifier)
+        if let Some(newline_pos) = content.find('\n') {
+            let without_opening = &content[newline_pos + 1..];
+            // Remove the closing ```
+            if let Some(closing_pos) = without_opening.rfind("```") {
+                return without_opening[..closing_pos].trim().to_string();
+            }
+        }
+    }
+
+    // If no code blocks found, return the original trimmed text
+    trimmed.to_string()
+}
+
 // use description field from QueryEntry for embedding
 impl Embed for QueryEntry {
     fn embed(&self, embedder: &mut TextEmbedder) -> Result<(), EmbedError> {
@@ -202,7 +227,10 @@ impl RAGAgent {
         );
 
         // Prompt the agent
-        self.agent.prompt(prompt).await.map_err(anyhow::Error::new)
+        let response = self.agent.prompt(prompt).await.map_err(anyhow::Error::new)?;
+
+        // Strip markdown code blocks from response
+        Ok(strip_markdown_code_blocks(&response))
     }
 }
 
@@ -538,7 +566,10 @@ impl EnhancedRAGAgent {
         );
 
         // Prompt the agent
-        self.agent.prompt(&enhanced_prompt).await.map_err(anyhow::Error::new)
+        let response = self.agent.prompt(&enhanced_prompt).await.map_err(anyhow::Error::new)?;
+
+        // Strip markdown code blocks from response
+        Ok(strip_markdown_code_blocks(&response))
     }
 }
 
@@ -553,4 +584,51 @@ pub async fn convert_to_gaql_enhanced(
 
     // Use Enhanced RAGAgent to prompt
     rag_agent.prompt(prompt).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_strip_markdown_code_blocks_with_gaql() {
+        let input = "```gaql\nSELECT campaign.id FROM campaign\n```";
+        let expected = "SELECT campaign.id FROM campaign";
+        assert_eq!(strip_markdown_code_blocks(input), expected);
+    }
+
+    #[test]
+    fn test_strip_markdown_code_blocks_with_sql() {
+        let input = "```sql\nSELECT campaign.id FROM campaign WHERE campaign.status = 'ENABLED'\n```";
+        let expected = "SELECT campaign.id FROM campaign WHERE campaign.status = 'ENABLED'";
+        assert_eq!(strip_markdown_code_blocks(input), expected);
+    }
+
+    #[test]
+    fn test_strip_markdown_code_blocks_plain() {
+        let input = "```\nSELECT campaign.id FROM campaign\n```";
+        let expected = "SELECT campaign.id FROM campaign";
+        assert_eq!(strip_markdown_code_blocks(input), expected);
+    }
+
+    #[test]
+    fn test_strip_markdown_code_blocks_no_markers() {
+        let input = "SELECT campaign.id FROM campaign";
+        let expected = "SELECT campaign.id FROM campaign";
+        assert_eq!(strip_markdown_code_blocks(input), expected);
+    }
+
+    #[test]
+    fn test_strip_markdown_code_blocks_with_whitespace() {
+        let input = "  ```gaql\n  SELECT campaign.id FROM campaign  \n  ```  ";
+        let expected = "SELECT campaign.id FROM campaign";
+        assert_eq!(strip_markdown_code_blocks(input), expected);
+    }
+
+    #[test]
+    fn test_strip_markdown_code_blocks_multiline() {
+        let input = "```gaql\nSELECT\n  campaign.id,\n  campaign.name\nFROM campaign\n```";
+        let expected = "SELECT\n  campaign.id,\n  campaign.name\nFROM campaign";
+        assert_eq!(strip_markdown_code_blocks(input), expected);
+    }
 }
