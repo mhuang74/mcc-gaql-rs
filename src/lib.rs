@@ -7,6 +7,7 @@ pub mod args;
 pub mod config;
 pub mod field_metadata;
 pub mod googleads;
-pub mod setup;
+pub mod lancedb_utils;
 pub mod prompt2gaql;
+pub mod setup;
 pub mod util;

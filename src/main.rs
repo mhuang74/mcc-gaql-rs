@@ -235,7 +235,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
 
         log::info!("Generated GAQL Query: {:?}", query);
-        println!("Executing LLM-generated GAQL: {}", query);
+        println!("Executing LLM-generated GAQL:\n {}", query);
 
         args.gaql_query = Some(query);
     }

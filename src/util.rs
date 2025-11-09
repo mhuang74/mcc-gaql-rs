@@ -7,7 +7,7 @@ use std::{
     path::Path,
 };
 
-use serde::Serialize;
+use serde::{Serialize, Deserialize};
 use toml::Value;
 
 #[allow(dead_code)]
@@ -131,7 +131,7 @@ where
 
 // Query entries from cookbook
 // Make it sortable and comparable for vector search
-#[derive(Serialize, Clone, Debug, Eq, PartialEq, Default)]
+#[derive(Serialize, Deserialize, Hash, Clone, Debug, Eq, PartialEq, Default)]
 pub struct QueryEntry {
     pub description: String,
     pub query: String,

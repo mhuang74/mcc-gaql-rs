@@ -1,4 +1,6 @@
 use std::vec;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 use rig::{
     agent::Agent,
@@ -6,13 +8,216 @@ use rig::{
     completion::{Completion, Prompt},
     embeddings::{EmbedError, EmbeddingsBuilder, TextEmbedder, embed::Embed},
     providers::openrouter::{self, completion::CompletionModel},
-    vector_store::{in_memory_store::InMemoryVectorStore, VectorStoreIndex},
+    vector_store::VectorStoreIndex,
 };
 use rig_fastembed::FastembedModel;
+use rig_lancedb::{LanceDbVectorIndex, SearchParams};
 use serde::{Deserialize, Serialize};
 
 use crate::field_metadata::{FieldMetadata, FieldMetadataCache};
+use crate::lancedb_utils;
 use crate::util::QueryEntry;
+
+/// Compute hash of query cookbook for cache validation
+fn compute_query_cookbook_hash(queries: &[QueryEntry]) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    for query in queries {
+        query.description.hash(&mut hasher);
+        query.query.hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
+/// Compute hash of field cache for cache validation
+fn compute_field_cache_hash(cache: &FieldMetadataCache) -> u64 {
+    let mut hasher = DefaultHasher::new();
+
+    // Hash API version
+    cache.api_version.hash(&mut hasher);
+
+    // Hash all fields (sorted by name for consistency)
+    let mut field_names: Vec<_> = cache.fields.keys().collect();
+    field_names.sort();
+
+    for name in field_names {
+        if let Some(field) = cache.fields.get(name) {
+            field.hash(&mut hasher);
+        }
+    }
+
+    hasher.finish()
+}
+
+
+/// Build or load query cookbook vector store with LanceDB caching
+async fn build_or_load_query_vector_store(
+    query_cookbook: Vec<QueryEntry>,
+    embedding_model: rig_fastembed::EmbeddingModel,
+) -> Result<LanceDbVectorIndex<rig_fastembed::EmbeddingModel>, anyhow::Error> {
+    let total_start = std::time::Instant::now();
+
+    // Compute hash of current cookbook
+    let current_hash = compute_query_cookbook_hash(&query_cookbook);
+
+    // Try to load from LanceDB cache
+    if let Ok(Some(cached_hash)) = lancedb_utils::load_hash("query_cookbook") {
+        if cached_hash == current_hash {
+            log::info!("Query cookbook cache valid, loading from LanceDB...");
+
+            match lancedb_utils::get_lancedb_connection().await {
+                Ok(db) => {
+                    match lancedb_utils::open_table(&db, "query_cookbook").await {
+                        Ok(table) => {
+                            // Wrap table in LanceDbVectorIndex
+                            let index = LanceDbVectorIndex::new(
+                                table,
+                                embedding_model,
+                                "id",
+                                SearchParams::default(),
+                            ).await.map_err(|e| anyhow::anyhow!("Failed to create vector index: {}", e))?;
+
+                            log::info!("Successfully loaded query cookbook from cache ({:.2}s)", total_start.elapsed().as_secs_f64());
+                            return Ok(index);
+                        }
+                        Err(e) => {
+                            log::warn!("Failed to open cached table: {}, rebuilding...", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::warn!("Failed to connect to LanceDB: {}, rebuilding...", e);
+                }
+            }
+        }
+    }
+
+    // Cache miss or invalid - build embeddings
+    log::info!("Building embeddings for {} queries...", query_cookbook.len());
+    let embedding_start = std::time::Instant::now();
+
+    let embeddings = EmbeddingsBuilder::new(embedding_model.clone())
+        .documents(query_cookbook.clone())?
+        .build()
+        .await?;
+
+    log::info!("Query cookbook embeddings generated in {:.2}s", embedding_start.elapsed().as_secs_f64());
+
+    // Extract just the embeddings from the results
+    let embedding_vecs: Vec<_> = embeddings.iter()
+        .flat_map(|(_, emb)| emb.iter())
+        .cloned()
+        .collect();
+
+    // Save to LanceDB and get table
+    let table = lancedb_utils::build_or_load_query_vector_store(
+        query_cookbook,
+        embedding_vecs,
+        current_hash,
+    ).await?;
+
+    // Wrap table in LanceDbVectorIndex
+    let index = LanceDbVectorIndex::new(
+        table,
+        embedding_model,
+        "id",
+        SearchParams::default(),
+    ).await.map_err(|e| anyhow::anyhow!("Failed to create vector index: {}", e))?;
+
+    log::info!("Query cookbook initialization complete ({:.2}s total)", total_start.elapsed().as_secs_f64());
+
+    Ok(index)
+}
+
+/// Build or load field vector store with LanceDB caching
+async fn build_or_load_field_vector_store(
+    field_cache: &FieldMetadataCache,
+    embedding_model: rig_fastembed::EmbeddingModel,
+) -> Result<LanceDbVectorIndex<rig_fastembed::EmbeddingModel>, anyhow::Error> {
+    let total_start = std::time::Instant::now();
+
+    // Compute hash of current field cache
+    let current_hash = compute_field_cache_hash(field_cache);
+
+    // Try to load from LanceDB cache
+    if let Ok(Some(cached_hash)) = lancedb_utils::load_hash("field_metadata") {
+        if cached_hash == current_hash {
+            log::info!("Field metadata cache valid, loading from LanceDB...");
+
+            match lancedb_utils::get_lancedb_connection().await {
+                Ok(db) => {
+                    match lancedb_utils::open_table(&db, "field_metadata").await {
+                        Ok(table) => {
+                            // Wrap table in LanceDbVectorIndex
+                            let index = LanceDbVectorIndex::new(
+                                table,
+                                embedding_model,
+                                "id",
+                                SearchParams::default(),
+                            ).await.map_err(|e| anyhow::anyhow!("Failed to create vector index: {}", e))?;
+
+                            log::info!("Successfully loaded field metadata from cache ({:.2}s)", total_start.elapsed().as_secs_f64());
+                            return Ok(index);
+                        }
+                        Err(e) => {
+                            log::warn!("Failed to open cached table: {}, rebuilding...", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::warn!("Failed to connect to LanceDB: {}, rebuilding...", e);
+                }
+            }
+        }
+    }
+
+    // Cache miss or invalid - build field documents and embeddings
+    log::info!("Building embeddings for {} fields...", field_cache.fields.len());
+    let embedding_start = std::time::Instant::now();
+
+    let field_docs: Vec<FieldDocument> = field_cache
+        .fields
+        .values()
+        .map(|field| FieldDocument::new(field.clone()))
+        .collect();
+
+    log::debug!("Sample field descriptions:");
+    for doc in field_docs.iter().take(3) {
+        log::debug!("  {}: {}", doc.field.name, doc.description);
+    }
+
+    // Generate embeddings
+    let field_embeddings = EmbeddingsBuilder::new(embedding_model.clone())
+        .documents(field_docs.clone())?
+        .build()
+        .await?;
+
+    log::info!("Field metadata embeddings generated in {:.2}s", embedding_start.elapsed().as_secs_f64());
+
+    // Extract just the embeddings from the results
+    let embedding_vecs: Vec<_> = field_embeddings.iter()
+        .flat_map(|(_, emb)| emb.iter())
+        .cloned()
+        .collect();
+
+    // Save to LanceDB and get table
+    let table = lancedb_utils::build_or_load_field_vector_store(
+        field_docs,
+        embedding_vecs,
+        current_hash,
+    ).await?;
+
+    // Wrap table in LanceDbVectorIndex
+    let index = LanceDbVectorIndex::new(
+        table,
+        embedding_model,
+        "id",
+        SearchParams::default(),
+    ).await.map_err(|e| anyhow::anyhow!("Failed to create vector index: {}", e))?;
+
+    log::info!("Field metadata initialization complete ({:.2}s total)", total_start.elapsed().as_secs_f64());
+
+    Ok(index)
+}
 
 /// Strip markdown code block notation from LLM responses
 /// Handles formats like:
@@ -49,14 +254,14 @@ impl Embed for QueryEntry {
 
 /// Document wrapper for field metadata to enable RAG-based field retrieval
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
-struct FieldDocument {
+pub struct FieldDocument {
     pub field: FieldMetadata,
     pub description: String,
 }
 
 impl FieldDocument {
     /// Create a new field document with synthetic description
-    fn new(field: FieldMetadata) -> Self {
+    pub fn new(field: FieldMetadata) -> Self {
         let description = Self::generate_description(&field);
         Self { field, description }
     }
@@ -180,17 +385,8 @@ impl RAGAgent {
         let fastembed_client = rig_fastembed::Client::new();
         let embedding_model = fastembed_client.embedding_model(&FastembedModel::AllMiniLML6V2Q);
 
-        // Generate embeddings for the definitions of all the documents using the specified embedding model.
-        let embeddings = EmbeddingsBuilder::new(embedding_model.clone())
-            .documents(query_cookbook)?
-            .build()
-            .await?;
-
-        // Create vector store with the embeddings
-        let vector_store = InMemoryVectorStore::from_documents(embeddings);
-
-        // Create vector store index
-        let index = vector_store.index(embedding_model);
+        // Build or load query vector store with LanceDB caching
+        let index = build_or_load_query_vector_store(query_cookbook, embedding_model).await?;
 
         let agent = openrouter_client.agent(openrouter::GEMINI_FLASH_2_0)
             .preamble("
@@ -210,7 +406,7 @@ impl RAGAgent {
 
                 You will find example GAQL that could be useful in the attachments below.
             ")
-            .dynamic_context(10, index)
+            // .dynamic_context(10, index)
             .temperature(0.1)
             .build();
 
@@ -249,7 +445,7 @@ pub async fn convert_to_gaql(
 struct EnhancedRAGAgent {
     agent: Agent<CompletionModel>,
     field_cache: Option<FieldMetadataCache>,
-    field_vector_store: Option<InMemoryVectorStore<FieldDocument>>,
+    field_vector_store: Option<LanceDbVectorIndex<rig_fastembed::EmbeddingModel>>,
     embedding_model: rig_fastembed::EmbeddingModel,
 }
 
@@ -258,49 +454,20 @@ impl EnhancedRAGAgent {
         query_cookbook: Vec<QueryEntry>,
         field_cache: Option<FieldMetadataCache>,
     ) -> Result<Self, anyhow::Error> {
+        let init_start = std::time::Instant::now();
+
         let openrouter_client = openrouter::Client::from_env();
         let fastembed_client = rig_fastembed::Client::new();
         let embedding_model = fastembed_client.embedding_model(&FastembedModel::AllMiniLML6V2Q);
 
-        // Generate embeddings for the query cookbook
-        let embeddings = EmbeddingsBuilder::new(embedding_model.clone())
-            .documents(query_cookbook)?
-            .build()
-            .await?;
+        // Build or load query cookbook vector store with LanceDB caching
+        log::info!("Initializing query cookbook embeddings for {} queries", query_cookbook.len());
+        let index = build_or_load_query_vector_store(query_cookbook, embedding_model.clone()).await?;
 
-        // Create vector store with the embeddings
-        let vector_store = InMemoryVectorStore::from_documents(embeddings);
-
-        // Create vector store index
-        let index = vector_store.index(embedding_model.clone());
-
-        // Build field embeddings if field cache is available
+        // Build or load field embeddings if field cache is available
         let field_vector_store = if let Some(ref cache) = field_cache {
-            log::info!("Building field embeddings for {} fields", cache.fields.len());
-
-            // Create FieldDocument for each field
-            let field_docs: Vec<FieldDocument> = cache
-                .fields
-                .values()
-                .map(|field| FieldDocument::new(field.clone()))
-                .collect();
-
-            log::debug!("Sample field descriptions:");
-            for doc in field_docs.iter().take(3) {
-                log::debug!("  {}: {}", doc.field.name, doc.description);
-            }
-
-            // Generate embeddings for all field documents
-            let field_embeddings = EmbeddingsBuilder::new(embedding_model.clone())
-                .documents(field_docs)?
-                .build()
-                .await?;
-
-            // Create vector store for fields
-            let field_vector_store = InMemoryVectorStore::from_documents(field_embeddings);
-
-            log::info!("Field embeddings built successfully");
-            Some(field_vector_store)
+            log::info!("Initializing field embeddings for {} fields", cache.fields.len());
+            Some(build_or_load_field_vector_store(cache, embedding_model.clone()).await?)
         } else {
             None
         };
@@ -311,9 +478,11 @@ impl EnhancedRAGAgent {
         let agent = openrouter_client
             .agent(openrouter::GEMINI_FLASH_2_0)
             .preamble(&preamble)
-            .dynamic_context(10, index)
+            // .dynamic_context(10, index)
             .temperature(0.1)
             .build();
+
+        log::info!("EnhancedRAGAgent initialized in {:.2}s", init_start.elapsed().as_secs_f64());
 
         Ok(EnhancedRAGAgent {
             agent,
@@ -388,10 +557,7 @@ impl EnhancedRAGAgent {
 
     /// Retrieve relevant fields using RAG based on user query
     async fn retrieve_relevant_fields(&self, user_query: &str, limit: usize) -> Vec<FieldMetadata> {
-        if let Some(ref field_store) = self.field_vector_store {
-            // Create index on-demand (clone needed as index consumes the store)
-            let field_idx = field_store.clone().index(self.embedding_model.clone());
-
+        if let Some(ref field_index) = self.field_vector_store {
             // Build search request
             use rig::vector_store::VectorSearchRequest;
             let search_request = VectorSearchRequest::builder()
@@ -400,7 +566,7 @@ impl EnhancedRAGAgent {
                 .build()
                 .expect("Failed to build search request");
 
-            match field_idx.top_n::<FieldDocument>(search_request).await {
+            match field_index.top_n::<FieldDocument>(search_request).await {
                 Ok(results) => {
                     log::debug!("Retrieved {} relevant fields for query: {}", results.len(), user_query);
                     // Results are (score, id, document) tuples
