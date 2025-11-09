@@ -18,6 +18,38 @@ use crate::field_metadata::{FieldMetadata, FieldMetadataCache};
 use crate::lancedb_utils;
 use crate::util::QueryEntry;
 
+/// Format LLM request for debug logging with human-friendly formatting
+fn format_llm_request_debug(preamble: &Option<String>, prompt: &str) -> String {
+    let mut output = String::new();
+    output.push_str("\n");
+    output.push_str("═══════════════════════════════════════════════════════════════════\n");
+    output.push_str("                      LLM REQUEST DEBUG DUMP\n");
+    output.push_str("═══════════════════════════════════════════════════════════════════\n\n");
+
+    // Preamble section
+    output.push_str("┌─ PREAMBLE ─────────────────────────────────────────────────────┐\n");
+    if let Some(p) = preamble {
+        output.push_str(p);
+        if !p.ends_with('\n') {
+            output.push('\n');
+        }
+    } else {
+        output.push_str("(no preamble)\n");
+    }
+    output.push_str("└────────────────────────────────────────────────────────────────┘\n\n");
+
+    // Prompt section
+    output.push_str("┌─ PROMPT ───────────────────────────────────────────────────────┐\n");
+    output.push_str(prompt);
+    if !prompt.ends_with('\n') {
+        output.push('\n');
+    }
+    output.push_str("└────────────────────────────────────────────────────────────────┘\n");
+    output.push_str("═══════════════════════════════════════════════════════════════════\n");
+
+    output
+}
+
 /// Compute hash of query cookbook for cache validation
 fn compute_query_cookbook_hash(queries: &[QueryEntry]) -> u64 {
     let mut hasher = DefaultHasher::new();
@@ -466,13 +498,15 @@ impl RAGAgent {
         // Build enhanced prompt with context
         let enhanced_prompt = format!("{}\n\nUSER REQUEST: {}", context, prompt);
 
-        // HACK: dump full LLM prompt via CompletionRequest
-        let completion_request = self.agent.completion(&enhanced_prompt, vec![]).await?.build();
-        log::debug!(
-            "LLM Request: preamble={:?}, chat_history={:?}",
-            completion_request.preamble,
-            completion_request.chat_history
-        );
+        // Dump full LLM request for debugging
+        if log::log_enabled!(log::Level::Debug) {
+            let completion_request = self.agent.completion(&enhanced_prompt, vec![]).await?.build();
+            let formatted_request = format_llm_request_debug(
+                &completion_request.preamble,
+                &enhanced_prompt
+            );
+            log::debug!("{}", formatted_request);
+        }
 
         // Prompt the agent with enhanced context
         let response = self.agent.prompt(&enhanced_prompt).await.map_err(anyhow::Error::new)?;
@@ -740,15 +774,15 @@ impl EnhancedRAGAgent {
         use rig::vector_store::VectorSearchRequest;
         let search_request = VectorSearchRequest::builder()
             .query(prompt)
-            .samples(10)
+            .samples(3)
             .build()
             .expect("Failed to build search request");
 
         let relevant_queries = self.query_index.top_n::<QueryEntry>(search_request).await
             .map_err(|e| anyhow::anyhow!("Failed to retrieve relevant queries: {}", e))?;
 
-        // Retrieve relevant fields via RAG (20-30 fields)
-        let relevant_fields = self.retrieve_relevant_fields(prompt, 30).await;
+        // Retrieve relevant fields via RAG (10 fields)
+        let relevant_fields = self.retrieve_relevant_fields(prompt, 10).await;
 
         // Build enhanced prompt with all context
         let mut enhanced_prompt = String::new();
@@ -757,7 +791,7 @@ impl EnhancedRAGAgent {
         // Add relevant example queries
         if !relevant_queries.is_empty() {
             enhanced_prompt.push_str("RELEVANT EXAMPLE QUERIES:\n\n");
-            for (score, _id, query_entry) in relevant_queries.iter().take(10) {
+            for (score, _id, query_entry) in relevant_queries.iter().take(3) {
                 enhanced_prompt.push_str(&format!(
                     "Example (relevance: {:.3}):\nDescription: {}\nQuery: {}\n\n",
                     score, query_entry.description, query_entry.query
@@ -774,13 +808,15 @@ impl EnhancedRAGAgent {
         enhanced_prompt.push_str(&self.build_context_for_query(prompt));
         enhanced_prompt.push_str("\nGenerate GAQL query:");
 
-        // HACK: dump full LLM prompt via CompletionRequest
-        let completion_request = self.agent.completion(&enhanced_prompt, vec![]).await?.build();
-        log::debug!(
-            "LLM Request: preamble={:?}, chat_history={:?}",
-            completion_request.preamble,
-            completion_request.chat_history
-        );
+        // Dump full LLM request for debugging
+        if log::log_enabled!(log::Level::Debug) {
+            let completion_request = self.agent.completion(&enhanced_prompt, vec![]).await?.build();
+            let formatted_request = format_llm_request_debug(
+                &completion_request.preamble,
+                &enhanced_prompt
+            );
+            log::debug!("{}", formatted_request);
+        }
 
         // Prompt the agent
         let response = self.agent.prompt(&enhanced_prompt).await.map_err(anyhow::Error::new)?;
