@@ -17,7 +17,7 @@ use googleads_rs::google::ads::googleads::v22::services::SearchGoogleAdsFieldsRe
 use crate::googleads::GoogleAdsAPIAccess;
 
 /// Represents metadata for a single Google Ads field
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct FieldMetadata {
     pub name: String,
     pub category: String,

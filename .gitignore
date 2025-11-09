@@ -17,3 +17,6 @@ Cargo.lock
 *.log
 *.svg
 perf.data*
+
+.fastembed_cache
+.DS_Store
