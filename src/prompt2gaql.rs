@@ -292,7 +292,7 @@ pub struct FieldDocument {
 }
 
 /// Flat representation of FieldDocument for LanceDB storage/retrieval
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 struct FieldDocumentFlat {
     pub id: String,
     pub description: String,
@@ -334,42 +334,42 @@ impl FieldDocument {
         // Field name with underscores replaced by spaces for better matching
         parts.push(field.name.replace('.', " ").replace('_', " "));
 
-        // Category description
-        let category_desc = match field.category.as_str() {
-            "METRIC" => "performance metric",
-            "SEGMENT" => "segmentation dimension",
-            "ATTRIBUTE" => "descriptive attribute",
-            "RESOURCE" => "resource identifier",
-            _ => "field",
-        };
-        parts.push(category_desc.to_string());
+        // // Category description
+        // let category_desc = match field.category.as_str() {
+        //     "METRIC" => "performance metric",
+        //     "SEGMENT" => "segmentation dimension",
+        //     "ATTRIBUTE" => "descriptive attribute",
+        //     "RESOURCE" => "resource identifier",
+        //     _ => "field",
+        // };
+        // parts.push(category_desc.to_string());
 
-        // Data type
-        parts.push(format!("{} type", field.data_type.to_lowercase()));
+        // // Data type
+        // parts.push(format!("{} type", field.data_type.to_lowercase()));
 
-        // Capabilities
-        let mut capabilities = Vec::new();
-        if field.selectable {
-            capabilities.push("can be selected");
-        }
-        if field.filterable {
-            capabilities.push("can be filtered");
-        }
-        if field.sortable {
-            capabilities.push("can be sorted");
-        }
-        if field.metrics_compatible {
-            capabilities.push("compatible with metrics");
-        }
-        if !capabilities.is_empty() {
-            parts.push(capabilities.join(", "));
-        }
+        // // Capabilities
+        // let mut capabilities = Vec::new();
+        // if field.selectable {
+        //     capabilities.push("can be selected");
+        // }
+        // if field.filterable {
+        //     capabilities.push("can be filtered");
+        // }
+        // if field.sortable {
+        //     capabilities.push("can be sorted");
+        // }
+        // if field.metrics_compatible {
+        //     capabilities.push("compatible with metrics");
+        // }
+        // if !capabilities.is_empty() {
+        //     parts.push(capabilities.join(", "));
+        // }
 
-        // Purpose inference based on common patterns
-        let purpose = Self::infer_purpose(&field.name);
-        if !purpose.is_empty() {
-            parts.push(format!("used for {}", purpose));
-        }
+        // // Purpose inference based on common patterns
+        // let purpose = Self::infer_purpose(&field.name);
+        // if !purpose.is_empty() {
+        //     parts.push(format!("used for {}", purpose));
+        // }
 
         parts.join(", ")
     }
@@ -631,6 +631,9 @@ impl EnhancedRAGAgent {
             match field_index.top_n::<FieldDocumentFlat>(search_request).await {
                 Ok(results) => {
                     log::debug!("Retrieved {} relevant fields for query: {}", results.len(), user_query);
+                    for (score, id, flat_doc) in &results {
+                        log::debug!("  Score: {:.3}, ID: {}, Field: {:?}", score, id, flat_doc);
+                    }
                     // Results are (score, id, FieldDocumentFlat) tuples
                     // Convert FieldDocumentFlat to FieldMetadata
                     let field_results: Vec<FieldMetadata> = results
@@ -883,5 +886,188 @@ mod tests {
         let input = "```gaql\nSELECT\n  campaign.id,\n  campaign.name\nFROM campaign\n```";
         let expected = "SELECT\n  campaign.id,\n  campaign.name\nFROM campaign";
         assert_eq!(strip_markdown_code_blocks(input), expected);
+    }
+
+    #[test]
+    fn test_compute_query_cookbook_hash_consistency() {
+        // Create a sample query cookbook
+        let queries = vec![
+            QueryEntry {
+                description: "Get all campaigns".to_string(),
+                query: "SELECT campaign.id, campaign.name FROM campaign".to_string(),
+            },
+            QueryEntry {
+                description: "Get enabled campaigns".to_string(),
+                query: "SELECT campaign.id FROM campaign WHERE campaign.status = 'ENABLED'".to_string(),
+            },
+            QueryEntry {
+                description: "Get campaign metrics".to_string(),
+                query: "SELECT campaign.id, metrics.impressions, metrics.clicks FROM campaign".to_string(),
+            },
+        ];
+
+        // Compute hash multiple times
+        let hash1 = compute_query_cookbook_hash(&queries);
+        let hash2 = compute_query_cookbook_hash(&queries);
+        let hash3 = compute_query_cookbook_hash(&queries);
+
+        // All hashes should be identical
+        assert_eq!(hash1, hash2, "Hash should be consistent across repeated calls");
+        assert_eq!(hash2, hash3, "Hash should be consistent across repeated calls");
+        assert_eq!(hash1, hash3, "Hash should be consistent across repeated calls");
+    }
+
+    #[test]
+    fn test_compute_query_cookbook_hash_empty() {
+        let empty_queries: Vec<QueryEntry> = vec![];
+
+        // Compute hash multiple times for empty cookbook
+        let hash1 = compute_query_cookbook_hash(&empty_queries);
+        let hash2 = compute_query_cookbook_hash(&empty_queries);
+
+        // Should produce consistent hash even for empty input
+        assert_eq!(hash1, hash2, "Empty cookbook should produce consistent hash");
+    }
+
+    #[test]
+    fn test_compute_query_cookbook_hash_single_query() {
+        let queries = vec![
+            QueryEntry {
+                description: "Single query test".to_string(),
+                query: "SELECT campaign.id FROM campaign".to_string(),
+            },
+        ];
+
+        let hash1 = compute_query_cookbook_hash(&queries);
+        let hash2 = compute_query_cookbook_hash(&queries);
+
+        assert_eq!(hash1, hash2, "Single query should produce consistent hash");
+    }
+
+    #[test]
+    fn test_compute_query_cookbook_hash_order_dependency() {
+        // Create two query cookbooks with same queries in different order
+        let queries_order1 = vec![
+            QueryEntry {
+                description: "Query A".to_string(),
+                query: "SELECT campaign.id FROM campaign".to_string(),
+            },
+            QueryEntry {
+                description: "Query B".to_string(),
+                query: "SELECT ad_group.id FROM ad_group".to_string(),
+            },
+        ];
+
+        let queries_order2 = vec![
+            QueryEntry {
+                description: "Query B".to_string(),
+                query: "SELECT ad_group.id FROM ad_group".to_string(),
+            },
+            QueryEntry {
+                description: "Query A".to_string(),
+                query: "SELECT campaign.id FROM campaign".to_string(),
+            },
+        ];
+
+        let hash1 = compute_query_cookbook_hash(&queries_order1);
+        let hash2 = compute_query_cookbook_hash(&queries_order2);
+
+        // Hashes should be different because order matters
+        assert_ne!(hash1, hash2, "Different order should produce different hash");
+    }
+
+    #[test]
+    fn test_compute_query_cookbook_hash_identical_content() {
+        // Create two separate instances with identical content
+        let queries1 = vec![
+            QueryEntry {
+                description: "Test query".to_string(),
+                query: "SELECT campaign.id FROM campaign".to_string(),
+            },
+        ];
+
+        let queries2 = vec![
+            QueryEntry {
+                description: "Test query".to_string(),
+                query: "SELECT campaign.id FROM campaign".to_string(),
+            },
+        ];
+
+        let hash1 = compute_query_cookbook_hash(&queries1);
+        let hash2 = compute_query_cookbook_hash(&queries2);
+
+        // Identical content should produce identical hash
+        assert_eq!(hash1, hash2, "Identical content in different instances should produce same hash");
+    }
+
+    #[test]
+    fn test_compute_query_cookbook_hash_different_content() {
+        let queries1 = vec![
+            QueryEntry {
+                description: "Query A".to_string(),
+                query: "SELECT campaign.id FROM campaign".to_string(),
+            },
+        ];
+
+        let queries2 = vec![
+            QueryEntry {
+                description: "Query B".to_string(),
+                query: "SELECT ad_group.id FROM ad_group".to_string(),
+            },
+        ];
+
+        let hash1 = compute_query_cookbook_hash(&queries1);
+        let hash2 = compute_query_cookbook_hash(&queries2);
+
+        // Different content should produce different hash
+        assert_ne!(hash1, hash2, "Different content should produce different hash");
+    }
+
+    #[test]
+    fn test_compute_query_cookbook_hash_description_change() {
+        // Test that changing only the description changes the hash
+        let queries1 = vec![
+            QueryEntry {
+                description: "Original description".to_string(),
+                query: "SELECT campaign.id FROM campaign".to_string(),
+            },
+        ];
+
+        let queries2 = vec![
+            QueryEntry {
+                description: "Modified description".to_string(),
+                query: "SELECT campaign.id FROM campaign".to_string(),
+            },
+        ];
+
+        let hash1 = compute_query_cookbook_hash(&queries1);
+        let hash2 = compute_query_cookbook_hash(&queries2);
+
+        // Different descriptions should produce different hash
+        assert_ne!(hash1, hash2, "Changing description should change hash");
+    }
+
+    #[test]
+    fn test_compute_query_cookbook_hash_query_change() {
+        // Test that changing only the query changes the hash
+        let queries1 = vec![
+            QueryEntry {
+                description: "Same description".to_string(),
+                query: "SELECT campaign.id FROM campaign".to_string(),
+            },
+        ];
+
+        let queries2 = vec![
+            QueryEntry {
+                description: "Same description".to_string(),
+                query: "SELECT campaign.name FROM campaign".to_string(),
+            },
+        ];
+
+        let hash1 = compute_query_cookbook_hash(&queries1);
+        let hash2 = compute_query_cookbook_hash(&queries2);
+
+        // Different queries should produce different hash
+        assert_ne!(hash1, hash2, "Changing query should change hash");
     }
 }

@@ -195,7 +195,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let example_queries: Vec<QueryEntry> =
             match util::get_queries_from_file(&queries_path).await {
-                Ok(map) => map.into_values().collect(),
+                Ok(map) => {
+                    let mut queries: Vec<QueryEntry> = map.into_values().collect();
+                    queries.sort_by(|a, b| a.description.cmp(&b.description));
+                    queries
+                }
                 Err(e) => {
                     let msg = format!("Unable to load query cookbook for RAG: {e}");
                     log::error!("{msg}");
