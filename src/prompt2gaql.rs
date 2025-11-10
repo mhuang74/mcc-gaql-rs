@@ -65,6 +65,9 @@ fn compute_query_cookbook_hash(queries: &[QueryEntry]) -> u64 {
 fn compute_field_cache_hash(cache: &FieldMetadataCache) -> u64 {
     let mut hasher = DefaultHasher::new();
 
+    // Hash description generation version to invalidate cache when logic changes
+    "DESCRIPTION_VERSION_2".hash(&mut hasher);
+
     // Hash API version
     cache.api_version.hash(&mut hasher);
 
@@ -106,7 +109,9 @@ async fn build_or_load_query_vector_store(
                                 table,
                                 embedding_model,
                                 "id",
-                                SearchParams::default().distance_type(DistanceType::Cosine),
+                                SearchParams::default()
+                                    .distance_type(DistanceType::Cosine)
+                                    .column("vector"),
                             ).await.map_err(|e| anyhow::anyhow!("Failed to create vector index: {}", e))?;
 
                             log::info!("Successfully loaded query cookbook from cache ({:.2}s)", total_start.elapsed().as_secs_f64());
@@ -153,7 +158,9 @@ async fn build_or_load_query_vector_store(
         table,
         embedding_model,
         "id",
-        SearchParams::default().distance_type(DistanceType::Cosine),
+        SearchParams::default()
+            .distance_type(DistanceType::Cosine)
+            .column("vector"),
     ).await.map_err(|e| anyhow::anyhow!("Failed to create vector index: {}", e))?;
 
     log::info!("Query cookbook initialization complete ({:.2}s total)", total_start.elapsed().as_secs_f64());
@@ -185,7 +192,9 @@ pub async fn build_or_load_field_vector_store(
                                 table,
                                 embedding_model,
                                 "id",
-                                SearchParams::default().distance_type(DistanceType::Cosine),
+                                SearchParams::default()
+                                    .distance_type(DistanceType::Cosine)
+                                    .column("vector"),
                             ).await.map_err(|e| anyhow::anyhow!("Failed to create vector index: {}", e))?;
 
                             log::info!("Successfully loaded field metadata from cache ({:.2}s)", total_start.elapsed().as_secs_f64());
@@ -244,7 +253,9 @@ pub async fn build_or_load_field_vector_store(
         table,
         embedding_model,
         "id",
-        SearchParams::default().distance_type(DistanceType::Cosine),
+        SearchParams::default()
+            .distance_type(DistanceType::Cosine)
+            .column("vector"),
     ).await.map_err(|e| anyhow::anyhow!("Failed to create vector index: {}", e))?;
 
     log::info!("Field metadata initialization complete ({:.2}s total)", total_start.elapsed().as_secs_f64());
@@ -335,42 +346,11 @@ impl FieldDocument {
         // Field name with underscores replaced by spaces for better matching
         parts.push(field.name.replace('.', " ").replace('_', " "));
 
-        // // Category description
-        // let category_desc = match field.category.as_str() {
-        //     "METRIC" => "performance metric",
-        //     "SEGMENT" => "segmentation dimension",
-        //     "ATTRIBUTE" => "descriptive attribute",
-        //     "RESOURCE" => "resource identifier",
-        //     _ => "field",
-        // };
-        // parts.push(category_desc.to_string());
-
-        // // Data type
-        // parts.push(format!("{} type", field.data_type.to_lowercase()));
-
-        // // Capabilities
-        // let mut capabilities = Vec::new();
-        // if field.selectable {
-        //     capabilities.push("can be selected");
-        // }
-        // if field.filterable {
-        //     capabilities.push("can be filtered");
-        // }
-        // if field.sortable {
-        //     capabilities.push("can be sorted");
-        // }
-        // if field.metrics_compatible {
-        //     capabilities.push("compatible with metrics");
-        // }
-        // if !capabilities.is_empty() {
-        //     parts.push(capabilities.join(", "));
-        // }
-
-        // // Purpose inference based on common patterns
-        // let purpose = Self::infer_purpose(&field.name);
-        // if !purpose.is_empty() {
-        //     parts.push(format!("used for {}", purpose));
-        // }
+        // Purpose inference based on common patterns
+        let purpose = Self::infer_purpose(&field.name);
+        if !purpose.is_empty() {
+            parts.push(format!("used for {}", purpose));
+        }
 
         parts.join(", ")
     }
@@ -431,7 +411,7 @@ impl FieldDocument {
 impl Embed for FieldDocument {
     fn embed(&self, embedder: &mut TextEmbedder) -> Result<(), EmbedError> {
         let embed_text = self.description.clone();
-        log::debug!("Embedding: '{}'", embed_text);
+        // log::debug!("Embedding: '{}'", embed_text);
         embedder.embed(embed_text);
         Ok(())
     }
