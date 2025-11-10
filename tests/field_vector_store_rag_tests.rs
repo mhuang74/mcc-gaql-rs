@@ -118,8 +118,8 @@ struct RetrievalTestCase {
     limit: usize,
     /// Minimum precision threshold (default: 0.3)
     min_precision: f32,
-    /// Minimum score for top result (default: 0.3)
-    min_top_score: f64,
+    /// Maximum distance for top result - lower is better with cosine distance (default: 0.5)
+    max_top_distance: f64,
     /// Optional: keywords that should appear in retrieved fields
     should_contain_keywords: Vec<&'static str>,
 }
@@ -131,7 +131,7 @@ impl RetrievalTestCase {
             expected_fields,
             limit: 10,
             min_precision: 0.3,
-            min_top_score: 0.3,
+            max_top_distance: 0.5,  // With cosine distance, lower = more similar
             should_contain_keywords: Vec::new(),
         }
     }
@@ -146,8 +146,8 @@ impl RetrievalTestCase {
         self
     }
 
-    fn min_top_score(mut self, min_top_score: f64) -> Self {
-        self.min_top_score = min_top_score;
+    fn max_top_distance(mut self, max_top_distance: f64) -> Self {
+        self.max_top_distance = max_top_distance;
         self
     }
 
@@ -190,13 +190,13 @@ impl RetrievalTestCase {
             self.query
         );
 
-        // Check top score
-        let top_score = results[0].0;
+        // Check top distance (lower is better with cosine distance)
+        let top_distance = results[0].0;
         assert!(
-            top_score > self.min_top_score,
-            "Top result score should be > {}, got: {} for query: '{}'",
-            self.min_top_score,
-            top_score,
+            top_distance < self.max_top_distance,
+            "Top result distance should be < {} (lower = more similar), got: {} for query: '{}'",
+            self.max_top_distance,
+            top_distance,
             self.query
         );
 
@@ -325,21 +325,21 @@ async fn test_field_retrieval_similarity_scores() {
     // Debug output
     print_retrieval_results(query, &results);
 
-    // All scores should be between 0.0 and 1.0
+    // All scores should be between 0.0 and 2.0 (cosine distance range)
     for (score, _id, doc) in &results {
         assert!(
-            *score >= 0.0 && *score <= 1.0,
-            "Score should be in [0, 1] range, got {} for field {}",
+            *score >= 0.0 && *score <= 2.0,
+            "Score should be in [0, 2] range for cosine distance, got {} for field {}",
             score,
             doc.id
         );
     }
 
-    // Scores should be in descending order
+    // Scores should be in ascending order (lower distance = more similar)
     for i in 1..results.len() {
         assert!(
-            results[i - 1].0 >= results[i].0,
-            "Scores should be in descending order. Position {}: {} > Position {}: {}",
+            results[i - 1].0 <= results[i].0,
+            "Scores should be in ascending order (lower distance = more similar). Position {}: {} <= Position {}: {}",
             i - 1,
             results[i - 1].0,
             i,
@@ -347,10 +347,10 @@ async fn test_field_retrieval_similarity_scores() {
         );
     }
 
-    // Top result should have a decent score for a specific query
+    // Top result should have a low distance for a specific query (< 0.5 means good similarity)
     assert!(
-        results[0].0 > 0.25,
-        "Top result should have score > 0.25 for specific query, got: {}",
+        results[0].0 < 0.5,
+        "Top result should have distance < 0.5 for specific query (lower = more similar), got: {}",
         results[0].0
     );
 
