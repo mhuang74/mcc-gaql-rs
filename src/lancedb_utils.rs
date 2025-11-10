@@ -314,20 +314,20 @@ pub async fn create_table(
 
     // Create vector index with cosine similarity metric
     // Only create index if we have enough rows (IVF_PQ typically needs 256+ rows)
-    if num_rows >= 256 {
-        log::debug!("Creating vector index with cosine similarity for table '{}'", table_name);
-        table
-            .create_index(&["vector"], lancedb::index::Index::IvfPq(
-                lancedb::index::vector::IvfPqIndexBuilder::default()
-                    .distance_type(lancedb::DistanceType::Cosine)
-            ))
-            .execute()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to create vector index for {}: {}", table_name, e))?;
-        log::debug!("Vector index created successfully for table '{}'", table_name);
-    } else {
-        log::debug!("Skipping index creation for table '{}' (only {} rows, need 256+)", table_name, num_rows);
-    }
+    // if num_rows >= 256 {
+    //     log::debug!("Creating vector index with cosine similarity for table '{}'", table_name);
+    //     table
+    //         .create_index(&["vector"], lancedb::index::Index::IvfPq(
+    //             lancedb::index::vector::IvfPqIndexBuilder::default()
+    //                 .distance_type(lancedb::DistanceType::Cosine)
+    //         ))
+    //         .execute()
+    //         .await
+    //         .map_err(|e| anyhow::anyhow!("Failed to create vector index for {}: {}", table_name, e))?;
+    //     log::debug!("Vector index created successfully for table '{}'", table_name);
+    // } else {
+    //     log::debug!("Skipping index creation for table '{}' (only {} rows, need 256+)", table_name, num_rows);
+    // }
 
     Ok(table)
 }
