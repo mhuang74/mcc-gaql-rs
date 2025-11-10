@@ -767,3 +767,27 @@ FROM
   campaign
 LIMIT 100
 """
+
+[performance_max_impression_share]
+description = """
+returns impression share metrics for Performance Max campaigns from last 30 days
+"""
+query = """
+SELECT 
+  campaign.id,
+  segments.date,
+  metrics.impressions,
+  metrics.search_absolute_top_impression_share,
+  metrics.search_budget_lost_absolute_top_impression_share,
+  metrics.search_budget_lost_impression_share,
+  metrics.search_budget_lost_top_impression_share,
+  metrics.search_exact_match_impression_share,
+  metrics.search_impression_share,
+  metrics.search_rank_lost_impression_share,
+  metrics.search_top_impression_share,
+  metrics.absolute_top_impression_percentage
+FROM campaign
+WHERE 
+  segments.date DURING LAST_30_DAYS
+  AND campaign.advertising_channel_type IN ('PERFORMANCE_MAX')
+"""
