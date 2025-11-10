@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use arrow_array::{
     BooleanArray, FixedSizeListArray, Float64Array,
-    RecordBatch, RecordBatchIterator, StringArray, ArrayRef,
+    RecordBatch, StringArray, ArrayRef,
 };
 use arrow_schema::{DataType, Field, Schema};
 use lancedb::{connect, Connection, Table};
@@ -261,7 +261,7 @@ pub async fn get_lancedb_connection() -> Result<Connection> {
     Ok(db)
 }
 
-/// Create or overwrite a LanceDB table
+/// Create or overwrite a LanceDB table with vector index
 pub async fn create_table(
     db: &Connection,
     table_name: &str,
@@ -292,6 +292,7 @@ pub async fn create_table(
     }
 
     let schema = record_batch.schema();
+    let num_rows = record_batch.num_rows();
     let reader = SingleBatchReader {
         schema: schema.clone(),
         batch: Some(record_batch),
@@ -310,6 +311,24 @@ pub async fn create_table(
         .execute()
         .await
         .map_err(|e| anyhow::anyhow!("Failed to create table {}: {}", table_name, e))?;
+
+    // Create vector index with cosine similarity metric
+    // Only create index if we have enough rows (IVF_PQ typically needs 256+ rows)
+    if num_rows >= 256 {
+        log::debug!("Creating vector index with cosine similarity for table '{}'", table_name);
+        table
+            .create_index(&["vector"], lancedb::index::Index::IvfPq(
+                lancedb::index::vector::IvfPqIndexBuilder::default()
+                    .distance_type(lancedb::DistanceType::Cosine)
+            ))
+            .execute()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to create vector index for {}: {}", table_name, e))?;
+        log::debug!("Vector index created successfully for table '{}'", table_name);
+    } else {
+        log::debug!("Skipping index creation for table '{}' (only {} rows, need 256+)", table_name, num_rows);
+    }
+
     Ok(table)
 }
 

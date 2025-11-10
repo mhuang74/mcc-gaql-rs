@@ -55,7 +55,7 @@ fn calculate_recall(
 ///
 /// NOTE: These tests require cached field metadata. Run the tool first to populate the cache:
 /// ```
-/// mcc-gaql --user-email <email> --mcc-id <mcc> "SELECT campaign.name FROM campaign LIMIT 1"
+/// mcc-gaql --myprofile -n "how did impression share metrics changed over past 30 days"
 /// ```
 async fn get_test_field_vector_store() -> anyhow::Result<LanceDbVectorIndex<rig_fastembed::EmbeddingModel>> {
     // Load field metadata cache from default location (platform-specific)
@@ -76,6 +76,8 @@ async fn get_test_field_vector_store() -> anyhow::Result<LanceDbVectorIndex<rig_
         999, // Very high TTL to use cached data
     )
     .await?;
+
+    println!("Retrieved {} fields", field_cache.fields.len());
 
     // Create embedding model
     let fastembed_client = FastembedClient::new();

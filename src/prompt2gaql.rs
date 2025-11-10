@@ -10,6 +10,7 @@ use rig::{
     providers::openrouter::{self, completion::CompletionModel},
     vector_store::VectorStoreIndex,
 };
+use lancedb::DistanceType;
 use rig_fastembed::FastembedModel;
 use rig_lancedb::{LanceDbVectorIndex, SearchParams};
 use serde::{Deserialize, Serialize};
@@ -100,12 +101,12 @@ async fn build_or_load_query_vector_store(
                 Ok(db) => {
                     match lancedb_utils::open_table(&db, "query_cookbook").await {
                         Ok(table) => {
-                            // Wrap table in LanceDbVectorIndex
+                            // Wrap table in LanceDbVectorIndex with cosine distance
                             let index = LanceDbVectorIndex::new(
                                 table,
                                 embedding_model,
                                 "id",
-                                SearchParams::default(),
+                                SearchParams::default().distance_type(DistanceType::Cosine),
                             ).await.map_err(|e| anyhow::anyhow!("Failed to create vector index: {}", e))?;
 
                             log::info!("Successfully loaded query cookbook from cache ({:.2}s)", total_start.elapsed().as_secs_f64());
@@ -147,12 +148,12 @@ async fn build_or_load_query_vector_store(
         current_hash,
     ).await?;
 
-    // Wrap table in LanceDbVectorIndex
+    // Wrap table in LanceDbVectorIndex with cosine distance
     let index = LanceDbVectorIndex::new(
         table,
         embedding_model,
         "id",
-        SearchParams::default(),
+        SearchParams::default().distance_type(DistanceType::Cosine),
     ).await.map_err(|e| anyhow::anyhow!("Failed to create vector index: {}", e))?;
 
     log::info!("Query cookbook initialization complete ({:.2}s total)", total_start.elapsed().as_secs_f64());
@@ -179,12 +180,12 @@ pub async fn build_or_load_field_vector_store(
                 Ok(db) => {
                     match lancedb_utils::open_table(&db, "field_metadata").await {
                         Ok(table) => {
-                            // Wrap table in LanceDbVectorIndex
+                            // Wrap table in LanceDbVectorIndex with cosine distance
                             let index = LanceDbVectorIndex::new(
                                 table,
                                 embedding_model,
                                 "id",
-                                SearchParams::default(),
+                                SearchParams::default().distance_type(DistanceType::Cosine),
                             ).await.map_err(|e| anyhow::anyhow!("Failed to create vector index: {}", e))?;
 
                             log::info!("Successfully loaded field metadata from cache ({:.2}s)", total_start.elapsed().as_secs_f64());
@@ -238,12 +239,12 @@ pub async fn build_or_load_field_vector_store(
         current_hash,
     ).await?;
 
-    // Wrap table in LanceDbVectorIndex
+    // Wrap table in LanceDbVectorIndex with cosine distance
     let index = LanceDbVectorIndex::new(
         table,
         embedding_model,
         "id",
-        SearchParams::default(),
+        SearchParams::default().distance_type(DistanceType::Cosine),
     ).await.map_err(|e| anyhow::anyhow!("Failed to create vector index: {}", e))?;
 
     log::info!("Field metadata initialization complete ({:.2}s total)", total_start.elapsed().as_secs_f64());
