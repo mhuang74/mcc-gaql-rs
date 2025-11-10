@@ -106,193 +106,204 @@ async fn search_vector_store(
     Ok(results)
 }
 
+/// Test case configuration for field retrieval tests
+struct RetrievalTestCase {
+    /// The search query
+    query: &'static str,
+    /// Expected relevant fields
+    expected_fields: Vec<&'static str>,
+    /// Number of results to retrieve (default: 10)
+    limit: usize,
+    /// Minimum precision threshold (default: 0.3)
+    min_precision: f32,
+    /// Minimum score for top result (default: 0.3)
+    min_top_score: f64,
+    /// Optional: keywords that should appear in retrieved fields
+    should_contain_keywords: Vec<&'static str>,
+}
+
+impl RetrievalTestCase {
+    fn new(query: &'static str, expected_fields: Vec<&'static str>) -> Self {
+        Self {
+            query,
+            expected_fields,
+            limit: 10,
+            min_precision: 0.3,
+            min_top_score: 0.3,
+            should_contain_keywords: Vec::new(),
+        }
+    }
+
+    fn limit(mut self, limit: usize) -> Self {
+        self.limit = limit;
+        self
+    }
+
+    fn min_precision(mut self, min_precision: f32) -> Self {
+        self.min_precision = min_precision;
+        self
+    }
+
+    fn min_top_score(mut self, min_top_score: f64) -> Self {
+        self.min_top_score = min_top_score;
+        self
+    }
+
+    fn should_contain(mut self, keywords: Vec<&'static str>) -> Self {
+        self.should_contain_keywords = keywords;
+        self
+    }
+
+    /// Run the test and perform standard assertions
+    async fn run(&self) -> anyhow::Result<Vec<(f64, String, FieldDocumentFlat)>> {
+        let vector_store = get_test_field_vector_store().await?;
+        let results = search_vector_store(&vector_store, self.query, self.limit).await?;
+
+        // Debug output
+        print_retrieval_results(self.query, &results);
+
+        // Extract retrieved fields
+        let retrieved_fields: Vec<String> = results
+            .iter()
+            .map(|(_, _, doc)| doc.id.clone())
+            .collect();
+
+        // Convert expected fields to HashSet
+        let expected_set: HashSet<String> = self
+            .expected_fields
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+
+        // Calculate metrics
+        let precision = calculate_precision(&retrieved_fields, &expected_set);
+        let recall = calculate_recall(&retrieved_fields, &expected_set);
+
+        println!("\nPrecision: {:.2}, Recall: {:.2}", precision, recall);
+
+        // Standard assertions
+        assert!(
+            !results.is_empty(),
+            "Should retrieve at least some fields for query: '{}'",
+            self.query
+        );
+
+        // Check top score
+        let top_score = results[0].0;
+        assert!(
+            top_score > self.min_top_score,
+            "Top result score should be > {}, got: {} for query: '{}'",
+            self.min_top_score,
+            top_score,
+            self.query
+        );
+
+        // Check precision
+        assert!(
+            precision >= self.min_precision,
+            "Precision should be >= {}, got: {} for query: '{}'",
+            self.min_precision,
+            precision,
+            self.query
+        );
+
+        // Check keywords if specified
+        if !self.should_contain_keywords.is_empty() {
+            let has_keyword = retrieved_fields.iter().any(|f| {
+                self.should_contain_keywords
+                    .iter()
+                    .any(|kw| f.contains(kw))
+            });
+            assert!(
+                has_keyword,
+                "Results should contain at least one of {:?}. Retrieved: {:?}",
+                self.should_contain_keywords,
+                retrieved_fields
+            );
+        }
+
+        Ok(results)
+    }
+}
+
 #[tokio::test]
 async fn test_field_retrieval_for_cost_metrics() {
-    // This test verifies that cost-related queries return cost metrics
-    let vector_store = get_test_field_vector_store()
-        .await
-        .expect("Failed to load field vector store");
-
-    let query = "cost per click and average cost";
-    let limit = 10;
-
-    let results = search_vector_store(&vector_store, query, limit)
-        .await
-        .expect("Failed to retrieve fields");
-
-    // Debug output
-    print_retrieval_results(query, &results);
-
-    // Expected cost-related fields
-    let expected_fields: HashSet<String> = [
-        "metrics.average_cpc",
-        "metrics.cost_micros",
-        "metrics.cost_per_conversion",
-        "metrics.average_cost",
-        "metrics.average_cpe",
-        "metrics.average_cpv",
-        "metrics.average_cpm",
-    ]
-    .iter()
-    .map(|s| s.to_string())
-    .collect();
-
-    let retrieved_fields: Vec<String> = results
-        .iter()
-        .map(|(_, _, doc)| doc.id.clone())
-        .collect();
-
-    // Calculate metrics
-    let precision = calculate_precision(&retrieved_fields, &expected_fields);
-    let recall = calculate_recall(&retrieved_fields, &expected_fields);
-
-    println!("\nPrecision: {:.2}, Recall: {:.2}", precision, recall);
-
-    // Assertions
-    assert!(!results.is_empty(), "Should retrieve at least some fields");
-
-    // At least one of the top results should be a cost metric
-    let has_cost_metric = retrieved_fields
-        .iter()
-        .any(|f| f.contains("cost") || f.contains("cpc") || f.contains("average_c"));
-    assert!(
-        has_cost_metric,
-        "Top results should include cost-related metrics. Retrieved: {:?}",
-        retrieved_fields
-    );
-
-    // Check that top result has reasonable score (>0.3)
-    let top_score = results[0].0;
-    assert!(
-        top_score > 0.3,
-        "Top result score should be > 0.3, got: {}",
-        top_score
-    );
-
-    // Precision should be reasonable (at least 30% of results are relevant)
-    assert!(
-        precision >= 0.3,
-        "Precision should be >= 0.3, got: {}",
-        precision
-    );
+    RetrievalTestCase::new(
+        "cost per click and average cost",
+        vec![
+            "metrics.average_cpc",
+            "metrics.cost_micros",
+            "metrics.cost_per_conversion",
+            "metrics.average_cost",
+            "metrics.average_cpe",
+            "metrics.average_cpv",
+            "metrics.average_cpm",
+        ],
+    )
+    .should_contain(vec!["cost", "cpc", "average_c"])
+    .run()
+    .await
+    .expect("Test failed");
 }
 
 #[tokio::test]
 async fn test_field_retrieval_for_conversions() {
-    let vector_store = get_test_field_vector_store()
-        .await
-        .expect("Failed to load field vector store");
-
-    let query = "conversion data and conversion rate";
-    let limit = 10;
-
-    let results = search_vector_store(&vector_store, query, limit)
-        .await
-        .expect("Failed to retrieve fields");
-
-    // Debug output
-    print_retrieval_results(query, &results);
-
-    let expected_fields: HashSet<String> = [
-        "metrics.conversions",
-        "metrics.conversions_value",
-        "metrics.all_conversions",
-        "metrics.conversion_rate",
-        "metrics.all_conversions_value",
-        "metrics.cost_per_conversion",
-        "metrics.value_per_conversion",
-    ]
-    .iter()
-    .map(|s| s.to_string())
-    .collect();
-
-    let retrieved_fields: Vec<String> = results
-        .iter()
-        .map(|(_, _, doc)| doc.id.clone())
-        .collect();
-
-    let precision = calculate_precision(&retrieved_fields, &expected_fields);
-    let recall = calculate_recall(&retrieved_fields, &expected_fields);
-
-    println!("\nPrecision: {:.2}, Recall: {:.2}", precision, recall);
-
-    // At least one conversion metric should be in results
-    let has_conversion_metric = retrieved_fields
-        .iter()
-        .any(|f| f.contains("conversion"));
-    assert!(
-        has_conversion_metric,
-        "Results should include conversion metrics. Retrieved: {:?}",
-        retrieved_fields
-    );
-
-    // Top score should be reasonable
-    assert!(
-        results[0].0 > 0.3,
-        "Top score should be > 0.3, got: {}",
-        results[0].0
-    );
-
-    // Precision should be reasonable
-    assert!(
-        precision >= 0.3,
-        "Precision should be >= 0.3, got: {}",
-        precision
-    );
+    RetrievalTestCase::new(
+        "conversion data and conversion rate",
+        vec![
+            "metrics.conversions",
+            "metrics.conversions_value",
+            "metrics.all_conversions",
+            "metrics.conversion_rate",
+            "metrics.all_conversions_value",
+            "metrics.cost_per_conversion",
+            "metrics.value_per_conversion",
+        ],
+    )
+    .should_contain(vec!["conversion"])
+    .run()
+    .await
+    .expect("Test failed");
 }
 
 #[tokio::test]
 async fn test_field_retrieval_for_impressions_and_clicks() {
-    let vector_store = get_test_field_vector_store()
-        .await
-        .expect("Failed to load field vector store");
+    RetrievalTestCase::new(
+        "impressions and clicks",
+        vec![
+            "metrics.impressions",
+            "metrics.clicks",
+            "metrics.ctr",
+            "metrics.interactions",
+            "metrics.interaction_rate",
+        ],
+    )
+    .should_contain(vec!["impressions", "clicks", "ctr", "interaction"])
+    .run()
+    .await
+    .expect("Test failed");
+}
 
-    let query = "impressions and clicks";
-    let limit = 10;
-
-    let results = search_vector_store(&vector_store, query, limit)
-        .await
-        .expect("Failed to retrieve fields");
-
-    // Debug output
-    print_retrieval_results(query, &results);
-
-    let expected_fields: HashSet<String> = [
-        "metrics.impressions",
-        "metrics.clicks",
-        "metrics.ctr",
-        "metrics.interactions",
-        "metrics.interaction_rate",
-    ]
-    .iter()
-    .map(|s| s.to_string())
-    .collect();
-
-    let retrieved_fields: Vec<String> = results
-        .iter()
-        .map(|(_, _, doc)| doc.id.clone())
-        .collect();
-
-    let precision = calculate_precision(&retrieved_fields, &expected_fields);
-    let recall = calculate_recall(&retrieved_fields, &expected_fields);
-
-    println!("\nPrecision: {:.2}, Recall: {:.2}", precision, recall);
-
-    // Check for impressions or clicks in results
-    let has_expected = retrieved_fields.iter().any(|f| {
-        f.contains("impressions")
-            || f.contains("clicks")
-            || f.contains("ctr")
-            || f.contains("interaction")
-    });
-    assert!(
-        has_expected,
-        "Results should include impression/click metrics. Retrieved: {:?}",
-        retrieved_fields
-    );
-
-    assert!(results[0].0 > 0.3, "Top score should be > 0.3");
-    assert!(precision >= 0.3, "Precision should be >= 0.3");
+#[tokio::test]
+async fn test_field_retrieval_for_impression_share_metrics() {
+    RetrievalTestCase::new(
+        "impression share metrics",
+        vec![
+            "metrics.absolute_top_impression_percentage",
+            "metrics.search_absolute_top_impression_share",
+            "metrics.search_budget_lost_absolute_top_impression_share",
+            "metrics.search_budget_lost_impression_share",
+            "metrics.search_budget_lost_top_impression_share",
+            "metrics.search_exact_match_impression_share",
+            "metrics.search_impression_share",
+            "metrics.search_rank_lost_impression_share",
+            "metrics.search_top_impression_share",
+        ],
+    )
+    .should_contain(vec!["impression", "share"])
+    .run()
+    .await
+    .expect("Test failed");
 }
 
 #[tokio::test]
