@@ -161,7 +161,7 @@ async fn build_or_load_query_vector_store(
 }
 
 /// Build or load field vector store with LanceDB caching
-async fn build_or_load_field_vector_store(
+pub async fn build_or_load_field_vector_store(
     field_cache: &FieldMetadataCache,
     embedding_model: rig_fastembed::EmbeddingModel,
 ) -> Result<LanceDbVectorIndex<rig_fastembed::EmbeddingModel>, anyhow::Error> {
@@ -293,7 +293,7 @@ pub struct FieldDocument {
 
 /// Flat representation of FieldDocument for LanceDB storage/retrieval
 #[derive(Clone, Serialize, Deserialize, Debug)]
-struct FieldDocumentFlat {
+pub struct FieldDocumentFlat {
     pub id: String,
     pub description: String,
     pub category: String,
