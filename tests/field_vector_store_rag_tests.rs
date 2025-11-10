@@ -81,7 +81,7 @@ async fn get_test_field_vector_store() -> anyhow::Result<LanceDbVectorIndex<rig_
 
     // Create embedding model
     let fastembed_client = FastembedClient::new();
-    let embedding_model = fastembed_client.embedding_model(&FastembedModel::AllMiniLML6V2Q);
+    let embedding_model = fastembed_client.embedding_model(&FastembedModel::BGEBaseENV15);
 
     // Build or load vector store
     let vector_store = build_or_load_field_vector_store(&field_cache, embedding_model).await?;

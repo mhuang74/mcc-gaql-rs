@@ -12,8 +12,8 @@ use rig::embeddings::Embedding;
 use crate::prompt2gaql::FieldDocument;
 use crate::util::QueryEntry;
 
-/// Embedding dimension for AllMiniLML6V2Q model
-const EMBEDDING_DIM: i32 = 384;
+/// Embedding dimension for BGEBaseENV15 model
+const EMBEDDING_DIM: i32 = 768;
 
 /// Schema version for tracking schema evolution
 const SCHEMA_VERSION: u8 = 1;
@@ -513,11 +513,11 @@ mod tests {
 
         let embeddings = vec![
             Embedding {
-                vec: vec![0.1_f64; 384],
+                vec: vec![0.1_f64; 768],
                 document: String::new(),
             },
             Embedding {
-                vec: vec![0.2_f64; 384],
+                vec: vec![0.2_f64; 768],
                 document: String::new(),
             },
         ];
@@ -550,7 +550,7 @@ mod tests {
 
         let embeddings = vec![
             Embedding {
-                vec: vec![0.1_f64; 384],
+                vec: vec![0.1_f64; 768],
                 document: String::new(),
             },
         ];

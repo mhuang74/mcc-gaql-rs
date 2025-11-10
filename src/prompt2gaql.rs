@@ -430,7 +430,9 @@ impl FieldDocument {
 // Implement Embed trait for FieldDocument to enable embedding
 impl Embed for FieldDocument {
     fn embed(&self, embedder: &mut TextEmbedder) -> Result<(), EmbedError> {
-        embedder.embed(self.description.clone());
+        let embed_text = self.description.clone();
+        log::debug!("Embedding: '{}'", embed_text);
+        embedder.embed(embed_text);
         Ok(())
     }
 }
@@ -446,7 +448,7 @@ impl RAGAgent {
     ) -> Result<Self, anyhow::Error> {
         let openrouter_client = openrouter::Client::from_env();
         let fastembed_client = rig_fastembed::Client::new();
-        let embedding_model = fastembed_client.embedding_model(&FastembedModel::AllMiniLML6V2Q);
+        let embedding_model = fastembed_client.embedding_model(&FastembedModel::BGEBaseENV15);
 
         // Build or load query vector store with LanceDB caching
         let query_index = build_or_load_query_vector_store(query_cookbook, embedding_model).await?;
@@ -546,7 +548,7 @@ impl EnhancedRAGAgent {
 
         let openrouter_client = openrouter::Client::from_env();
         let fastembed_client = rig_fastembed::Client::new();
-        let embedding_model = fastembed_client.embedding_model(&FastembedModel::AllMiniLML6V2Q);
+        let embedding_model = fastembed_client.embedding_model(&FastembedModel::BGEBaseENV15);
 
         // Build or load query cookbook vector store with LanceDB caching
         log::info!("Initializing query cookbook embeddings for {} queries", query_cookbook.len());
