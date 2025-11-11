@@ -267,8 +267,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             prompt2gaql::convert_to_gaql(example_queries, prompt).await?
         };
 
-        log::info!("Generated GAQL Query: {:?}", query);
-        println!("Executing LLM-generated GAQL:\n {}", query);
+        log::info!("Generated GAQL Query:\n{}", query);
 
         args.gaql_query = Some(query);
     }

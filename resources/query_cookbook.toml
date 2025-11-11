@@ -316,10 +316,17 @@ Last 30-day Traffic from Performance Max Campaigns
 query = """
 	SELECT 
 	  campaign.id, 
+	  campaign.name,
+  	  campaign.advertising_channel_type,
 	  segments.date,
 	  metrics.impressions, 
 	  metrics.clicks, 
+	  metrics.ctr,
 	  metrics.cost_micros,
+	  metrics.average_cost,
+	  metrics.conversions,
+	  metrics.conversions_value,
+	  metrics.cost_per_conversion,
 	  customer.currency_code 
 	FROM campaign 
 	WHERE 
@@ -758,7 +765,7 @@ query = """
 SELECT
   customer.id,
   customer.descriptive_name,
-	campaign.id,
+  campaign.id,
   campaign.name,
   campaign.advertising_channel_type,
   campaign.status,
@@ -775,6 +782,8 @@ returns impression share metrics for Performance Max campaigns from last 30 days
 query = """
 SELECT 
   campaign.id,
+  campaign.name,
+  campaign.advertising_channel_type,
   segments.date,
   metrics.impressions,
   metrics.search_absolute_top_impression_share,

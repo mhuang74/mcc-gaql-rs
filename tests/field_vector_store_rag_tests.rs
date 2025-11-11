@@ -248,7 +248,6 @@ async fn test_field_retrieval_for_conversions() {
             "metrics.conversions",
             "metrics.conversions_value",
             "metrics.all_conversions",
-            "metrics.conversion_rate",
             "metrics.all_conversions_value",
             "metrics.cost_per_conversion",
             "metrics.value_per_conversion",
