@@ -219,6 +219,7 @@ impl RetrievalTestCase {
 }
 
 #[tokio::test]
+#[ignore = "Requires field metadata cache - run tool first to populate cache"]
 async fn test_field_retrieval_for_cost_metrics() {
     RetrievalTestCase::new(
         "cost per click and average cost metrics",
@@ -239,6 +240,7 @@ async fn test_field_retrieval_for_cost_metrics() {
 }
 
 #[tokio::test]
+#[ignore = "Requires field metadata cache - run tool first to populate cache"]
 async fn test_field_retrieval_for_conversions() {
     RetrievalTestCase::new(
         "metrics for conversions and conversion rate",
@@ -259,6 +261,7 @@ async fn test_field_retrieval_for_conversions() {
 }
 
 #[tokio::test]
+#[ignore = "Requires field metadata cache - run tool first to populate cache"]
 async fn test_field_retrieval_for_impressions_and_clicks() {
     RetrievalTestCase::new(
         "impressions, clicks, and interactions metrics",
@@ -277,6 +280,7 @@ async fn test_field_retrieval_for_impressions_and_clicks() {
 }
 
 #[tokio::test]
+#[ignore = "Requires field metadata cache - run tool first to populate cache"]
 async fn test_field_retrieval_for_impression_share_metrics() {
     RetrievalTestCase::new(
         "impression share metrics",
@@ -299,6 +303,7 @@ async fn test_field_retrieval_for_impression_share_metrics() {
 }
 
 #[tokio::test]
+#[ignore = "Requires field metadata cache - run tool first to populate cache"]
 async fn test_field_retrieval_similarity_scores() {
     // This test validates that similarity scores are reasonable
     let vector_store = get_test_field_vector_store()
@@ -362,6 +367,7 @@ async fn test_field_retrieval_similarity_scores() {
 }
 
 #[tokio::test]
+#[ignore = "Requires field metadata cache - run tool first to populate cache"]
 async fn test_field_retrieval_ranking() {
     // This test ensures more relevant fields rank higher
     let vector_store = get_test_field_vector_store()
@@ -414,6 +420,7 @@ async fn test_field_retrieval_ranking() {
 }
 
 #[tokio::test]
+#[ignore = "Requires field metadata cache - run tool first to populate cache"]
 async fn test_field_retrieval_negative_case() {
     // Test that unrelated queries don't return extremely high scores
     let vector_store = get_test_field_vector_store()
@@ -449,6 +456,7 @@ async fn test_field_retrieval_negative_case() {
 }
 
 #[tokio::test]
+#[ignore = "Requires field metadata cache - run tool first to populate cache"]
 async fn test_field_description_quality() {
     // Test that field descriptions are being generated properly
     let cache_path =
@@ -497,6 +505,7 @@ async fn test_field_description_quality() {
 }
 
 #[tokio::test]
+#[ignore = "Requires field metadata cache - run tool first to populate cache"]
 async fn test_category_specific_retrieval() {
     // Test retrieval for different categories
     let vector_store = get_test_field_vector_store()
