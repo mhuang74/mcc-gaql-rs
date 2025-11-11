@@ -16,6 +16,8 @@ jobs:
 
     steps:
     - uses: actions/checkout@v3
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
     - name: Install deps
       run: sudo apt-get -y install protobuf-compiler
     - name: Build
