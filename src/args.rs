@@ -104,6 +104,18 @@ pub struct Cli {
     /// Display current configuration and exit
     #[clap(long)]
     pub show_config: bool,
+
+    /// Refresh field metadata cache from Google Ads API
+    #[clap(long)]
+    pub refresh_field_cache: bool,
+
+    /// Show available fields for a specific resource (e.g., campaign, ad_group)
+    #[clap(long)]
+    pub show_fields: Option<String>,
+
+    /// Export field metadata summary to stdout
+    #[clap(long)]
+    pub export_field_metadata: bool,
 }
 
 pub fn parse() -> Cli {
@@ -114,6 +126,9 @@ pub fn parse() -> Cli {
         && !cli.list_child_accounts
         && !cli.setup
         && !cli.show_config
+        && !cli.refresh_field_cache
+        && cli.show_fields.is_none()
+        && !cli.export_field_metadata
     {
         let mut buffer = String::new();
         io::stdin()

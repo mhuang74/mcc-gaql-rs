@@ -3,8 +3,8 @@ use figment::{
     providers::{Env, Format, Toml},
 };
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 use std::fs;
+use std::path::PathBuf;
 
 const CRATE_NAME: &str = env!("CARGO_PKG_NAME");
 pub const TOML_CONFIG_FILENAME: &str = "config.toml";
@@ -64,6 +64,12 @@ pub struct MyConfig {
     /// If not specified, will check env var MCC_GAQL_DEV_TOKEN or use fallback
     /// Get your token at: https://developers.google.com/google-ads/api/docs/get-started/dev-token
     pub dev_token: Option<String>,
+    /// Optional field metadata cache file path
+    /// Default: ~/.cache/mcc-gaql/field_metadata.json
+    pub field_metadata_cache: Option<String>,
+    /// Optional field metadata cache TTL in days
+    /// Default: 7 days
+    pub field_metadata_ttl_days: Option<i64>,
 }
 
 /// Resolved runtime configuration combining CLI args and config file
@@ -78,6 +84,8 @@ pub struct ResolvedConfig {
     pub queries_filename: Option<String>,
     pub customerids_filename: Option<String>,
     pub dev_token: Option<String>,
+    pub field_metadata_cache: String,
+    pub field_metadata_ttl_days: i64,
 }
 
 impl ResolvedConfig {
@@ -108,7 +116,9 @@ impl ResolvedConfig {
             );
             validate_and_normalize_customer_id(customer_id)
                 .context("Invalid --customer-id argument")?
-        } else if let Some(config_customer_id) = config.as_ref().and_then(|c| c.customer_id.as_ref()) {
+        } else if let Some(config_customer_id) =
+            config.as_ref().and_then(|c| c.customer_id.as_ref())
+        {
             // Fallback: use config customer_id as MCC (for solo accounts)
             log::warn!(
                 "No mcc_id specified. Using customer_id ({}) from config as MCC. \
@@ -136,9 +146,7 @@ impl ResolvedConfig {
             .or_else(|| config.as_ref().and_then(|c| c.user_email.clone()));
 
         // Check if there's an explicit token cache filename from config
-        let explicit_token_cache = config
-            .as_ref()
-            .and_then(|c| c.token_cache_filename.clone());
+        let explicit_token_cache = config.as_ref().and_then(|c| c.token_cache_filename.clone());
 
         // Resolve token cache filename with priority:
         // 1. Explicit token cache filename from config (highest priority)
@@ -168,10 +176,7 @@ impl ResolvedConfig {
             .customer_id
             .as_ref()
             .or_else(|| config.as_ref().and_then(|c| c.customer_id.as_ref()))
-            .map(|id| {
-                validate_and_normalize_customer_id(id)
-                    .context("Invalid customer_id")
-            })
+            .map(|id| validate_and_normalize_customer_id(id).context("Invalid customer_id"))
             .transpose()?;
 
         // Resolve format: CLI > config > default ("table")
@@ -186,16 +191,29 @@ impl ResolvedConfig {
             .unwrap_or_else(|| "table".to_string());
 
         // Resolve keep_going: CLI flag > config > default (false)
-        let keep_going = args.keep_going
-            || config
-                .as_ref()
-                .and_then(|c| c.keep_going)
-                .unwrap_or(false);
+        let keep_going =
+            args.keep_going || config.as_ref().and_then(|c| c.keep_going).unwrap_or(false);
 
         // Config file fields (only available if profile specified)
         let queries_filename = config.as_ref().and_then(|c| c.queries_filename.clone());
         let customerids_filename = config.as_ref().and_then(|c| c.customerids_filename.clone());
         let dev_token = config.as_ref().and_then(|c| c.dev_token.clone());
+
+        // Field metadata cache settings
+        let field_metadata_cache = config
+            .as_ref()
+            .and_then(|c| c.field_metadata_cache.clone())
+            .or_else(|| {
+                crate::field_metadata::get_default_cache_path()
+                    .ok()
+                    .map(|p| p.display().to_string())
+            })
+            .unwrap_or_else(|| "~/.cache/mcc-gaql/field_metadata.json".to_string());
+
+        let field_metadata_ttl_days = config
+            .as_ref()
+            .and_then(|c| c.field_metadata_ttl_days)
+            .unwrap_or(30);
 
         Ok(Self {
             mcc_customer_id,
@@ -207,6 +225,8 @@ impl ResolvedConfig {
             queries_filename,
             customerids_filename,
             dev_token,
+            field_metadata_cache,
+            field_metadata_ttl_days,
         })
     }
 
@@ -491,7 +511,6 @@ pub fn display_config(profile_name: Option<&str>) -> anyhow::Result<()> {
         println!("  (none set)");
     }
 
-
     Ok(())
 }
 
@@ -613,6 +632,8 @@ mod tests {
             customerids_filename: Some("customerids.txt".to_string()),
             queries_filename: Some("query_cookbook.toml".to_string()),
             dev_token: Some("test-dev-token".to_string()),
+            field_metadata_cache: None,
+            field_metadata_ttl_days: None,
         };
 
         // Serialize to TOML string
@@ -627,8 +648,14 @@ mod tests {
         assert_eq!(config.customer_id, deserialized.customer_id);
         assert_eq!(config.format, deserialized.format);
         assert_eq!(config.keep_going, deserialized.keep_going);
-        assert_eq!(config.token_cache_filename, deserialized.token_cache_filename);
-        assert_eq!(config.customerids_filename, deserialized.customerids_filename);
+        assert_eq!(
+            config.token_cache_filename,
+            deserialized.token_cache_filename
+        );
+        assert_eq!(
+            config.customerids_filename,
+            deserialized.customerids_filename
+        );
         assert_eq!(config.queries_filename, deserialized.queries_filename);
     }
 
@@ -644,6 +671,8 @@ mod tests {
             customerids_filename: None,
             queries_filename: None,
             dev_token: None,
+            field_metadata_cache: None,
+            field_metadata_ttl_days: None,
         };
 
         // Serialize to TOML string
@@ -683,13 +712,16 @@ mod tests {
             queries_filename: Some("query_cookbook.toml".to_string()),
             customerids_filename: Some("customerids.txt".to_string()),
             dev_token: Some("test-dev-token".to_string()),
+            field_metadata_cache: "~/.cache/mcc-gaql/field_metadata.json".to_string(),
+            field_metadata_ttl_days: 7,
         };
 
         // Serialize to TOML string
         let toml_str = toml::to_string(&config).expect("Failed to serialize");
 
         // Deserialize back
-        let deserialized: ResolvedConfig = toml::from_str(&toml_str).expect("Failed to deserialize");
+        let deserialized: ResolvedConfig =
+            toml::from_str(&toml_str).expect("Failed to deserialize");
 
         // Verify round-trip
         assert_eq!(config.mcc_customer_id, deserialized.mcc_customer_id);
@@ -697,9 +729,15 @@ mod tests {
         assert_eq!(config.customer_id, deserialized.customer_id);
         assert_eq!(config.format, deserialized.format);
         assert_eq!(config.keep_going, deserialized.keep_going);
-        assert_eq!(config.token_cache_filename, deserialized.token_cache_filename);
+        assert_eq!(
+            config.token_cache_filename,
+            deserialized.token_cache_filename
+        );
         assert_eq!(config.queries_filename, deserialized.queries_filename);
-        assert_eq!(config.customerids_filename, deserialized.customerids_filename);
+        assert_eq!(
+            config.customerids_filename,
+            deserialized.customerids_filename
+        );
     }
 
     #[test]
@@ -736,7 +774,10 @@ mod tests {
         assert_eq!(config.customer_id, None);
         assert_eq!(config.format, None);
         assert_eq!(config.keep_going, None);
-        assert_eq!(config.token_cache_filename, Some("tokencache.json".to_string()));
+        assert_eq!(
+            config.token_cache_filename,
+            Some("tokencache.json".to_string())
+        );
     }
 
     #[test]
@@ -770,6 +811,9 @@ mod tests {
             sortby: vec![],
             setup: false,
             show_config: false,
+            refresh_field_cache: false,
+            show_fields: None,
+            export_field_metadata: false,
         };
 
         // Create resolved config with customer_id from config file
@@ -783,6 +827,8 @@ mod tests {
             queries_filename: None,
             customerids_filename: None,
             dev_token: None,
+            field_metadata_cache: "~/.cache/mcc-gaql/field_metadata.json".to_string(),
+            field_metadata_ttl_days: 7,
         };
 
         // Validation should succeed because resolved config has customer_id
@@ -797,5 +843,4 @@ mod tests {
             result.err()
         );
     }
-
 }

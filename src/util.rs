@@ -7,7 +7,7 @@ use std::{
     path::Path,
 };
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use toml::Value;
 
 #[allow(dead_code)]
@@ -105,12 +105,14 @@ where
 
                 // Validate and normalize customer ID
                 let normalized = crate::config::validate_and_normalize_customer_id(trimmed)
-                    .map_err(|e| anyhow::anyhow!(
-                        "Invalid customer ID on line {} in file {}: {}",
-                        line_num + 1,
-                        filename.as_ref().display(),
-                        e
-                    ))?;
+                    .map_err(|e| {
+                        anyhow::anyhow!(
+                            "Invalid customer ID on line {} in file {}: {}",
+                            line_num + 1,
+                            filename.as_ref().display(),
+                            e
+                        )
+                    })?;
 
                 customer_ids.push(normalized);
             }
@@ -131,8 +133,9 @@ where
 
 // Query entries from cookbook
 // Make it sortable and comparable for vector search
-#[derive(Serialize, Clone, Debug, Eq, PartialEq, Default)]
+#[derive(Serialize, Deserialize, Hash, Clone, Debug, Eq, PartialEq, Default)]
 pub struct QueryEntry {
+    pub id: String,
     pub description: String,
     pub query: String,
 }
@@ -152,7 +155,35 @@ impl QueryEntry {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        QueryEntry { description, query }
+
+        // Generate stable ID from description and query content
+        let id = format!(
+            "query_{}_{}",
+            description
+                .chars()
+                .map(|c| c.to_ascii_lowercase())
+                .filter(|c| c.is_alphanumeric() || *c == ' ')
+                .collect::<String>()
+                .replace(' ', "_")
+                .chars()
+                .take(20)
+                .collect::<String>(),
+            query
+                .chars()
+                .map(|c| c.to_ascii_lowercase())
+                .filter(|c| c.is_alphanumeric() || *c == ' ')
+                .collect::<String>()
+                .replace(' ', "_")
+                .chars()
+                .take(20)
+                .collect::<String>()
+        );
+
+        QueryEntry {
+            id,
+            description,
+            query,
+        }
     }
 }
 
@@ -197,7 +228,11 @@ where
             Ok(query_map)
         }
         Err(e) => {
-            bail!("Unable to load named query file: {:?}. Error: {}", filename, e);
+            bail!(
+                "Unable to load named query file: {:?}. Error: {}",
+                filename,
+                e
+            );
         }
     }
 }
@@ -221,7 +256,7 @@ mod tests {
         let customer_ids = result.unwrap();
         assert_eq!(customer_ids.len(), 3);
         assert_eq!(customer_ids[0], "1234567890");
-        assert_eq!(customer_ids[1], "1234567890");  // Normalized from hyphens
+        assert_eq!(customer_ids[1], "1234567890"); // Normalized from hyphens
         assert_eq!(customer_ids[2], "9876543210");
     }
 
@@ -229,7 +264,7 @@ mod tests {
     async fn test_get_child_account_ids_from_file_invalid_format() {
         let mut temp_file = NamedTempFile::new().unwrap();
         writeln!(temp_file, "1234567890").unwrap();
-        writeln!(temp_file, "invalid123").unwrap();  // Invalid: contains letters
+        writeln!(temp_file, "invalid123").unwrap(); // Invalid: contains letters
         writeln!(temp_file, "9876543210").unwrap();
         temp_file.flush().unwrap();
 
@@ -244,7 +279,7 @@ mod tests {
     async fn test_get_child_account_ids_from_file_invalid_length() {
         let mut temp_file = NamedTempFile::new().unwrap();
         writeln!(temp_file, "1234567890").unwrap();
-        writeln!(temp_file, "123456789").unwrap();  // Invalid: only 9 digits
+        writeln!(temp_file, "123456789").unwrap(); // Invalid: only 9 digits
         temp_file.flush().unwrap();
 
         let result = get_child_account_ids_from_file(temp_file.path()).await;
@@ -258,8 +293,8 @@ mod tests {
     async fn test_get_child_account_ids_from_file_empty_lines() {
         let mut temp_file = NamedTempFile::new().unwrap();
         writeln!(temp_file, "1234567890").unwrap();
-        writeln!(temp_file).unwrap();  // Empty line - should be skipped
-        writeln!(temp_file, "   ").unwrap();  // Whitespace only - should be skipped
+        writeln!(temp_file).unwrap(); // Empty line - should be skipped
+        writeln!(temp_file, "   ").unwrap(); // Whitespace only - should be skipped
         writeln!(temp_file, "9876543210").unwrap();
         temp_file.flush().unwrap();
 

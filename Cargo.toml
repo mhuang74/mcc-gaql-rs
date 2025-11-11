@@ -1,7 +1,7 @@
 [package]
 name = "mcc-gaql"
 description = "Execute GAQL across MCC child accounts."
-version = "0.12.4"
+version = "0.13.0"
 authors = ["Michael S. Huang <mhuang74@gmail.com>"]
 edition = "2024"
 
@@ -34,9 +34,12 @@ toml = "0.5"
 tonic = { version = "0.14", features = ["transport", "tls-ring", "tls-native-roots"] }
 serde_json = "1.0"
 yup-oauth2 = "6.7"
-rig-core = "0.7.0"
-# rig-lancedb = "0.2.3"
-# lancedb = "0.15.0"
+rig-core = "0.24.0"
+rig-fastembed = "0.2.16"
+rig-lancedb = "0.2.27"
+lancedb = "0.22"
+arrow-array = "56.2.0"
+arrow-schema = "56.2.0"
 
 [dev-dependencies]
 tempfile = "3.8"

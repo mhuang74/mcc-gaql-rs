@@ -59,6 +59,10 @@ mcc-gaql-rs/
 | [dialoguer](https://docs.rs/dialoguer/) | Interactive setup wizard prompts |
 | [flexi_logger](https://docs.rs/flexi_logger/) | Flexible logging configuration |
 | [rig-core](https://docs.rs/rig-core/) | LLM integration for natural language queries |
+| [rig-lancedb](https://docs.rs/rig-lancedb/) | LanceDB vector store for embedding cache persistence |
+| [lancedb](https://docs.rs/lancedb/) | Vector database for fast embedding retrieval |
+| [arrow-array](https://docs.rs/arrow-array/) | Apache Arrow array data structures (for LanceDB) |
+| [arrow-schema](https://docs.rs/arrow-schema/) | Apache Arrow schema definitions (for LanceDB) |
 | [cacache](https://docs.rs/cacache/) | OAuth token caching |
 | [anyhow](https://docs.rs/anyhow/) | Error handling |
 
