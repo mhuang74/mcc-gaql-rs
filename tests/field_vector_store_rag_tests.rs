@@ -131,7 +131,7 @@ impl RetrievalTestCase {
             expected_fields,
             limit: 10,
             min_precision: 0.3,
-            max_top_distance: 0.5,  // With cosine distance, lower = more similar
+            max_top_distance: 0.3,  // With cosine distance, lower = more similar
             should_contain_keywords: Vec::new(),
         }
     }
@@ -231,7 +231,7 @@ impl RetrievalTestCase {
 #[tokio::test]
 async fn test_field_retrieval_for_cost_metrics() {
     RetrievalTestCase::new(
-        "cost per click and average cost",
+        "cost per click and average cost metrics",
         vec![
             "metrics.average_cpc",
             "metrics.cost_micros",
@@ -251,7 +251,7 @@ async fn test_field_retrieval_for_cost_metrics() {
 #[tokio::test]
 async fn test_field_retrieval_for_conversions() {
     RetrievalTestCase::new(
-        "conversion data and conversion rate",
+        "metrics for conversions and conversion rate",
         vec![
             "metrics.conversions",
             "metrics.conversions_value",
@@ -271,7 +271,7 @@ async fn test_field_retrieval_for_conversions() {
 #[tokio::test]
 async fn test_field_retrieval_for_impressions_and_clicks() {
     RetrievalTestCase::new(
-        "impressions and clicks",
+        "impressions, clicks, and interactions metrics",
         vec![
             "metrics.impressions",
             "metrics.clicks",
@@ -347,10 +347,10 @@ async fn test_field_retrieval_similarity_scores() {
         );
     }
 
-    // Top result should have a low distance for a specific query (< 0.5 means good similarity)
+    // Top result should have a low distance for a specific query (< 0.3 means good similarity)
     assert!(
-        results[0].0 < 0.5,
-        "Top result should have distance < 0.5 for specific query (lower = more similar), got: {}",
+        results[0].0 < 0.3,
+        "Top result should have distance < 0.3 for specific query (lower = more similar), got: {}",
         results[0].0
     );
 
@@ -394,7 +394,7 @@ async fn test_field_retrieval_ranking() {
         .collect();
 
     // Highly relevant fields for video queries
-    let highly_relevant = ["metrics.video_views", "metrics.video_view_rate"];
+    let highly_relevant = ["metrics.video_trueview_views", "metrics.video_trueview_view_rate"];
 
     // Find positions of highly relevant fields
     let mut positions = Vec::new();
@@ -441,19 +441,19 @@ async fn test_field_retrieval_negative_case() {
     // Debug output
     print_retrieval_results(query, &results);
 
-    // For a vague query, top score shouldn't be too high
+    // For a vague query, best score shouldn't have low distance
     // (This helps identify if embeddings are working properly)
     if !results.is_empty() {
-        let top_score = results[0].0;
-        println!("Top score for vague query: {:.3}", top_score);
+        let best_score = results[0].0;
+        println!("Best distance score for vague query: {:.3}", best_score);
 
-        // A vague query should have lower scores than specific queries
+        // A vague query should have higher distance scores than specific queries
         // This is a soft check - if this fails, it might indicate the
         // embedding model or descriptions need improvement
         assert!(
-            top_score < 0.6,
-            "Vague query shouldn't have very high scores. Got: {}",
-            top_score
+            best_score > 0.3,
+            "Vague query shouldn't have very low distance scores. Got: {}",
+            best_score
         );
     }
 }

@@ -160,7 +160,16 @@ impl FieldMetadataCache {
                 2 => "ATTRIBUTE",
                 3 => "SEGMENT",
                 4 => "METRIC",
-                _ => "UNKNOWN",
+                _ => {
+                    // Fallback: use row.name to determine category
+                    if row.name.starts_with("metrics.") {
+                        "METRIC"
+                    } else if row.name.starts_with("segments.") {
+                        "SEGMENT"
+                    } else {
+                        "UNKNOWN"
+                    }
+                }
             }.to_string();
 
             // Convert data_type enum to string representation

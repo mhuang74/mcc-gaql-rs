@@ -133,6 +133,7 @@ where
 // Make it sortable and comparable for vector search
 #[derive(Serialize, Deserialize, Hash, Clone, Debug, Eq, PartialEq, Default)]
 pub struct QueryEntry {
+    pub id: String,
     pub description: String,
     pub query: String,
 }
@@ -152,7 +153,26 @@ impl QueryEntry {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        QueryEntry { description, query }
+        
+        // Generate stable ID from description and query content
+        let id = format!("query_{}_{}",
+            description.chars().map(|c| c.to_ascii_lowercase())
+                .filter(|c| c.is_alphanumeric() || *c == ' ')
+                .collect::<String>()
+                .replace(' ', "_")
+                .chars()
+                .take(20)
+                .collect::<String>(),
+            query.chars().map(|c| c.to_ascii_lowercase())
+                .filter(|c| c.is_alphanumeric() || *c == ' ')
+                .collect::<String>()
+                .replace(' ', "_")
+                .chars()
+                .take(20)
+                .collect::<String>()
+        );
+        
+        QueryEntry { id, description, query }
     }
 }
 

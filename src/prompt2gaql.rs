@@ -1,4 +1,5 @@
 use std::vec;
+use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
@@ -140,11 +141,30 @@ async fn build_or_load_query_vector_store(
 
     log::info!("Query cookbook embeddings generated in {:.2}s", embedding_start.elapsed().as_secs_f64());
 
-    // Extract just the embeddings from the results
-    let embedding_vecs: Vec<_> = embeddings.iter()
-        .flat_map(|(_, emb)| emb.iter())
-        .cloned()
-        .collect();
+    // Create document-to-embedding mapping to preserve associations
+    // The embeddings result contains (document, OneOrMany<embedding>) tuples
+    let mut id_to_embedding = HashMap::new();
+    for (document, embedding) in embeddings.iter() {
+        // Use the document to get its ID and associate it with the embedding
+        for emb in embedding.iter() {
+            id_to_embedding.insert(document.id.clone(), emb.clone());
+        }
+    }
+
+    // Extract embeddings in original document order using stable IDs
+    let mut embedding_vecs = Vec::with_capacity(query_cookbook.len());
+    for document in &query_cookbook {
+        if let Some(embedding) = id_to_embedding.get(&document.id) {
+            embedding_vecs.push(embedding.clone());
+        } else {
+            log::warn!("Missing embedding for document ID: {}", document.id);
+            // Use zero vector as fallback
+            embedding_vecs.push(rig::embeddings::Embedding {
+                vec: vec![0.0_f64; 768],
+                document: String::new(),
+            });
+        }
+    }
 
     // Save to LanceDB and get table
     let table = lancedb_utils::build_or_load_query_vector_store(
@@ -235,11 +255,30 @@ pub async fn build_or_load_field_vector_store(
 
     log::info!("Field metadata embeddings generated in {:.2}s", embedding_start.elapsed().as_secs_f64());
 
-    // Extract just the embeddings from the results
-    let embedding_vecs: Vec<_> = field_embeddings.iter()
-        .flat_map(|(_, emb)| emb.iter())
-        .cloned()
-        .collect();
+    // Create document-to-embedding mapping to preserve associations
+    // The embeddings result contains (document, OneOrMany<embedding>) tuples
+    let mut id_to_embedding = HashMap::new();
+    for (document, embedding) in field_embeddings.iter() {
+        // Use the document to get its ID and associate it with the embedding
+        for emb in embedding.iter() {
+            id_to_embedding.insert(document.id.clone(), emb.clone());
+        }
+    }
+
+    // Extract embeddings in original document order using stable IDs
+    let mut embedding_vecs = Vec::with_capacity(field_docs.len());
+    for document in &field_docs {
+        if let Some(embedding) = id_to_embedding.get(&document.id) {
+            embedding_vecs.push(embedding.clone());
+        } else {
+            log::warn!("Missing embedding for document ID: {}", document.id);
+            // Use zero vector as fallback
+            embedding_vecs.push(rig::embeddings::Embedding {
+                vec: vec![0.0_f64; 768],
+                document: String::new(),
+            });
+        }
+    }
 
     // Save to LanceDB and get table
     let table = lancedb_utils::build_or_load_field_vector_store(
@@ -299,6 +338,7 @@ impl Embed for QueryEntry {
 /// Document wrapper for field metadata to enable RAG-based field retrieval
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct FieldDocument {
+    pub id: String,
     pub field: FieldMetadata,
     pub description: String,
 }
@@ -336,7 +376,11 @@ impl FieldDocument {
     /// Create a new field document with synthetic description
     pub fn new(field: FieldMetadata) -> Self {
         let description = Self::generate_description(&field);
-        Self { field, description }
+        
+        // Generate stable ID from field name
+        let id = field.name.clone();
+        
+        Self { id, field, description }
     }
 
     /// Generate a synthetic description for better semantic matching
@@ -361,16 +405,34 @@ impl FieldDocument {
 
         // Common patterns
         if name_lower.contains("conversion") {
-            return "tracking conversions and sales".to_string();
+            return "tracking conversions and sales; key performance metrics".to_string();
         }
         if name_lower.contains("click") {
-            return "tracking user clicks".to_string();
+            return "tracking user clicks; key performance metrics".to_string();
         }
+        if name_lower.contains("interactions") {
+            return "tracking non-click forms of intentional user response to ad views".to_string();
+        } 
+        if name_lower.contains("impression share") {
+            return "tracking share of ad views; key performance metrics".to_string();
+        }        
         if name_lower.contains("impression") {
-            return "tracking ad views".to_string();
+            return "tracking ad views; key performance metrics".to_string();
         }
         if name_lower.contains("cost") {
-            return "tracking advertising costs".to_string();
+            return "tracking advertising costs; key performance metrics".to_string();
+        }
+        if name_lower.contains("cpc") {
+            return "tracking advertising costs per click".to_string();
+        }
+        if name_lower.contains("cpe") {
+            return "tracking advertising costs per engagement for social or video ads".to_string();
+        }
+        if name_lower.contains("cpm") {
+            return "tracking advertising costs per thousand impressions for display ads".to_string();
+        }
+        if name_lower.contains("cpv") {
+            return "tracking advertising costs per view for video ads".to_string();
         }
         if name_lower.contains("budget") {
             return "managing campaign budgets".to_string();
@@ -876,14 +938,17 @@ mod tests {
         // Create a sample query cookbook
         let queries = vec![
             QueryEntry {
+                id: "query_get_all_campaigns_select_campaig".to_string(),
                 description: "Get all campaigns".to_string(),
                 query: "SELECT campaign.id, campaign.name FROM campaign".to_string(),
             },
             QueryEntry {
+                id: "query_get_enabled_campaigns_select_campaig".to_string(),
                 description: "Get enabled campaigns".to_string(),
                 query: "SELECT campaign.id FROM campaign WHERE campaign.status = 'ENABLED'".to_string(),
             },
             QueryEntry {
+                id: "query_get_campaign_metrics_select_campaig".to_string(),
                 description: "Get campaign metrics".to_string(),
                 query: "SELECT campaign.id, metrics.impressions, metrics.clicks FROM campaign".to_string(),
             },
@@ -916,6 +981,7 @@ mod tests {
     fn test_compute_query_cookbook_hash_single_query() {
         let queries = vec![
             QueryEntry {
+                id: "query_single_query_test_select_campaig".to_string(),
                 description: "Single query test".to_string(),
                 query: "SELECT campaign.id FROM campaign".to_string(),
             },
@@ -932,10 +998,12 @@ mod tests {
         // Create two query cookbooks with same queries in different order
         let queries_order1 = vec![
             QueryEntry {
+                id: "query_query_a_select_campaig".to_string(),
                 description: "Query A".to_string(),
                 query: "SELECT campaign.id FROM campaign".to_string(),
             },
             QueryEntry {
+                id: "query_query_b_select_ad_group".to_string(),
                 description: "Query B".to_string(),
                 query: "SELECT ad_group.id FROM ad_group".to_string(),
             },
@@ -943,10 +1011,12 @@ mod tests {
 
         let queries_order2 = vec![
             QueryEntry {
+                id: "query_query_b_select_ad_group".to_string(),
                 description: "Query B".to_string(),
                 query: "SELECT ad_group.id FROM ad_group".to_string(),
             },
             QueryEntry {
+                id: "query_query_a_select_campaig".to_string(),
                 description: "Query A".to_string(),
                 query: "SELECT campaign.id FROM campaign".to_string(),
             },
@@ -964,6 +1034,7 @@ mod tests {
         // Create two separate instances with identical content
         let queries1 = vec![
             QueryEntry {
+                id: "query_test_query_select_campaig".to_string(),
                 description: "Test query".to_string(),
                 query: "SELECT campaign.id FROM campaign".to_string(),
             },
@@ -971,6 +1042,7 @@ mod tests {
 
         let queries2 = vec![
             QueryEntry {
+                id: "query_test_query_select_campaig".to_string(),
                 description: "Test query".to_string(),
                 query: "SELECT campaign.id FROM campaign".to_string(),
             },
@@ -987,6 +1059,7 @@ mod tests {
     fn test_compute_query_cookbook_hash_different_content() {
         let queries1 = vec![
             QueryEntry {
+                id: "query_query_a_select_campaig".to_string(),
                 description: "Query A".to_string(),
                 query: "SELECT campaign.id FROM campaign".to_string(),
             },
@@ -994,6 +1067,7 @@ mod tests {
 
         let queries2 = vec![
             QueryEntry {
+                id: "query_query_b_select_ad_group".to_string(),
                 description: "Query B".to_string(),
                 query: "SELECT ad_group.id FROM ad_group".to_string(),
             },
@@ -1011,6 +1085,7 @@ mod tests {
         // Test that changing only the description changes the hash
         let queries1 = vec![
             QueryEntry {
+                id: "query_original_description_select_campaig".to_string(),
                 description: "Original description".to_string(),
                 query: "SELECT campaign.id FROM campaign".to_string(),
             },
@@ -1018,6 +1093,7 @@ mod tests {
 
         let queries2 = vec![
             QueryEntry {
+                id: "query_modified_description_select_campaig".to_string(),
                 description: "Modified description".to_string(),
                 query: "SELECT campaign.id FROM campaign".to_string(),
             },
@@ -1035,6 +1111,7 @@ mod tests {
         // Test that changing only the query changes the hash
         let queries1 = vec![
             QueryEntry {
+                id: "query_same_description_select_campaig".to_string(),
                 description: "Same description".to_string(),
                 query: "SELECT campaign.id FROM campaign".to_string(),
             },
@@ -1042,6 +1119,7 @@ mod tests {
 
         let queries2 = vec![
             QueryEntry {
+                id: "query_same_description_select_campaig".to_string(),
                 description: "Same description".to_string(),
                 query: "SELECT campaign.name FROM campaign".to_string(),
             },

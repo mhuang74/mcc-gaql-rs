@@ -129,12 +129,9 @@ pub fn queries_to_record_batch(
 
     let schema = query_cookbook_schema();
 
-    // Build column arrays
+    // Build column arrays - use document IDs directly
     let ids: StringArray = StringArray::from_iter_values(
-        queries
-            .iter()
-            .enumerate()
-            .map(|(i, _)| format!("query_{}", i))
+        queries.iter().map(|q| q.id.as_str())
     );
 
     let descriptions: StringArray = StringArray::from_iter_values(
@@ -145,7 +142,7 @@ pub fn queries_to_record_batch(
         queries.iter().map(|q| q.query.as_str())
     );
 
-    // Convert embeddings to FixedSizeListArray
+    // Convert embeddings to FixedSizeListArray - embeddings are already in correct order
     let embedding_values: Vec<f64> = embeddings
         .iter()
         .flat_map(|e| e.vec.clone())
@@ -180,9 +177,9 @@ pub fn fields_to_record_batch(
 
     let schema = field_metadata_schema();
 
-    // Build column arrays
+    // Build column arrays - use document IDs directly
     let ids: StringArray = StringArray::from_iter_values(
-        fields.iter().map(|f| f.field.name.as_str())
+        fields.iter().map(|f| f.id.as_str())
     );
 
     let descriptions: StringArray = StringArray::from_iter_values(
@@ -502,10 +499,12 @@ mod tests {
     fn test_queries_to_record_batch() {
         let queries = vec![
             QueryEntry {
+                id: "query_test_query_1_select_campaig".to_string(),
                 description: "Test query 1".to_string(),
                 query: "SELECT campaign.name FROM campaign".to_string(),
             },
             QueryEntry {
+                id: "query_test_query_2_select_campaig".to_string(),
                 description: "Test query 2".to_string(),
                 query: "SELECT campaign.id FROM campaign".to_string(),
             },
@@ -534,6 +533,7 @@ mod tests {
     fn test_fields_to_record_batch() {
         let fields = vec![
             FieldDocument {
+                id: "campaign.name".to_string(),
                 field: FieldMetadata {
                     name: "campaign.name".to_string(),
                     category: "ATTRIBUTE".to_string(),
