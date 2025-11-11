@@ -1,6 +1,6 @@
 use mcc_gaql::field_metadata::FieldMetadataCache;
-use mcc_gaql::prompt2gaql::{build_or_load_field_vector_store, FieldDocument, FieldDocumentFlat};
-use rig::vector_store::{VectorStoreIndex, VectorSearchRequest};
+use mcc_gaql::prompt2gaql::{FieldDocument, FieldDocumentFlat, build_or_load_field_vector_store};
+use rig::vector_store::{VectorSearchRequest, VectorStoreIndex};
 use rig_fastembed::{Client as FastembedClient, FastembedModel};
 use rig_lancedb::LanceDbVectorIndex;
 use std::collections::HashSet;
@@ -18,10 +18,7 @@ fn print_retrieval_results(query: &str, results: &[(f64, String, FieldDocumentFl
 }
 
 /// Calculate precision: what percentage of retrieved fields are relevant
-fn calculate_precision(
-    retrieved_fields: &[String],
-    expected_fields: &HashSet<String>,
-) -> f32 {
+fn calculate_precision(retrieved_fields: &[String], expected_fields: &HashSet<String>) -> f32 {
     let relevant_count = retrieved_fields
         .iter()
         .filter(|f| expected_fields.contains(*f))
@@ -35,10 +32,7 @@ fn calculate_precision(
 }
 
 /// Calculate recall: what percentage of expected fields were retrieved
-fn calculate_recall(
-    retrieved_fields: &[String],
-    expected_fields: &HashSet<String>,
-) -> f32 {
+fn calculate_recall(retrieved_fields: &[String], expected_fields: &HashSet<String>) -> f32 {
     let relevant_count = retrieved_fields
         .iter()
         .filter(|f| expected_fields.contains(*f))
@@ -57,7 +51,8 @@ fn calculate_recall(
 /// ```
 /// mcc-gaql --myprofile -n "how did impression share metrics changed over past 30 days"
 /// ```
-async fn get_test_field_vector_store() -> anyhow::Result<LanceDbVectorIndex<rig_fastembed::EmbeddingModel>> {
+async fn get_test_field_vector_store()
+-> anyhow::Result<LanceDbVectorIndex<rig_fastembed::EmbeddingModel>> {
     // Load field metadata cache from default location (platform-specific)
     let cache_path = mcc_gaql::field_metadata::get_default_cache_path()?;
 
@@ -131,7 +126,7 @@ impl RetrievalTestCase {
             expected_fields,
             limit: 10,
             min_precision: 0.3,
-            max_top_distance: 0.3,  // With cosine distance, lower = more similar
+            max_top_distance: 0.3, // With cosine distance, lower = more similar
             should_contain_keywords: Vec::new(),
         }
     }
@@ -168,17 +163,12 @@ impl RetrievalTestCase {
         print_retrieval_results(self.query, &results);
 
         // Extract retrieved fields
-        let retrieved_fields: Vec<String> = results
-            .iter()
-            .map(|(_, _, doc)| doc.id.clone())
-            .collect();
+        let retrieved_fields: Vec<String> =
+            results.iter().map(|(_, _, doc)| doc.id.clone()).collect();
 
         // Convert expected fields to HashSet
-        let expected_set: HashSet<String> = self
-            .expected_fields
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
+        let expected_set: HashSet<String> =
+            self.expected_fields.iter().map(|s| s.to_string()).collect();
 
         // Calculate metrics
         let precision = calculate_precision(&retrieved_fields, &expected_set);
@@ -214,16 +204,13 @@ impl RetrievalTestCase {
 
         // Check keywords if specified
         if !self.should_contain_keywords.is_empty() {
-            let has_keyword = retrieved_fields.iter().any(|f| {
-                self.should_contain_keywords
-                    .iter()
-                    .any(|kw| f.contains(kw))
-            });
+            let has_keyword = retrieved_fields
+                .iter()
+                .any(|f| self.should_contain_keywords.iter().any(|kw| f.contains(kw)));
             assert!(
                 has_keyword,
                 "Results should contain at least one of {:?}. Retrieved: {:?}",
-                self.should_contain_keywords,
-                retrieved_fields
+                self.should_contain_keywords, retrieved_fields
             );
         }
 
@@ -391,13 +378,13 @@ async fn test_field_retrieval_ranking() {
     // Debug output
     print_retrieval_results(query, &results);
 
-    let retrieved_fields: Vec<String> = results
-        .iter()
-        .map(|(_, _, doc)| doc.id.clone())
-        .collect();
+    let retrieved_fields: Vec<String> = results.iter().map(|(_, _, doc)| doc.id.clone()).collect();
 
     // Highly relevant fields for video queries
-    let highly_relevant = ["metrics.video_trueview_views", "metrics.video_trueview_view_rate"];
+    let highly_relevant = [
+        "metrics.video_trueview_views",
+        "metrics.video_trueview_view_rate",
+    ];
 
     // Find positions of highly relevant fields
     let mut positions = Vec::new();
@@ -464,8 +451,8 @@ async fn test_field_retrieval_negative_case() {
 #[tokio::test]
 async fn test_field_description_quality() {
     // Test that field descriptions are being generated properly
-    let cache_path = mcc_gaql::field_metadata::get_default_cache_path()
-        .expect("Failed to get cache path");
+    let cache_path =
+        mcc_gaql::field_metadata::get_default_cache_path().expect("Failed to get cache path");
 
     let field_cache = FieldMetadataCache::load_or_fetch(None, &cache_path, 999)
         .await
@@ -491,7 +478,9 @@ async fn test_field_description_quality() {
         // Description should contain the field name (with dots/underscores converted to spaces)
         let normalized_name = doc.field.name.replace(['.', '_'], " ");
         assert!(
-            doc.description.to_lowercase().contains(&normalized_name.to_lowercase()),
+            doc.description
+                .to_lowercase()
+                .contains(&normalized_name.to_lowercase()),
             "Description should contain field name. Field: {}, Description: {}",
             doc.field.name,
             doc.description
@@ -500,7 +489,11 @@ async fn test_field_description_quality() {
         sample_count += 1;
     }
 
-    assert_eq!(sample_count, max_samples, "Should test {} samples", max_samples);
+    assert_eq!(
+        sample_count, max_samples,
+        "Should test {} samples",
+        max_samples
+    );
 }
 
 #[tokio::test]
@@ -511,9 +504,25 @@ async fn test_category_specific_retrieval() {
         .expect("Failed to load field vector store");
 
     let test_cases = vec![
-        ("performance metrics", "METRIC", vec!["metrics.impressions", "metrics.clicks", "metrics.conversions"]),
-        ("campaign name", "ATTRIBUTE", vec!["campaign.name", "campaign.id"]),
-        ("date segments", "SEGMENT", vec!["segments.date", "segments.week", "segments.month"]),
+        (
+            "performance metrics",
+            "METRIC",
+            vec![
+                "metrics.impressions",
+                "metrics.clicks",
+                "metrics.conversions",
+            ],
+        ),
+        (
+            "campaign name",
+            "ATTRIBUTE",
+            vec!["campaign.name", "campaign.id"],
+        ),
+        (
+            "date segments",
+            "SEGMENT",
+            vec!["segments.date", "segments.week", "segments.month"],
+        ),
     ];
 
     for (query, expected_category, expected_fields) in test_cases {
@@ -525,27 +534,38 @@ async fn test_category_specific_retrieval() {
 
         print_retrieval_results(query, &results);
 
-        let retrieved_fields: Vec<String> = results
-            .iter()
-            .map(|(_, _, doc)| doc.id.clone())
-            .collect();
+        let retrieved_fields: Vec<String> =
+            results.iter().map(|(_, _, doc)| doc.id.clone()).collect();
 
         // Check that at least one expected field is present
-        let has_expected = expected_fields.iter().any(|ef| retrieved_fields.contains(&ef.to_string()));
+        let has_expected = expected_fields
+            .iter()
+            .any(|ef| retrieved_fields.contains(&ef.to_string()));
 
         if !has_expected {
-            println!("WARNING: Expected to find one of {:?} in results for query '{}'", expected_fields, query);
+            println!(
+                "WARNING: Expected to find one of {:?} in results for query '{}'",
+                expected_fields, query
+            );
             println!("Got: {:?}", retrieved_fields);
         }
 
         // At least check that results are not empty
-        assert!(!results.is_empty(), "Should retrieve results for query: {}", query);
+        assert!(
+            !results.is_empty(),
+            "Should retrieve results for query: {}",
+            query
+        );
 
         // Check that some results match the expected category
-        let category_matches = results.iter().filter(|(_, _, doc)| {
-            doc.category == expected_category
-        }).count();
+        let category_matches = results
+            .iter()
+            .filter(|(_, _, doc)| doc.category == expected_category)
+            .count();
 
-        println!("Found {} fields in category '{}'", category_matches, expected_category);
+        println!(
+            "Found {} fields in category '{}'",
+            category_matches, expected_category
+        );
     }
 }

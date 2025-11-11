@@ -2,13 +2,13 @@
 /// Uses the actual field metadata structure and queries from the production system
 use anyhow::Result;
 use arrow_array::{
-    ArrayRef, BooleanArray, Float64Array, FixedSizeListArray, RecordBatch,
-    RecordBatchIterator, StringArray,
+    ArrayRef, BooleanArray, FixedSizeListArray, Float64Array, RecordBatch, RecordBatchIterator,
+    StringArray,
 };
 use arrow_schema::{DataType, Field, Schema};
 use lancedb::DistanceType;
 use rig::embeddings::{EmbedError, EmbeddingsBuilder, TextEmbedder, embed::Embed};
-use rig::vector_store::{VectorStoreIndex, VectorSearchRequest};
+use rig::vector_store::{VectorSearchRequest, VectorStoreIndex};
 use rig_fastembed::{Client as FastembedClient, FastembedModel};
 use rig_lancedb::{LanceDbVectorIndex, SearchParams};
 use serde::{Deserialize, Serialize};
@@ -120,7 +120,8 @@ async fn test_minimal_rag_loop_with_field_metadata() -> Result<()> {
         },
         FieldDocument {
             id: "metrics.conversion_rate".to_string(),
-            description: "metrics conversion rate, used for tracking conversions and sales".to_string(),
+            description: "metrics conversion rate, used for tracking conversions and sales"
+                .to_string(),
             category: "METRIC".to_string(),
             data_type: "DOUBLE".to_string(),
             selectable: true,
@@ -156,7 +157,8 @@ async fn test_minimal_rag_loop_with_field_metadata() -> Result<()> {
         },
         FieldDocument {
             id: "campaign.budget_amount_micros".to_string(),
-            description: "campaign budget amount micros, used for tracking advertising costs".to_string(),
+            description: "campaign budget amount micros, used for tracking advertising costs"
+                .to_string(),
             category: "ATTRIBUTE".to_string(),
             data_type: "INT64".to_string(),
             selectable: true,
@@ -180,7 +182,8 @@ async fn test_minimal_rag_loop_with_field_metadata() -> Result<()> {
         },
         FieldDocument {
             id: "metrics.search_absolute_top_impression_share".to_string(),
-            description: "metrics search absolute top impression share, used for tracking ad views".to_string(),
+            description: "metrics search absolute top impression share, used for tracking ad views"
+                .to_string(),
             category: "METRIC".to_string(),
             data_type: "DOUBLE".to_string(),
             selectable: true,
@@ -192,7 +195,8 @@ async fn test_minimal_rag_loop_with_field_metadata() -> Result<()> {
         },
         FieldDocument {
             id: "metrics.search_top_impression_share".to_string(),
-            description: "metrics search top impression share, used for tracking ad views".to_string(),
+            description: "metrics search top impression share, used for tracking ad views"
+                .to_string(),
             category: "METRIC".to_string(),
             data_type: "DOUBLE".to_string(),
             selectable: true,
@@ -204,7 +208,8 @@ async fn test_minimal_rag_loop_with_field_metadata() -> Result<()> {
         },
         FieldDocument {
             id: "metrics.search_budget_lost_impression_share".to_string(),
-            description: "metrics search budget lost impression share, used for tracking ad views".to_string(),
+            description: "metrics search budget lost impression share, used for tracking ad views"
+                .to_string(),
             category: "METRIC".to_string(),
             data_type: "DOUBLE".to_string(),
             selectable: true,
@@ -216,7 +221,8 @@ async fn test_minimal_rag_loop_with_field_metadata() -> Result<()> {
         },
         FieldDocument {
             id: "metrics.search_rank_lost_impression_share".to_string(),
-            description: "metrics search rank lost impression share, used for tracking ad views".to_string(),
+            description: "metrics search rank lost impression share, used for tracking ad views"
+                .to_string(),
             category: "METRIC".to_string(),
             data_type: "DOUBLE".to_string(),
             selectable: true,
@@ -228,7 +234,8 @@ async fn test_minimal_rag_loop_with_field_metadata() -> Result<()> {
         },
         FieldDocument {
             id: "metrics.absolute_top_impression_percentage".to_string(),
-            description: "metrics absolute top impression percentage, used for tracking ad views".to_string(),
+            description: "metrics absolute top impression percentage, used for tracking ad views"
+                .to_string(),
             category: "METRIC".to_string(),
             data_type: "DOUBLE".to_string(),
             selectable: true,
@@ -240,7 +247,10 @@ async fn test_minimal_rag_loop_with_field_metadata() -> Result<()> {
         },
     ];
 
-    println!("Created {} test documents with field metadata", documents.len());
+    println!(
+        "Created {} test documents with field metadata",
+        documents.len()
+    );
 
     // Step 2: Create embedding model using rig_fastembed
     let fastembed_client = FastembedClient::new();
@@ -261,9 +271,7 @@ async fn test_minimal_rag_loop_with_field_metadata() -> Result<()> {
     let mut embedding_map: HashMap<String, Vec<f64>> = HashMap::new();
 
     for (doc_ref, emb) in embeddings.iter() {
-        let embedding_vec: Vec<f64> = emb.iter()
-            .flat_map(|e| e.vec.clone())
-            .collect();
+        let embedding_vec: Vec<f64> = emb.iter().flat_map(|e| e.vec.clone()).collect();
         embedding_map.insert(doc_ref.id.clone(), embedding_vec);
     }
 
@@ -281,7 +289,9 @@ async fn test_minimal_rag_loop_with_field_metadata() -> Result<()> {
     // Step 6: Set up LanceDB
     let temp_dir = tempfile::tempdir()?;
     let db_path = temp_dir.path().join("test_rag.lancedb");
-    let db = lancedb::connect(db_path.to_str().unwrap()).execute().await?;
+    let db = lancedb::connect(db_path.to_str().unwrap())
+        .execute()
+        .await?;
 
     println!("Created LanceDB at: {}", db_path.display());
 
@@ -307,18 +317,14 @@ async fn test_minimal_rag_loop_with_field_metadata() -> Result<()> {
     ]));
 
     // Step 8: Convert documents to Arrow RecordBatch
-    let ids: StringArray = StringArray::from_iter_values(
-        docs_with_embeddings.iter().map(|d| d.id.as_str())
-    );
-    let descriptions: StringArray = StringArray::from_iter_values(
-        docs_with_embeddings.iter().map(|d| d.description.as_str())
-    );
-    let categories: StringArray = StringArray::from_iter_values(
-        docs_with_embeddings.iter().map(|d| d.category.as_str())
-    );
-    let data_types: StringArray = StringArray::from_iter_values(
-        docs_with_embeddings.iter().map(|d| d.data_type.as_str())
-    );
+    let ids: StringArray =
+        StringArray::from_iter_values(docs_with_embeddings.iter().map(|d| d.id.as_str()));
+    let descriptions: StringArray =
+        StringArray::from_iter_values(docs_with_embeddings.iter().map(|d| d.description.as_str()));
+    let categories: StringArray =
+        StringArray::from_iter_values(docs_with_embeddings.iter().map(|d| d.category.as_str()));
+    let data_types: StringArray =
+        StringArray::from_iter_values(docs_with_embeddings.iter().map(|d| d.data_type.as_str()));
     let selectable: BooleanArray = docs_with_embeddings
         .iter()
         .map(|d| Some(d.selectable))
@@ -336,7 +342,9 @@ async fn test_minimal_rag_loop_with_field_metadata() -> Result<()> {
         .map(|d| Some(d.metrics_compatible))
         .collect();
     let resource_names: StringArray = StringArray::from_iter(
-        docs_with_embeddings.iter().map(|d| d.resource_name.as_deref())
+        docs_with_embeddings
+            .iter()
+            .map(|d| d.resource_name.as_deref()),
     );
 
     // Convert embeddings to FixedSizeListArray
@@ -370,7 +378,10 @@ async fn test_minimal_rag_loop_with_field_metadata() -> Result<()> {
 
     let batches = RecordBatchIterator::new(vec![Ok(batch)], schema.clone());
 
-    println!("Created RecordBatch with {} rows", docs_with_embeddings.len());
+    println!(
+        "Created RecordBatch with {} rows",
+        docs_with_embeddings.len()
+    );
 
     // Step 9: Create LanceDB table
     let table = db
@@ -435,13 +446,11 @@ async fn test_minimal_rag_loop_with_field_metadata() -> Result<()> {
 
         let search_request = VectorSearchRequest::builder()
             .query(query)
-            .samples(5)  // Get top 5 results
+            .samples(5) // Get top 5 results
             .build()
             .expect("Failed to build search request");
 
-        let results = index
-            .top_n::<FieldDocument>(search_request)
-            .await?;
+        let results = index.top_n::<FieldDocument>(search_request).await?;
 
         println!("\nResults:");
         for (i, (distance, id, doc)) in results.iter().enumerate() {
@@ -484,9 +493,7 @@ async fn test_minimal_rag_loop_with_field_metadata() -> Result<()> {
         assert!(
             has_expected,
             "At least one expected ID {:?} should be in results {:?} for query '{}'",
-            expected_ids,
-            result_ids,
-            query
+            expected_ids, result_ids, query
         );
 
         println!("✓ Query '{}' passed validation\n", query);

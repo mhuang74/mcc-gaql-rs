@@ -1,13 +1,12 @@
-use std::sync::Arc;
-use std::path::PathBuf;
 use anyhow::Result;
 use arrow_array::{
-    BooleanArray, FixedSizeListArray, Float64Array,
-    RecordBatch, StringArray, ArrayRef,
+    ArrayRef, BooleanArray, FixedSizeListArray, Float64Array, RecordBatch, StringArray,
 };
 use arrow_schema::{DataType, Field, Schema};
-use lancedb::{connect, Connection, Table};
+use lancedb::{Connection, Table, connect};
 use rig::embeddings::Embedding;
+use std::path::PathBuf;
+use std::sync::Arc;
 
 use crate::prompt2gaql::FieldDocument;
 use crate::util::QueryEntry;
@@ -65,7 +64,10 @@ pub fn load_hash(cache_type: &str) -> Result<Option<u64>> {
 
     // Check schema version
     if lines[0] != format!("v{}", SCHEMA_VERSION) {
-        log::warn!("Schema version mismatch in {}, rebuilding cache...", cache_type);
+        log::warn!(
+            "Schema version mismatch in {}, rebuilding cache...",
+            cache_type
+        );
         return Ok(None);
     }
 
@@ -130,23 +132,16 @@ pub fn queries_to_record_batch(
     let schema = query_cookbook_schema();
 
     // Build column arrays - use document IDs directly
-    let ids: StringArray = StringArray::from_iter_values(
-        queries.iter().map(|q| q.id.as_str())
-    );
+    let ids: StringArray = StringArray::from_iter_values(queries.iter().map(|q| q.id.as_str()));
 
-    let descriptions: StringArray = StringArray::from_iter_values(
-        queries.iter().map(|q| q.description.as_str())
-    );
+    let descriptions: StringArray =
+        StringArray::from_iter_values(queries.iter().map(|q| q.description.as_str()));
 
-    let query_texts: StringArray = StringArray::from_iter_values(
-        queries.iter().map(|q| q.query.as_str())
-    );
+    let query_texts: StringArray =
+        StringArray::from_iter_values(queries.iter().map(|q| q.query.as_str()));
 
     // Convert embeddings to FixedSizeListArray - embeddings are already in correct order
-    let embedding_values: Vec<f64> = embeddings
-        .iter()
-        .flat_map(|e| e.vec.clone())
-        .collect();
+    let embedding_values: Vec<f64> = embeddings.iter().flat_map(|e| e.vec.clone()).collect();
 
     let embedding_array = FixedSizeListArray::try_new(
         Arc::new(Field::new("item", DataType::Float64, true)),
@@ -163,7 +158,8 @@ pub fn queries_to_record_batch(
             Arc::new(query_texts) as ArrayRef,
             Arc::new(embedding_array) as ArrayRef,
         ],
-    ).map_err(|e| anyhow::anyhow!("Failed to create RecordBatch: {}", e))
+    )
+    .map_err(|e| anyhow::anyhow!("Failed to create RecordBatch: {}", e))
 }
 
 /// Convert field documents and embeddings to Arrow RecordBatch
@@ -178,51 +174,33 @@ pub fn fields_to_record_batch(
     let schema = field_metadata_schema();
 
     // Build column arrays - use document IDs directly
-    let ids: StringArray = StringArray::from_iter_values(
-        fields.iter().map(|f| f.id.as_str())
-    );
+    let ids: StringArray = StringArray::from_iter_values(fields.iter().map(|f| f.id.as_str()));
 
-    let descriptions: StringArray = StringArray::from_iter_values(
-        fields.iter().map(|f| f.description.as_str())
-    );
+    let descriptions: StringArray =
+        StringArray::from_iter_values(fields.iter().map(|f| f.description.as_str()));
 
-    let categories: StringArray = StringArray::from_iter_values(
-        fields.iter().map(|f| f.field.category.as_str())
-    );
+    let categories: StringArray =
+        StringArray::from_iter_values(fields.iter().map(|f| f.field.category.as_str()));
 
-    let data_types: StringArray = StringArray::from_iter_values(
-        fields.iter().map(|f| f.field.data_type.as_str())
-    );
+    let data_types: StringArray =
+        StringArray::from_iter_values(fields.iter().map(|f| f.field.data_type.as_str()));
 
-    let selectable: BooleanArray = fields
-        .iter()
-        .map(|f| Some(f.field.selectable))
-        .collect();
+    let selectable: BooleanArray = fields.iter().map(|f| Some(f.field.selectable)).collect();
 
-    let filterable: BooleanArray = fields
-        .iter()
-        .map(|f| Some(f.field.filterable))
-        .collect();
+    let filterable: BooleanArray = fields.iter().map(|f| Some(f.field.filterable)).collect();
 
-    let sortable: BooleanArray = fields
-        .iter()
-        .map(|f| Some(f.field.sortable))
-        .collect();
+    let sortable: BooleanArray = fields.iter().map(|f| Some(f.field.sortable)).collect();
 
     let metrics_compatible: BooleanArray = fields
         .iter()
         .map(|f| Some(f.field.metrics_compatible))
         .collect();
 
-    let resource_names: StringArray = StringArray::from_iter(
-        fields.iter().map(|f| f.field.resource_name.as_deref())
-    );
+    let resource_names: StringArray =
+        StringArray::from_iter(fields.iter().map(|f| f.field.resource_name.as_deref()));
 
     // Convert embeddings
-    let embedding_values: Vec<f64> = embeddings
-        .iter()
-        .flat_map(|e| e.vec.clone())
-        .collect();
+    let embedding_values: Vec<f64> = embeddings.iter().flat_map(|e| e.vec.clone()).collect();
 
     let embedding_array = FixedSizeListArray::try_new(
         Arc::new(Field::new("item", DataType::Float64, true)),
@@ -245,7 +223,8 @@ pub fn fields_to_record_batch(
             Arc::new(resource_names) as ArrayRef,
             Arc::new(embedding_array) as ArrayRef,
         ],
-    ).map_err(|e| anyhow::anyhow!("Failed to create RecordBatch: {}", e))
+    )
+    .map_err(|e| anyhow::anyhow!("Failed to create RecordBatch: {}", e))
 }
 
 /// Open or create a LanceDB connection
@@ -328,10 +307,7 @@ pub async fn create_table(
 }
 
 /// Open an existing LanceDB table
-pub async fn open_table(
-    db: &Connection,
-    table_name: &str,
-) -> Result<Table> {
+pub async fn open_table(db: &Connection, table_name: &str) -> Result<Table> {
     let table = db
         .open_table(table_name)
         .execute()
@@ -352,21 +328,22 @@ pub async fn build_or_load_query_vector_store(
     // Check if cache exists and is valid
     if let Ok(Some(cached_hash)) = load_hash(cache_type) {
         if cached_hash == current_hash {
-            log::info!("✓ Query cookbook cache is valid (hash: {}), loading from LanceDB...", current_hash);
+            log::info!(
+                "✓ Query cookbook cache is valid (hash: {}), loading from LanceDB...",
+                current_hash
+            );
 
             // Try to open existing table
             match get_lancedb_connection().await {
-                Ok(db) => {
-                    match open_table(&db, table_name).await {
-                        Ok(table) => {
-                            log::info!("Successfully loaded query cookbook from cache");
-                            return Ok(table);
-                        }
-                        Err(e) => {
-                            log::warn!("Failed to open table: {}, rebuilding...", e);
-                        }
+                Ok(db) => match open_table(&db, table_name).await {
+                    Ok(table) => {
+                        log::info!("Successfully loaded query cookbook from cache");
+                        return Ok(table);
                     }
-                }
+                    Err(e) => {
+                        log::warn!("Failed to open table: {}, rebuilding...", e);
+                    }
+                },
                 Err(e) => {
                     log::warn!("Failed to connect to LanceDB: {}, rebuilding...", e);
                 }
@@ -415,21 +392,22 @@ pub async fn build_or_load_field_vector_store(
     // Check if cache exists and is valid
     if let Ok(Some(cached_hash)) = load_hash(cache_type) {
         if cached_hash == current_hash {
-            log::info!("✓ Field metadata cache is valid (hash: {}), loading from LanceDB...", current_hash);
+            log::info!(
+                "✓ Field metadata cache is valid (hash: {}), loading from LanceDB...",
+                current_hash
+            );
 
             // Try to open existing table
             match get_lancedb_connection().await {
-                Ok(db) => {
-                    match open_table(&db, table_name).await {
-                        Ok(table) => {
-                            log::info!("Successfully loaded field metadata from cache");
-                            return Ok(table);
-                        }
-                        Err(e) => {
-                            log::warn!("Failed to open table: {}, rebuilding...", e);
-                        }
+                Ok(db) => match open_table(&db, table_name).await {
+                    Ok(table) => {
+                        log::info!("Successfully loaded field metadata from cache");
+                        return Ok(table);
                     }
-                }
+                    Err(e) => {
+                        log::warn!("Failed to open table: {}, rebuilding...", e);
+                    }
+                },
                 Err(e) => {
                     log::warn!("Failed to connect to LanceDB: {}, rebuilding...", e);
                 }
@@ -527,29 +505,25 @@ mod tests {
 
     #[test]
     fn test_fields_to_record_batch() {
-        let fields = vec![
-            FieldDocument {
-                id: "campaign.name".to_string(),
-                field: FieldMetadata {
-                    name: "campaign.name".to_string(),
-                    category: "ATTRIBUTE".to_string(),
-                    data_type: "STRING".to_string(),
-                    selectable: true,
-                    filterable: true,
-                    sortable: true,
-                    metrics_compatible: false,
-                    resource_name: Some("campaign".to_string()),
-                },
-                description: "Campaign name attribute".to_string(),
+        let fields = vec![FieldDocument {
+            id: "campaign.name".to_string(),
+            field: FieldMetadata {
+                name: "campaign.name".to_string(),
+                category: "ATTRIBUTE".to_string(),
+                data_type: "STRING".to_string(),
+                selectable: true,
+                filterable: true,
+                sortable: true,
+                metrics_compatible: false,
+                resource_name: Some("campaign".to_string()),
             },
-        ];
+            description: "Campaign name attribute".to_string(),
+        }];
 
-        let embeddings = vec![
-            Embedding {
-                vec: vec![0.1_f64; 768],
-                document: String::new(),
-            },
-        ];
+        let embeddings = vec![Embedding {
+            vec: vec![0.1_f64; 768],
+            document: String::new(),
+        }];
 
         let result = fields_to_record_batch(&fields, &embeddings);
         assert!(result.is_ok());

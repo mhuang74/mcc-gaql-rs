@@ -23,8 +23,8 @@ use mcc_gaql::args::{self, OutputFormat};
 use mcc_gaql::config::{self, ResolvedConfig};
 use mcc_gaql::field_metadata::FieldMetadataCache;
 use mcc_gaql::googleads;
-use mcc_gaql::setup;
 use mcc_gaql::prompt2gaql;
+use mcc_gaql::setup;
 use mcc_gaql::util::{self, QueryEntry};
 
 #[tokio::main]
@@ -63,17 +63,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         log::debug!("Handle Field Metadata command. Resolved configuration: {resolved_config:?}");
 
         // Obtain API access for field metadata operations
-        let api_context = if args.refresh_field_cache || args.export_field_metadata || args.show_fields.is_some() {
-            resolved_config.validate_for_operation(&args)?;
-            Some(googleads::get_api_access(
-                &resolved_config.mcc_customer_id,
-                &resolved_config.token_cache_filename,
-                resolved_config.user_email.as_deref(),
-                resolved_config.dev_token.as_deref(),
-            ).await.context("Authentication required for field metadata operations")?)
-        } else {
-            None
-        };
+        let api_context =
+            if args.refresh_field_cache || args.export_field_metadata || args.show_fields.is_some()
+            {
+                resolved_config.validate_for_operation(&args)?;
+                Some(
+                    googleads::get_api_access(
+                        &resolved_config.mcc_customer_id,
+                        &resolved_config.token_cache_filename,
+                        resolved_config.user_email.as_deref(),
+                        resolved_config.dev_token.as_deref(),
+                    )
+                    .await
+                    .context("Authentication required for field metadata operations")?,
+                )
+            } else {
+                None
+            };
 
         let cache_path = std::path::PathBuf::from(&resolved_config.field_metadata_cache);
 
@@ -81,8 +87,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("Refreshing field metadata cache from Google Ads API...");
             let cache = FieldMetadataCache::fetch_from_api(api_context.as_ref().unwrap()).await?;
             cache.save_to_disk(&cache_path).await?;
-            println!("Field metadata cache refreshed successfully at: {}", cache_path.display());
-            println!("Fetched {} fields from {} resources", cache.fields.len(), cache.get_resources().len());
+            println!(
+                "Field metadata cache refreshed successfully at: {}",
+                cache_path.display()
+            );
+            println!(
+                "Fetched {} fields from {} resources",
+                cache.fields.len(),
+                cache.get_resources().len()
+            );
             return Ok(());
         }
 
@@ -92,7 +105,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 api_context.as_ref(),
                 &cache_path,
                 resolved_config.field_metadata_ttl_days,
-            ).await?;
+            )
+            .await?;
             println!("{}", cache.export_summary());
             return Ok(());
         }
@@ -103,7 +117,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 api_context.as_ref(),
                 &cache_path,
                 resolved_config.field_metadata_ttl_days,
-            ).await?;
+            )
+            .await?;
 
             let fields = cache.get_resource_fields(&resource);
             if fields.is_empty() {
@@ -114,10 +129,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             } else {
                 println!("Fields for resource '{}':\n", resource);
-                println!("{:<50} {:<15} {:<10} {:<10} {:<10}", "Field Name", "Data Type", "Selectable", "Filterable", "Sortable");
+                println!(
+                    "{:<50} {:<15} {:<10} {:<10} {:<10}",
+                    "Field Name", "Data Type", "Selectable", "Filterable", "Sortable"
+                );
                 println!("{}", "-".repeat(95));
                 for field in &fields {
-                    println!("{:<50} {:<15} {:<10} {:<10} {:<10}",
+                    println!(
+                        "{:<50} {:<15} {:<10} {:<10} {:<10}",
                         field.name,
                         field.data_type,
                         if field.selectable { "Yes" } else { "No" },
@@ -152,7 +171,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mcc_customer_id = resolved_config.mcc_customer_id.as_str();
 
     // Convert resolved format string to OutputFormat enum
-    let output_format = resolved_config.format.parse::<OutputFormat>()
+    let output_format = resolved_config
+        .format
+        .parse::<OutputFormat>()
         .expect("Invalid format in resolved config");
     let _keep_going = resolved_config.keep_going; // Reserved for future use
     let customer_id = resolved_config.customer_id.as_deref();
@@ -214,13 +235,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             None, // No API context yet, use cached data
             &cache_path,
             resolved_config.field_metadata_ttl_days,
-        ).await {
+        )
+        .await
+        {
             Ok(cache) => {
-                log::info!("Loaded field metadata cache with {} fields", cache.fields.len());
+                log::info!(
+                    "Loaded field metadata cache with {} fields",
+                    cache.fields.len()
+                );
                 Some(cache)
             }
             Err(e) => {
-                log::warn!("Could not load field metadata cache: {}. Proceeding without schema awareness.", e);
+                log::warn!(
+                    "Could not load field metadata cache: {}. Proceeding without schema awareness.",
+                    e
+                );
                 log::warn!("Run 'mcc-gaql --refresh-field-cache' to create the cache.");
                 None
             }
@@ -306,7 +335,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // run Account listing query
 
         let (customer_id_for_query, query) = if let Some(cid) = customer_id {
-            // query accounts under specificied customer_id (nested MCC) account; 
+            // query accounts under specificied customer_id (nested MCC) account;
             let query: String = googleads::SUB_ACCOUNTS_QUERY.to_owned();
             log::debug!("Listing child accounts under {}", cid);
             (cid.to_string(), query)

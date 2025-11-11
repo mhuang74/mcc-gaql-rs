@@ -4,7 +4,13 @@ use mcc_gaql::config::{MyConfig, ResolvedConfig};
 
 #[test]
 fn test_mcc_priority_cli_overrides_config() {
-    let args = Cli::parse_from(["mcc-gaql", "--mcc-id", "1111111111", "--user-email", "test@example.com"]);
+    let args = Cli::parse_from([
+        "mcc-gaql",
+        "--mcc-id",
+        "1111111111",
+        "--user-email",
+        "test@example.com",
+    ]);
     let config = Some(MyConfig {
         mcc_id: Some("9999999999".to_string()),
         user_email: None,
@@ -40,15 +46,11 @@ fn test_mcc_fallback_to_customer_id_for_solo_accounts() {
 #[test]
 fn test_config_customer_id_fallback_to_mcc() {
     // Test that config customer_id is used as MCC when mcc_id is not set
-    let args = Cli::parse_from([
-        "mcc-gaql",
-        "--user-email",
-        "test@example.com",
-    ]);
+    let args = Cli::parse_from(["mcc-gaql", "--user-email", "test@example.com"]);
     let config = Some(MyConfig {
-        mcc_id: None,  // No MCC specified
+        mcc_id: None, // No MCC specified
         user_email: Some("test@example.com".to_string()),
-        customer_id: Some("3333333333".to_string()),  // This should be used as MCC
+        customer_id: Some("3333333333".to_string()), // This should be used as MCC
         format: None,
         keep_going: None,
         token_cache_filename: None,
@@ -135,8 +137,8 @@ fn test_validate_succeeds_with_existing_token_cache() {
     use std::io::Write;
 
     // Get the proper token cache path using config_file_path
-    let token_cache_path = mcc_gaql::config::config_file_path("tokencache_test_temp.json")
-        .expect("token cache path");
+    let token_cache_path =
+        mcc_gaql::config::config_file_path("tokencache_test_temp.json").expect("token cache path");
 
     // Ensure config directory exists
     if let Some(parent) = token_cache_path.parent() {
@@ -189,7 +191,7 @@ fn test_invalid_mcc_id_from_cli() {
     let args = Cli::parse_from([
         "mcc-gaql",
         "--mcc-id",
-        "invalid123",  // Invalid: not 10 digits
+        "invalid123", // Invalid: not 10 digits
         "--user-email",
         "test@example.com",
     ]);
@@ -205,7 +207,7 @@ fn test_invalid_mcc_id_too_short() {
     let args = Cli::parse_from([
         "mcc-gaql",
         "--mcc-id",
-        "123456789",  // Invalid: only 9 digits
+        "123456789", // Invalid: only 9 digits
         "--user-email",
         "test@example.com",
     ]);
@@ -221,7 +223,7 @@ fn test_invalid_mcc_id_too_long() {
     let args = Cli::parse_from([
         "mcc-gaql",
         "--mcc-id",
-        "12345678901",  // Invalid: 11 digits
+        "12345678901", // Invalid: 11 digits
         "--user-email",
         "test@example.com",
     ]);
@@ -237,7 +239,7 @@ fn test_valid_mcc_id_with_hyphens() {
     let args = Cli::parse_from([
         "mcc-gaql",
         "--mcc-id",
-        "123-456-7890",  // Valid: with hyphens
+        "123-456-7890", // Valid: with hyphens
         "--user-email",
         "test@example.com",
     ]);
@@ -245,7 +247,7 @@ fn test_valid_mcc_id_with_hyphens() {
     let result = ResolvedConfig::from_args_and_config(&args, None);
     assert!(result.is_ok());
     let resolved = result.unwrap();
-    assert_eq!(resolved.mcc_customer_id, "1234567890");  // Should be normalized
+    assert_eq!(resolved.mcc_customer_id, "1234567890"); // Should be normalized
 }
 
 #[test]
@@ -255,7 +257,7 @@ fn test_invalid_customer_id_from_cli() {
         "--mcc-id",
         "1234567890",
         "--customer-id",
-        "abc1234567",  // Invalid: contains letters
+        "abc1234567", // Invalid: contains letters
         "--user-email",
         "test@example.com",
     ]);
@@ -263,7 +265,10 @@ fn test_invalid_customer_id_from_cli() {
     let result = ResolvedConfig::from_args_and_config(&args, None);
     assert!(result.is_err());
     let error_msg = result.unwrap_err().to_string();
-    assert!(error_msg.contains("Invalid customer_id") || error_msg.contains("Invalid customer ID format"));
+    assert!(
+        error_msg.contains("Invalid customer_id")
+            || error_msg.contains("Invalid customer ID format")
+    );
 }
 
 #[test]
@@ -273,7 +278,7 @@ fn test_valid_customer_id_with_hyphens() {
         "--mcc-id",
         "1234567890",
         "--customer-id",
-        "987-654-3210",  // Valid: with hyphens
+        "987-654-3210", // Valid: with hyphens
         "--user-email",
         "test@example.com",
     ]);
@@ -281,20 +286,16 @@ fn test_valid_customer_id_with_hyphens() {
     let result = ResolvedConfig::from_args_and_config(&args, None);
     assert!(result.is_ok());
     let resolved = result.unwrap();
-    assert_eq!(resolved.customer_id, Some("9876543210".to_string()));  // Should be normalized
+    assert_eq!(resolved.customer_id, Some("9876543210".to_string())); // Should be normalized
 }
 
 #[test]
 fn test_invalid_customer_id_from_config() {
-    let args = Cli::parse_from([
-        "mcc-gaql",
-        "--user-email",
-        "test@example.com",
-    ]);
+    let args = Cli::parse_from(["mcc-gaql", "--user-email", "test@example.com"]);
     let config = Some(MyConfig {
         mcc_id: Some("1234567890".to_string()),
         user_email: Some("test@example.com".to_string()),
-        customer_id: Some("12345".to_string()),  // Invalid: too short
+        customer_id: Some("12345".to_string()), // Invalid: too short
         format: None,
         keep_going: None,
         token_cache_filename: None,
@@ -308,18 +309,17 @@ fn test_invalid_customer_id_from_config() {
     let result = ResolvedConfig::from_args_and_config(&args, config);
     assert!(result.is_err());
     let error_msg = result.unwrap_err().to_string();
-    assert!(error_msg.contains("Invalid customer_id") || error_msg.contains("Invalid customer ID length"));
+    assert!(
+        error_msg.contains("Invalid customer_id")
+            || error_msg.contains("Invalid customer ID length")
+    );
 }
 
 #[test]
 fn test_invalid_mcc_id_from_config() {
-    let args = Cli::parse_from([
-        "mcc-gaql",
-        "--user-email",
-        "test@example.com",
-    ]);
+    let args = Cli::parse_from(["mcc-gaql", "--user-email", "test@example.com"]);
     let config = Some(MyConfig {
-        mcc_id: Some("123-456".to_string()),  // Invalid: too short even with hyphens
+        mcc_id: Some("123-456".to_string()), // Invalid: too short even with hyphens
         user_email: Some("test@example.com".to_string()),
         customer_id: None,
         format: None,
@@ -340,13 +340,9 @@ fn test_invalid_mcc_id_from_config() {
 
 #[test]
 fn test_valid_mcc_id_from_config_with_hyphens() {
-    let args = Cli::parse_from([
-        "mcc-gaql",
-        "--user-email",
-        "test@example.com",
-    ]);
+    let args = Cli::parse_from(["mcc-gaql", "--user-email", "test@example.com"]);
     let config = Some(MyConfig {
-        mcc_id: Some("111-222-3333".to_string()),  // Valid with hyphens
+        mcc_id: Some("111-222-3333".to_string()), // Valid with hyphens
         user_email: Some("test@example.com".to_string()),
         customer_id: None,
         format: None,
@@ -362,17 +358,13 @@ fn test_valid_mcc_id_from_config_with_hyphens() {
     let result = ResolvedConfig::from_args_and_config(&args, config);
     assert!(result.is_ok());
     let resolved = result.unwrap();
-    assert_eq!(resolved.mcc_customer_id, "1112223333");  // Should be normalized
+    assert_eq!(resolved.mcc_customer_id, "1112223333"); // Should be normalized
 }
 
 #[test]
 fn test_error_when_no_user_or_explicit_token_cache() {
     // Test that it errors out when neither user email nor explicit token cache is provided
-    let args = Cli::parse_from([
-        "mcc-gaql",
-        "--mcc-id",
-        "1234567890",
-    ]);
+    let args = Cli::parse_from(["mcc-gaql", "--mcc-id", "1234567890"]);
 
     let result = ResolvedConfig::from_args_and_config(&args, None);
     assert!(result.is_err());
@@ -384,18 +376,14 @@ fn test_error_when_no_user_or_explicit_token_cache() {
 #[test]
 fn test_explicit_token_cache_without_user_succeeds() {
     // Test that explicit token cache works without user email
-    let args = Cli::parse_from([
-        "mcc-gaql",
-        "--mcc-id",
-        "1234567890",
-    ]);
+    let args = Cli::parse_from(["mcc-gaql", "--mcc-id", "1234567890"]);
     let config = Some(MyConfig {
         mcc_id: Some("1234567890".to_string()),
-        user_email: None,  // No user email
+        user_email: None, // No user email
         customer_id: None,
         format: None,
         keep_going: None,
-        token_cache_filename: Some("tokencache_explicit.json".to_string()),  // Explicit token cache
+        token_cache_filename: Some("tokencache_explicit.json".to_string()), // Explicit token cache
         customerids_filename: None,
         queries_filename: None,
         dev_token: None,

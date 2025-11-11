@@ -5,14 +5,14 @@
 // Provides caching and querying of field metadata from Fields Service API
 
 use anyhow::{Context, Result, anyhow};
-use chrono::{DateTime, Utc, Duration};
+use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tokio::fs;
 
-use googleads_rs::google::ads::googleads::v22::services::google_ads_field_service_client::GoogleAdsFieldServiceClient;
 use googleads_rs::google::ads::googleads::v22::services::SearchGoogleAdsFieldsRequest;
+use googleads_rs::google::ads::googleads::v22::services::google_ads_field_service_client::GoogleAdsFieldServiceClient;
 
 use crate::googleads::GoogleAdsAPIAccess;
 
@@ -54,7 +54,8 @@ impl FieldMetadata {
     pub fn get_resource(&self) -> Option<String> {
         if let Some(_idx) = self.name.find('.') {
             self.name
-                .split('.').next() // Get the first substring delimited by '.'
+                .split('.')
+                .next() // Get the first substring delimited by '.'
                 .map(|s| s.to_string())
         } else {
             None
@@ -120,7 +121,9 @@ impl FieldMetadataCache {
             cache.save_to_disk(cache_path).await?;
             Ok(cache)
         } else {
-            Err(anyhow!("No cached field metadata found and no API context provided"))
+            Err(anyhow!(
+                "No cached field metadata found and no API context provided"
+            ))
         }
     }
 
@@ -134,7 +137,8 @@ impl FieldMetadataCache {
         );
 
         // Query all fields
-        let query = "select name, category, data_type, selectable, filterable, sortable order by name";
+        let query =
+            "select name, category, data_type, selectable, filterable, sortable order by name";
         let response = client
             .search_google_ads_fields(SearchGoogleAdsFieldsRequest {
                 query: query.to_owned(),
@@ -165,7 +169,8 @@ impl FieldMetadataCache {
                         "UNKNOWN"
                     }
                 }
-            }.to_string();
+            }
+            .to_string();
 
             // Convert data_type enum to string representation
             let data_type = match row.data_type {
@@ -181,7 +186,8 @@ impl FieldMetadataCache {
                 10 => "STRING",
                 11 => "UINT64",
                 _ => "UNKNOWN",
-            }.to_string();
+            }
+            .to_string();
 
             // Determine metrics compatibility based on category and field properties
             let metrics_compatible = category == "ATTRIBUTE" || category == "SEGMENT";
@@ -211,8 +217,12 @@ impl FieldMetadataCache {
 
             fields.insert(row.name, field_meta);
         }
-        
-        log::info!("Fetched {} fields from {} resources", fields.len(), resources.keys().len());
+
+        log::info!(
+            "Fetched {} fields from {} resources",
+            fields.len(),
+            resources.keys().len()
+        );
 
         Ok(Self {
             last_updated: Utc::now(),
@@ -228,8 +238,7 @@ impl FieldMetadataCache {
             .await
             .context("Failed to read cache file")?;
 
-        let cache: Self = serde_json::from_str(&contents)
-            .context("Failed to parse cache file")?;
+        let cache: Self = serde_json::from_str(&contents).context("Failed to parse cache file")?;
 
         Ok(cache)
     }
@@ -243,8 +252,7 @@ impl FieldMetadataCache {
                 .context("Failed to create cache directory")?;
         }
 
-        let contents = serde_json::to_string_pretty(self)
-            .context("Failed to serialize cache")?;
+        let contents = serde_json::to_string_pretty(self).context("Failed to serialize cache")?;
 
         fs::write(path, contents)
             .await
@@ -301,7 +309,8 @@ impl FieldMetadataCache {
     /// Get all fields for a specific resource
     pub fn get_resource_fields(&self, resource: &str) -> Vec<&FieldMetadata> {
         if let Some(resources) = &self.resources
-            && let Some(field_names) = resources.get(resource) {
+            && let Some(field_names) = resources.get(resource)
+        {
             field_names
                 .iter()
                 .filter_map(|name| self.fields.get(name))
@@ -390,7 +399,9 @@ impl FieldMetadataCache {
         // Check if metrics are used with proper grouping
         let has_metrics = fields.iter().any(|f| f.is_metric());
         let has_segments = fields.iter().any(|f| f.is_segment());
-        let has_resources = fields.iter().any(|f| f.is_resource() || (!f.is_metric() && !f.is_segment()));
+        let has_resources = fields
+            .iter()
+            .any(|f| f.is_resource() || (!f.is_metric() && !f.is_segment()));
 
         if has_metrics && !has_segments && !has_resources {
             warnings.push(ValidationWarning::MetricsWithoutGrouping);
@@ -408,7 +419,10 @@ impl FieldMetadataCache {
         let mut output = String::new();
 
         output.push_str("# Google Ads Field Metadata\n\n");
-        output.push_str(&format!("Last Updated: {}\n", self.last_updated.format("%Y-%m-%d %H:%M:%S UTC")));
+        output.push_str(&format!(
+            "Last Updated: {}\n",
+            self.last_updated.format("%Y-%m-%d %H:%M:%S UTC")
+        ));
         output.push_str(&format!("API Version: {}\n", self.api_version));
         output.push_str(&format!("Total Fields: {}\n\n", self.fields.len()));
 
@@ -425,13 +439,25 @@ impl FieldMetadataCache {
         let metrics = self.get_metrics(None);
         output.push_str(&format!("## Metrics ({} total)\n\n", metrics.len()));
         output.push_str("Common metrics:\n");
-        let common_metrics = ["impressions", "clicks", "cost_micros", "conversions", "ctr", "average_cpc"];
+        let common_metrics = [
+            "impressions",
+            "clicks",
+            "cost_micros",
+            "conversions",
+            "ctr",
+            "average_cpc",
+        ];
         for metric_name in common_metrics {
             if let Some(field) = self.get_field(&format!("metrics.{}", metric_name)) {
-                output.push_str(&format!("- {}: {} ({})\n",
+                output.push_str(&format!(
+                    "- {}: {} ({})\n",
                     field.name,
                     field.data_type,
-                    if field.filterable { "filterable" } else { "not filterable" }
+                    if field.filterable {
+                        "filterable"
+                    } else {
+                        "not filterable"
+                    }
                 ));
             }
         }
@@ -522,7 +548,10 @@ impl std::fmt::Display for ValidationWarning {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ValidationWarning::MetricsWithoutGrouping => {
-                write!(f, "Metrics selected without segments or resource fields (may cause aggregation issues)")
+                write!(
+                    f,
+                    "Metrics selected without segments or resource fields (may cause aggregation issues)"
+                )
             }
         }
     }
@@ -530,8 +559,8 @@ impl std::fmt::Display for ValidationWarning {
 
 /// Helper to get default cache path
 pub fn get_default_cache_path() -> Result<PathBuf> {
-    let cache_dir = dirs::cache_dir()
-        .ok_or_else(|| anyhow!("Could not determine cache directory"))?;
+    let cache_dir =
+        dirs::cache_dir().ok_or_else(|| anyhow!("Could not determine cache directory"))?;
 
     Ok(cache_dir.join("mcc-gaql").join("field_metadata.json"))
 }
@@ -617,10 +646,8 @@ mod tests {
         assert!(result.is_valid);
 
         // Invalid: unknown field
-        let result = cache.validate_field_selection(&[
-            "campaign.name".to_string(),
-            "unknown.field".to_string(),
-        ]);
+        let result = cache
+            .validate_field_selection(&["campaign.name".to_string(), "unknown.field".to_string()]);
         assert!(!result.is_valid);
     }
 }

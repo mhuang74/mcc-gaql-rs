@@ -4,7 +4,9 @@ use std::fs;
 use std::path::PathBuf;
 use toml::{Value, map::Map};
 
-use crate::config::{MyConfig, TOML_CONFIG_FILENAME, config_file_path, validate_and_normalize_customer_id};
+use crate::config::{
+    MyConfig, TOML_CONFIG_FILENAME, config_file_path, validate_and_normalize_customer_id,
+};
 
 /// Check if a file exists and provide guidance
 fn validate_optional_file(filename: &str, file_description: &str) -> Result<()> {
@@ -40,7 +42,10 @@ pub fn run_wizard() -> Result<()> {
                 return Err("Profile name cannot be empty".to_string());
             }
             if existing_profiles.contains(&trimmed.to_string()) {
-                return Err(format!("Profile '{}' already exists. Please choose a different name.", trimmed));
+                return Err(format!(
+                    "Profile '{}' already exists. Please choose a different name.",
+                    trimmed
+                ));
             }
             Ok(())
         })
@@ -145,12 +150,12 @@ pub fn run_wizard() -> Result<()> {
         customer_id: Some(customer_id),
         format: None,
         keep_going: None,
-        token_cache_filename: None,  // Let runtime auto-generate from user email
+        token_cache_filename: None, // Let runtime auto-generate from user email
         customerids_filename,
         queries_filename,
-        dev_token: None,  // Use fallback or environment variable
-        field_metadata_cache: None,  // Use default cache location
-        field_metadata_ttl_days: None,  // Use default TTL (7 days)
+        dev_token: None,               // Use fallback or environment variable
+        field_metadata_cache: None,    // Use default cache location
+        field_metadata_ttl_days: None, // Use default TTL (7 days)
     };
 
     // Save configuration
@@ -173,7 +178,9 @@ pub fn run_wizard() -> Result<()> {
     let has_embedded_secret = false;
 
     if has_embedded_secret {
-        println!("  1. OAuth2 credentials are embedded in this binary (no clientsecret.json needed)");
+        println!(
+            "  1. OAuth2 credentials are embedded in this binary (no clientsecret.json needed)"
+        );
     } else {
         println!(
             "  1. Place your OAuth2 credentials in: {:?}",
@@ -246,8 +253,7 @@ fn save_config(profile_name: &str, config: &MyConfig) -> Result<()> {
     };
 
     // Serialize config to TOML value using serde
-    let profile_value = Value::try_from(config)
-        .context("Failed to serialize config")?;
+    let profile_value = Value::try_from(config).context("Failed to serialize config")?;
 
     // Add or update profile in config
     config_table.insert(profile_name.to_string(), profile_value);
@@ -318,7 +324,7 @@ token_cache_filename = "tokencache_myprofile.json"
             customer_id: None,
             format: None,
             keep_going: None,
-            token_cache_filename: None,  // Now auto-generated at runtime
+            token_cache_filename: None, // Now auto-generated at runtime
             customerids_filename: Some("customerids.txt".to_string()),
             queries_filename: Some("queries.toml".to_string()),
             dev_token: None,

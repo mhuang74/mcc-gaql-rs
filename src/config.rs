@@ -3,8 +3,8 @@ use figment::{
     providers::{Env, Format, Toml},
 };
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 use std::fs;
+use std::path::PathBuf;
 
 const CRATE_NAME: &str = env!("CARGO_PKG_NAME");
 pub const TOML_CONFIG_FILENAME: &str = "config.toml";
@@ -116,7 +116,9 @@ impl ResolvedConfig {
             );
             validate_and_normalize_customer_id(customer_id)
                 .context("Invalid --customer-id argument")?
-        } else if let Some(config_customer_id) = config.as_ref().and_then(|c| c.customer_id.as_ref()) {
+        } else if let Some(config_customer_id) =
+            config.as_ref().and_then(|c| c.customer_id.as_ref())
+        {
             // Fallback: use config customer_id as MCC (for solo accounts)
             log::warn!(
                 "No mcc_id specified. Using customer_id ({}) from config as MCC. \
@@ -144,9 +146,7 @@ impl ResolvedConfig {
             .or_else(|| config.as_ref().and_then(|c| c.user_email.clone()));
 
         // Check if there's an explicit token cache filename from config
-        let explicit_token_cache = config
-            .as_ref()
-            .and_then(|c| c.token_cache_filename.clone());
+        let explicit_token_cache = config.as_ref().and_then(|c| c.token_cache_filename.clone());
 
         // Resolve token cache filename with priority:
         // 1. Explicit token cache filename from config (highest priority)
@@ -176,10 +176,7 @@ impl ResolvedConfig {
             .customer_id
             .as_ref()
             .or_else(|| config.as_ref().and_then(|c| c.customer_id.as_ref()))
-            .map(|id| {
-                validate_and_normalize_customer_id(id)
-                    .context("Invalid customer_id")
-            })
+            .map(|id| validate_and_normalize_customer_id(id).context("Invalid customer_id"))
             .transpose()?;
 
         // Resolve format: CLI > config > default ("table")
@@ -194,11 +191,8 @@ impl ResolvedConfig {
             .unwrap_or_else(|| "table".to_string());
 
         // Resolve keep_going: CLI flag > config > default (false)
-        let keep_going = args.keep_going
-            || config
-                .as_ref()
-                .and_then(|c| c.keep_going)
-                .unwrap_or(false);
+        let keep_going =
+            args.keep_going || config.as_ref().and_then(|c| c.keep_going).unwrap_or(false);
 
         // Config file fields (only available if profile specified)
         let queries_filename = config.as_ref().and_then(|c| c.queries_filename.clone());
@@ -517,7 +511,6 @@ pub fn display_config(profile_name: Option<&str>) -> anyhow::Result<()> {
         println!("  (none set)");
     }
 
-
     Ok(())
 }
 
@@ -655,8 +648,14 @@ mod tests {
         assert_eq!(config.customer_id, deserialized.customer_id);
         assert_eq!(config.format, deserialized.format);
         assert_eq!(config.keep_going, deserialized.keep_going);
-        assert_eq!(config.token_cache_filename, deserialized.token_cache_filename);
-        assert_eq!(config.customerids_filename, deserialized.customerids_filename);
+        assert_eq!(
+            config.token_cache_filename,
+            deserialized.token_cache_filename
+        );
+        assert_eq!(
+            config.customerids_filename,
+            deserialized.customerids_filename
+        );
         assert_eq!(config.queries_filename, deserialized.queries_filename);
     }
 
@@ -721,7 +720,8 @@ mod tests {
         let toml_str = toml::to_string(&config).expect("Failed to serialize");
 
         // Deserialize back
-        let deserialized: ResolvedConfig = toml::from_str(&toml_str).expect("Failed to deserialize");
+        let deserialized: ResolvedConfig =
+            toml::from_str(&toml_str).expect("Failed to deserialize");
 
         // Verify round-trip
         assert_eq!(config.mcc_customer_id, deserialized.mcc_customer_id);
@@ -729,9 +729,15 @@ mod tests {
         assert_eq!(config.customer_id, deserialized.customer_id);
         assert_eq!(config.format, deserialized.format);
         assert_eq!(config.keep_going, deserialized.keep_going);
-        assert_eq!(config.token_cache_filename, deserialized.token_cache_filename);
+        assert_eq!(
+            config.token_cache_filename,
+            deserialized.token_cache_filename
+        );
         assert_eq!(config.queries_filename, deserialized.queries_filename);
-        assert_eq!(config.customerids_filename, deserialized.customerids_filename);
+        assert_eq!(
+            config.customerids_filename,
+            deserialized.customerids_filename
+        );
     }
 
     #[test]
@@ -768,7 +774,10 @@ mod tests {
         assert_eq!(config.customer_id, None);
         assert_eq!(config.format, None);
         assert_eq!(config.keep_going, None);
-        assert_eq!(config.token_cache_filename, Some("tokencache.json".to_string()));
+        assert_eq!(
+            config.token_cache_filename,
+            Some("tokencache.json".to_string())
+        );
     }
 
     #[test]
@@ -834,5 +843,4 @@ mod tests {
             result.err()
         );
     }
-
 }
