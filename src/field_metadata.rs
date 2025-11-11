@@ -52,18 +52,13 @@ impl FieldMetadata {
 
     /// Get the resource name for this field (e.g., "campaign" from "campaign.name")
     pub fn get_resource(&self) -> Option<String> {
-        let parsed_resource = 
-            if let Some(_idx) = self.name.find('.') {
-                self.name
+        if let Some(_idx) = self.name.find('.') {
+            self.name
                 .split('.').next() // Get the first substring delimited by '.'
                 .map(|s| s.to_string())
-            } else {
-                None
-            };
-
-        // log::debug!("Field:{:?} -> Resource: {}", self.name, parsed_resource.as_deref().unwrap_or("n/a"));
-
-        parsed_resource
+        } else {
+            None
+        }
     }
 }
 
@@ -210,7 +205,7 @@ impl FieldMetadataCache {
             if let Some(resource) = field_meta.get_resource() {
                 resources
                     .entry(resource)
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(row.name.clone());
             }
 
@@ -305,26 +300,25 @@ impl FieldMetadataCache {
 
     /// Get all fields for a specific resource
     pub fn get_resource_fields(&self, resource: &str) -> Vec<&FieldMetadata> {
-        if let Some(resources) = &self.resources {
-            if let Some(field_names) = resources.get(resource) {
-                return field_names
-                    .iter()
-                    .filter_map(|name| self.fields.get(name))
-                    .collect();
-            }
+        if let Some(resources) = &self.resources
+            && let Some(field_names) = resources.get(resource) {
+            field_names
+                .iter()
+                .filter_map(|name| self.fields.get(name))
+                .collect()
+        } else {
+            // Fallback: filter by resource name prefix
+            self.fields
+                .values()
+                .filter(|f| {
+                    if let Some(r) = f.get_resource() {
+                        r == resource
+                    } else {
+                        false
+                    }
+                })
+                .collect()
         }
-
-        // Fallback: filter by resource name prefix
-        self.fields
-            .values()
-            .filter(|f| {
-                if let Some(r) = f.get_resource() {
-                    r == resource
-                } else {
-                    false
-                }
-            })
-            .collect()
     }
 
     /// Get all available resources
@@ -413,7 +407,7 @@ impl FieldMetadataCache {
     pub fn export_summary(&self) -> String {
         let mut output = String::new();
 
-        output.push_str(&format!("# Google Ads Field Metadata\n\n"));
+        output.push_str("# Google Ads Field Metadata\n\n");
         output.push_str(&format!("Last Updated: {}\n", self.last_updated.format("%Y-%m-%d %H:%M:%S UTC")));
         output.push_str(&format!("API Version: {}\n", self.api_version));
         output.push_str(&format!("Total Fields: {}\n\n", self.fields.len()));
@@ -425,7 +419,7 @@ impl FieldMetadataCache {
             let field_count = self.get_resource_fields(resource).len();
             output.push_str(&format!("- {}: {} fields\n", resource, field_count));
         }
-        output.push_str("\n");
+        output.push('\n');
 
         // Metrics summary
         let metrics = self.get_metrics(None);
@@ -441,7 +435,7 @@ impl FieldMetadataCache {
                 ));
             }
         }
-        output.push_str("\n");
+        output.push('\n');
 
         // Segments summary
         let segments = self.get_segments(None);

@@ -127,7 +127,7 @@ pub fn parse() -> Cli {
         && !cli.setup
         && !cli.show_config
         && !cli.refresh_field_cache
-        && !cli.show_fields.is_some()
+        && cli.show_fields.is_none()
         && !cli.export_field_metadata
     {
         let mut buffer = String::new();

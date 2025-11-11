@@ -289,7 +289,7 @@ pub async fn create_table(
     }
 
     let schema = record_batch.schema();
-    let num_rows = record_batch.num_rows();
+    let _num_rows = record_batch.num_rows();
     let reader = SingleBatchReader {
         schema: schema.clone(),
         batch: Some(record_batch),

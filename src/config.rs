@@ -219,7 +219,7 @@ impl ResolvedConfig {
         let field_metadata_ttl_days = config
             .as_ref()
             .and_then(|c| c.field_metadata_ttl_days)
-            .unwrap_or(7);
+            .unwrap_or(30);
 
         Ok(Self {
             mcc_customer_id,

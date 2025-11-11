@@ -23,7 +23,7 @@ use crate::util::QueryEntry;
 /// Format LLM request for debug logging with human-friendly formatting
 fn format_llm_request_debug(preamble: &Option<String>, prompt: &str) -> String {
     let mut output = String::new();
-    output.push_str("\n");
+    output.push('\n');
     output.push_str("═══════════════════════════════════════════════════════════════════\n");
     output.push_str("                      LLM REQUEST DEBUG DUMP\n");
     output.push_str("═══════════════════════════════════════════════════════════════════\n\n");
@@ -97,35 +97,34 @@ async fn build_or_load_query_vector_store(
     let current_hash = compute_query_cookbook_hash(&query_cookbook);
 
     // Try to load from LanceDB cache
-    if let Ok(Some(cached_hash)) = lancedb_utils::load_hash("query_cookbook") {
-        if cached_hash == current_hash {
-            log::info!("Query cookbook cache valid, loading from LanceDB...");
+    if let Ok(Some(cached_hash)) = lancedb_utils::load_hash("query_cookbook")
+        && cached_hash == current_hash {
+        log::info!("Query cookbook cache valid, loading from LanceDB...");
 
-            match lancedb_utils::get_lancedb_connection().await {
-                Ok(db) => {
-                    match lancedb_utils::open_table(&db, "query_cookbook").await {
-                        Ok(table) => {
-                            // Wrap table in LanceDbVectorIndex with cosine distance
-                            let index = LanceDbVectorIndex::new(
-                                table,
-                                embedding_model,
-                                "id",
-                                SearchParams::default()
-                                    .distance_type(DistanceType::Cosine)
-                                    .column("vector"),
-                            ).await.map_err(|e| anyhow::anyhow!("Failed to create vector index: {}", e))?;
+        match lancedb_utils::get_lancedb_connection().await {
+            Ok(db) => {
+                match lancedb_utils::open_table(&db, "query_cookbook").await {
+                    Ok(table) => {
+                        // Wrap table in LanceDbVectorIndex with cosine distance
+                        let index = LanceDbVectorIndex::new(
+                            table,
+                            embedding_model,
+                            "id",
+                            SearchParams::default()
+                                .distance_type(DistanceType::Cosine)
+                                .column("vector"),
+                        ).await.map_err(|e| anyhow::anyhow!("Failed to create vector index: {}", e))?;
 
-                            log::info!("Successfully loaded query cookbook from cache ({:.2}s)", total_start.elapsed().as_secs_f64());
-                            return Ok(index);
-                        }
-                        Err(e) => {
-                            log::warn!("Failed to open cached table: {}, rebuilding...", e);
-                        }
+                        log::info!("Successfully loaded query cookbook from cache ({:.2}s)", total_start.elapsed().as_secs_f64());
+                        return Ok(index);
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to open cached table: {}, rebuilding...", e);
                     }
                 }
-                Err(e) => {
-                    log::warn!("Failed to connect to LanceDB: {}, rebuilding...", e);
-                }
+            }
+            Err(e) => {
+                log::warn!("Failed to connect to LanceDB: {}, rebuilding...", e);
             }
         }
     }
@@ -199,35 +198,34 @@ pub async fn build_or_load_field_vector_store(
     let current_hash = compute_field_cache_hash(field_cache);
 
     // Try to load from LanceDB cache
-    if let Ok(Some(cached_hash)) = lancedb_utils::load_hash("field_metadata") {
-        if cached_hash == current_hash {
-            log::info!("Field metadata cache valid, loading from LanceDB...");
+    if let Ok(Some(cached_hash)) = lancedb_utils::load_hash("field_metadata")
+        && cached_hash == current_hash {
+        log::info!("Field metadata cache valid, loading from LanceDB...");
 
-            match lancedb_utils::get_lancedb_connection().await {
-                Ok(db) => {
-                    match lancedb_utils::open_table(&db, "field_metadata").await {
-                        Ok(table) => {
-                            // Wrap table in LanceDbVectorIndex with cosine distance
-                            let index = LanceDbVectorIndex::new(
-                                table,
-                                embedding_model,
-                                "id",
-                                SearchParams::default()
-                                    .distance_type(DistanceType::Cosine)
-                                    .column("vector"),
-                            ).await.map_err(|e| anyhow::anyhow!("Failed to create vector index: {}", e))?;
+        match lancedb_utils::get_lancedb_connection().await {
+            Ok(db) => {
+                match lancedb_utils::open_table(&db, "field_metadata").await {
+                    Ok(table) => {
+                        // Wrap table in LanceDbVectorIndex with cosine distance
+                        let index = LanceDbVectorIndex::new(
+                            table,
+                            embedding_model,
+                            "id",
+                            SearchParams::default()
+                                .distance_type(DistanceType::Cosine)
+                                .column("vector"),
+                        ).await.map_err(|e| anyhow::anyhow!("Failed to create vector index: {}", e))?;
 
-                            log::info!("Successfully loaded field metadata from cache ({:.2}s)", total_start.elapsed().as_secs_f64());
-                            return Ok(index);
-                        }
-                        Err(e) => {
-                            log::warn!("Failed to open cached table: {}, rebuilding...", e);
-                        }
+                        log::info!("Successfully loaded field metadata from cache ({:.2}s)", total_start.elapsed().as_secs_f64());
+                        return Ok(index);
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to open cached table: {}, rebuilding...", e);
                     }
                 }
-                Err(e) => {
-                    log::warn!("Failed to connect to LanceDB: {}, rebuilding...", e);
-                }
+            }
+            Err(e) => {
+                log::warn!("Failed to connect to LanceDB: {}, rebuilding...", e);
             }
         }
     }
@@ -388,7 +386,8 @@ impl FieldDocument {
         let mut parts = Vec::new();
 
         // Field name with underscores replaced by spaces for better matching
-        parts.push(field.name.replace('.', " ").replace('_', " "));
+        let processed_name = field.name.replace(['.', '_'], " ");
+        parts.push(processed_name);
 
         // Purpose inference based on common patterns
         let purpose = Self::infer_purpose(&field.name);
@@ -578,7 +577,6 @@ struct EnhancedRAGAgent {
     query_index: LanceDbVectorIndex<rig_fastembed::EmbeddingModel>,
     field_cache: Option<FieldMetadataCache>,
     field_vector_store: Option<LanceDbVectorIndex<rig_fastembed::EmbeddingModel>>,
-    embedding_model: rig_fastembed::EmbeddingModel,
 }
 
 impl EnhancedRAGAgent {
@@ -620,7 +618,6 @@ impl EnhancedRAGAgent {
             query_index,
             field_cache,
             field_vector_store,
-            embedding_model,
         })
     }
 
