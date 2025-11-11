@@ -34,12 +34,12 @@ toml = "0.5"
 tonic = { version = "0.14", features = ["transport", "tls-ring", "tls-native-roots"] }
 serde_json = "1.0"
 yup-oauth2 = "6.7"
-rig-core = "0.23.1"
-rig-fastembed = "0.2.15"
-rig-lancedb = "0.2.26"
-lancedb = "0.21"
-arrow-array = "55.2.0"
-arrow-schema = "55.2.0"
+rig-core = "0.24.0"
+rig-fastembed = "0.2.16"
+rig-lancedb = "0.2.27"
+lancedb = "0.22"
+arrow-array = "56.2.0"
+arrow-schema = "56.2.0"
 
 [dev-dependencies]
 tempfile = "3.8"

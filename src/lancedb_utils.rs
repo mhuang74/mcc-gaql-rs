@@ -275,7 +275,7 @@ pub async fn create_table(
     // Drop existing table if it exists, then create new one
     if let Ok(_existing) = db.open_table(table_name).execute().await {
         log::debug!("Dropping existing table '{}'", table_name);
-        db.drop_table(table_name)
+        db.drop_table(table_name, &[])
             .await
             .map_err(|e| anyhow::anyhow!("Failed to drop existing table {}: {}", table_name, e))?;
     }
