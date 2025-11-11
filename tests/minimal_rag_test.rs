@@ -1,6 +1,5 @@
 /// Minimal RAG test to verify the rig + rig-lancedb stack works correctly
 /// Uses the actual field metadata structure and queries from the production system
-
 use anyhow::Result;
 use arrow_array::{
     ArrayRef, BooleanArray, Float64Array, FixedSizeListArray, RecordBatch,
@@ -273,7 +272,7 @@ async fn test_minimal_rag_loop_with_field_metadata() -> Result<()> {
     for doc in docs_with_embeddings.iter_mut() {
         doc.vector = embedding_map
             .get(&doc.id)
-            .expect(&format!("Missing embedding for document {}", doc.id))
+            .unwrap_or_else(|| panic!("Missing embedding for document {}", doc.id))
             .clone();
     }
 

@@ -8,7 +8,7 @@ use std::collections::HashSet;
 /// Debug utility to print retrieval results with scores
 fn print_retrieval_results(query: &str, results: &[(f64, String, FieldDocumentFlat)]) {
     println!("\n=== Retrieval Results for: '{}' ===", query);
-    println!("{:<60} {:<8} {}", "Field Name", "Score", "Category");
+    println!("{:<60} {:<8} Category", "Field Name", "Score");
     println!("{}", "-".repeat(80));
     for (score, _id, doc) in results {
         let category = &doc.category;
@@ -136,16 +136,19 @@ impl RetrievalTestCase {
         }
     }
 
+    #[allow(dead_code)]
     fn limit(mut self, limit: usize) -> Self {
         self.limit = limit;
         self
     }
 
+    #[allow(dead_code)]
     fn min_precision(mut self, min_precision: f32) -> Self {
         self.min_precision = min_precision;
         self
     }
 
+    #[allow(dead_code)]
     fn max_top_distance(mut self, max_top_distance: f64) -> Self {
         self.max_top_distance = max_top_distance;
         self
@@ -486,7 +489,7 @@ async fn test_field_description_quality() {
         );
 
         // Description should contain the field name (with dots/underscores converted to spaces)
-        let normalized_name = doc.field.name.replace('.', " ").replace('_', " ");
+        let normalized_name = doc.field.name.replace(['.', '_'], " ");
         assert!(
             doc.description.to_lowercase().contains(&normalized_name.to_lowercase()),
             "Description should contain field name. Field: {}, Description: {}",

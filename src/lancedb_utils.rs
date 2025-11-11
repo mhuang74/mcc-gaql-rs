@@ -263,7 +263,6 @@ pub async fn create_table(
     db: &Connection,
     table_name: &str,
     record_batch: RecordBatch,
-    _schema: Arc<Schema>,
 ) -> Result<Table> {
     // Create table using Box<dyn RecordBatchReader>
     use arrow_array::RecordBatchReader;
@@ -289,7 +288,6 @@ pub async fn create_table(
     }
 
     let schema = record_batch.schema();
-    let _num_rows = record_batch.num_rows();
     let reader = SingleBatchReader {
         schema: schema.clone(),
         batch: Some(record_batch),
@@ -389,11 +387,10 @@ pub async fn build_or_load_query_vector_store(
 
     // Convert to RecordBatch
     let record_batch = queries_to_record_batch(&queries, &embeddings)?;
-    let schema = query_cookbook_schema();
 
     // Save to LanceDB
     let db = get_lancedb_connection().await?;
-    let table = create_table(&db, table_name, record_batch, schema).await?;
+    let table = create_table(&db, table_name, record_batch).await?;
 
     // Save hash
     save_hash(cache_type, current_hash)?;
@@ -453,11 +450,10 @@ pub async fn build_or_load_field_vector_store(
 
     // Convert to RecordBatch
     let record_batch = fields_to_record_batch(&field_docs, &embeddings)?;
-    let schema = field_metadata_schema();
 
     // Save to LanceDB
     let db = get_lancedb_connection().await?;
-    let table = create_table(&db, table_name, record_batch, schema).await?;
+    let table = create_table(&db, table_name, record_batch).await?;
 
     // Save hash
     save_hash(cache_type, current_hash)?;
