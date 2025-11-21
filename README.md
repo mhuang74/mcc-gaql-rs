@@ -251,6 +251,52 @@ mcc-gaql --profile myprofile \
   " > metric_fields.txt
 ```
 
+### Field Metadata Management
+
+The tool maintains a local cache of Google Ads field metadata to support natural language queries and field exploration. Use these commands to manage the field cache:
+
+#### Refresh Field Cache
+
+Update the local field metadata cache from the Google Ads API:
+
+```bash
+# Refresh cache using a profile
+mcc-gaql --profile myprofile --refresh-field-cache
+
+# Refresh cache with explicit credentials
+mcc-gaql --mcc-id "111-222-3333" --user-email "mcc@company.com" --refresh-field-cache
+```
+
+#### Show Fields for a Resource
+
+Display available fields for a specific resource type (e.g., campaign, ad_group, customer):
+
+```bash
+# Show all fields available for the campaign resource
+mcc-gaql --show-fields campaign
+
+# Show fields for ad_group resource
+mcc-gaql --show-fields ad_group
+
+# Show fields for customer resource
+mcc-gaql --show-fields customer
+
+# Show fields for keyword_view resource
+mcc-gaql --show-fields keyword_view
+```
+
+#### Export Field Metadata
+
+Export the complete field metadata summary to stdout (useful for documentation or analysis):
+
+```bash
+# Export all field metadata to a file
+mcc-gaql --export-field-metadata > field_metadata.txt
+
+# Export and pipe to other tools
+mcc-gaql --export-field-metadata | grep "campaign"
+```
+
 ### Error Handling and Formatting
 
 ```bash
@@ -273,6 +319,40 @@ mcc-gaql -n "campaign changes from last 14 days with current campaign status and
 
 ## CLI Reference
 
+```
+mcc-gaql 0.13.0
+Efficiently run Google Ads GAQL query across one or more child accounts linked to MCC.
+
+USAGE:
+    mcc-gaql [OPTIONS] [GAQL_QUERY]
+
+ARGS:
+    <GAQL_QUERY>    Google Ads GAQL query to run
+
+OPTIONS:
+    -a, --all-linked-child-accounts    Force query to run across all linked child accounts
+    -c, --customer-id <CUSTOMER_ID>    Apply query to a single account
+        --export-field-metadata        Export field metadata summary to stdout
+    -f, --field-service                Query GoogleAdsFieldService to retrieve available fields
+        --format <FORMAT>              Output format: table, csv, json
+        --groupby <GROUPBY>            Group by columns
+    -h, --help                         Print help information
+        --keep-going                   Keep going on errors
+    -l, --list-child-accounts          List all child accounts under MCC
+    -m, --mcc-id <MCC_ID>              MCC (Manager) Customer ID for login-customer-id header
+    -n, --natural-language             Use natural language prompt instead of GAQL
+    -o, --output <OUTPUT>              GAQL output filename
+    -p, --profile <PROFILE>            Query using profile from config
+    -q, --stored-query <STORED_QUERY>  Load named query from file
+        --refresh-field-cache          Refresh field metadata cache from Google Ads API
+        --setup                        Set up configuration with interactive wizard
+        --show-config                  Display current configuration and exit
+        --show-fields <SHOW_FIELDS>    Show available fields for a specific resource
+        --sortby <SORTBY>              Sort by columns
+    -u, --user-email <USER_EMAIL>      User email for OAuth2 authentication
+    -V, --version                      Print version information
+```
+
 ### Common Options
 
 | Option | Description |
@@ -289,8 +369,11 @@ mcc-gaql -n "campaign changes from last 14 days with current campaign status and
 | `--groupby <field>` | Group results by field |
 | `--keep-going` | Continue processing on errors |
 | `-q <query_name>` | Use stored query from queries file |
-| `-n <natural_language>` | Natural language query (requires LLM) |
-| `--field-service <query>` | Query Google Ads field service |
+| `-n` | Natural language query (requires LLM) |
+| `-f, --field-service` | Query Google Ads field service |
+| `--show-fields <resource>` | Show available fields for a resource |
+| `--refresh-field-cache` | Refresh field metadata cache from API |
+| `--export-field-metadata` | Export field metadata summary to stdout |
 | `--setup` | Run interactive setup wizard |
 | `--show-config` | Show configuration |
 | `--version` | Show version |
