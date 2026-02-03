@@ -48,9 +48,12 @@ impl LlmConfig {
 
         // Temperature: default to 0.1 if not set, fail fast with explicit error if invalid
         let temperature: f32 = match std::env::var("MCC_GAQL_LLM_TEMPERATURE") {
-            Ok(val) => val.parse().expect(
-                &format!("MCC_GAQL_LLM_TEMPERATURE must be a valid number (e.g., 0.1), got: '{}'", val)
-            ),
+            Ok(val) => val.parse().unwrap_or_else(|_| {
+                panic!(
+                    "MCC_GAQL_LLM_TEMPERATURE must be a valid number (e.g., 0.1), got: '{}'",
+                    val
+                )
+            }),
             Err(_) => 0.1,
         };
 
@@ -735,11 +738,9 @@ impl EnhancedRAGAgent {
             "Initializing query cookbook embeddings for {} queries",
             query_cookbook.len()
         );
-        let query_index = build_or_load_query_vector_store(
-            query_cookbook,
-            resources.embedding_model.clone(),
-        )
-        .await?;
+        let query_index =
+            build_or_load_query_vector_store(query_cookbook, resources.embedding_model.clone())
+                .await?;
 
         // Build or load field embeddings if field cache is available
         let field_vector_store = if let Some(ref cache) = field_cache {
@@ -747,9 +748,7 @@ impl EnhancedRAGAgent {
                 "Initializing field embeddings for {} fields",
                 cache.fields.len()
             );
-            Some(
-                build_or_load_field_vector_store(cache, resources.embedding_model.clone()).await?,
-            )
+            Some(build_or_load_field_vector_store(cache, resources.embedding_model.clone()).await?)
         } else {
             None
         };
