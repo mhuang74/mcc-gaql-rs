@@ -3,7 +3,6 @@
 //
 
 use std::{
-    env,
     fs::{self, File},
     io::{BufWriter, Write},
     process,
@@ -205,8 +204,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // convert natural language prompt into GAQL
     if args.natural_language {
-        // Use OpenRouter for LLM (API key loaded from environment)
-        env::var("OPENROUTER_API_KEY").expect("OPENROUTER_API_KEY not set");
+        // Validate LLM API key is configured (supports multiple providers)
+        if std::env::var("MCC_GAQL_LLM_API_KEY").is_err()
+            && std::env::var("OPENROUTER_API_KEY").is_err()
+        {
+            panic!("Either MCC_GAQL_LLM_API_KEY or OPENROUTER_API_KEY must be set");
+        }
         // Safe to unwrap: validated by validate_for_operation()
         let query_filename = resolved_config
             .queries_filename

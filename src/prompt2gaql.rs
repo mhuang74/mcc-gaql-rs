@@ -9,7 +9,7 @@ use rig::{
     client::CompletionClient,
     completion::{Completion, Prompt},
     embeddings::{EmbedError, EmbeddingsBuilder, TextEmbedder, embed::Embed},
-    providers::openrouter::{self, completion::CompletionModel},
+    providers::openai::{self, completion::CompletionModel},
     vector_store::VectorStoreIndex,
 };
 use rig_fastembed::FastembedModel;
@@ -19,6 +19,31 @@ use serde::{Deserialize, Serialize};
 use crate::field_metadata::{FieldMetadata, FieldMetadataCache};
 use crate::lancedb_utils;
 use crate::util::QueryEntry;
+
+/// Load LLM configuration from environment
+/// Returns: (api_key, base_url, model, temperature)
+fn load_llm_config() -> (String, String, String, f32) {
+    // API key: prefer MCC_GAQL_LLM_API_KEY, fall back to OPENROUTER_API_KEY
+    let api_key = std::env::var("MCC_GAQL_LLM_API_KEY")
+        .or_else(|_| std::env::var("OPENROUTER_API_KEY"))
+        .expect("MCC_GAQL_LLM_API_KEY or OPENROUTER_API_KEY must be set");
+
+    // Base URL: default to OpenRouter for backward compatibility
+    let base_url = std::env::var("MCC_GAQL_LLM_BASE_URL")
+        .unwrap_or_else(|_| "https://openrouter.ai/api/v1".to_string());
+
+    // Model: default to Gemini Flash
+    let model = std::env::var("MCC_GAQL_LLM_MODEL")
+        .unwrap_or_else(|_| "google/gemini-flash-2.0".to_string());
+
+    // Temperature
+    let temperature: f32 = std::env::var("MCC_GAQL_LLM_TEMPERATURE")
+        .ok()
+        .and_then(|t| t.parse().ok())
+        .unwrap_or(0.1);
+
+    (api_key, base_url, model, temperature)
+}
 
 /// Format LLM request for debug logging with human-friendly formatting
 fn format_llm_request_debug(preamble: &Option<String>, prompt: &str) -> String {
@@ -522,14 +547,23 @@ struct RAGAgent {
 
 impl RAGAgent {
     pub async fn init(query_cookbook: Vec<QueryEntry>) -> Result<Self, anyhow::Error> {
-        let openrouter_client = openrouter::Client::from_env();
+        let (api_key, base_url, model, temperature) = load_llm_config();
+        log::info!("Using LLM: {} via {}", model, base_url);
+
+        // Create completions client with custom base URL for OpenAI-compatible providers
+        let llm_client = openai::CompletionsClient::builder()
+            .api_key(&api_key)
+            .base_url(&base_url)
+            .build()?;
+
         let fastembed_client = rig_fastembed::Client::new();
         let embedding_model = fastembed_client.embedding_model(&FastembedModel::BGEBaseENV15);
 
         // Build or load query vector store with LanceDB caching
         let query_index = build_or_load_query_vector_store(query_cookbook, embedding_model).await?;
 
-        let agent = openrouter_client.agent(openrouter::GEMINI_FLASH_2_0)
+        let agent = llm_client
+            .agent(&model)
             .preamble("
                 You are a Google Ads GAQL query assistant here to assist the user to translate natural language query requests into valid GAQL.
 
@@ -547,7 +581,7 @@ impl RAGAgent {
 
                 You will find example GAQL queries in the context provided with each request.
             ")
-            .temperature(0.1)
+            .temperature(temperature as f64)
             .build();
 
         Ok(RAGAgent { agent, query_index })
@@ -630,7 +664,15 @@ impl EnhancedRAGAgent {
     ) -> Result<Self, anyhow::Error> {
         let init_start = std::time::Instant::now();
 
-        let openrouter_client = openrouter::Client::from_env();
+        let (api_key, base_url, model, temperature) = load_llm_config();
+        log::info!("Using LLM: {} via {}", model, base_url);
+
+        // Create completions client with custom base URL for OpenAI-compatible providers
+        let llm_client = openai::CompletionsClient::builder()
+            .api_key(&api_key)
+            .base_url(&base_url)
+            .build()?;
+
         let fastembed_client = rig_fastembed::Client::new();
         let embedding_model = fastembed_client.embedding_model(&FastembedModel::BGEBaseENV15);
 
@@ -656,10 +698,10 @@ impl EnhancedRAGAgent {
         // Build enhanced preamble with field metadata
         let preamble = Self::build_preamble(&field_cache);
 
-        let agent = openrouter_client
-            .agent(openrouter::GEMINI_FLASH_2_0)
+        let agent = llm_client
+            .agent(&model)
             .preamble(&preamble)
-            .temperature(0.1)
+            .temperature(temperature as f64)
             .build();
 
         log::info!(
