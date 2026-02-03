@@ -261,13 +261,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let prompt = args.gaql_query.as_ref().unwrap();
         log::debug!("Construct GAQL from prompt: {:?}", prompt);
 
+        // Load LLM configuration once and pass to agents (dependency injection)
+        let llm_config = prompt2gaql::LlmConfig::from_env();
+
         // Use enhanced conversion with field metadata if available
         let query = if field_cache.is_some() {
             log::info!("Using enhanced natural query with field metadata");
-            prompt2gaql::convert_to_gaql_enhanced(example_queries, field_cache, prompt).await?
+            prompt2gaql::convert_to_gaql_enhanced(example_queries, field_cache, prompt, &llm_config)
+                .await?
         } else {
             log::info!("Using basic natural query without field metadata");
-            prompt2gaql::convert_to_gaql(example_queries, prompt).await?
+            prompt2gaql::convert_to_gaql(example_queries, prompt, &llm_config).await?
         };
 
         log::info!("Generated GAQL Query:\n{}", query);

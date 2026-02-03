@@ -22,7 +22,7 @@ use crate::util::QueryEntry;
 
 /// Configuration for LLM provider
 #[derive(Debug, Clone)]
-struct LlmConfig {
+pub struct LlmConfig {
     api_key: String,
     base_url: String,
     model: String,
@@ -31,7 +31,7 @@ struct LlmConfig {
 
 impl LlmConfig {
     /// Load LLM configuration from environment
-    fn from_env() -> Self {
+    pub fn from_env() -> Self {
         // API key: prefer MCC_GAQL_LLM_API_KEY, fall back to OPENROUTER_API_KEY for backward compatibility
         let api_key = std::env::var("MCC_GAQL_LLM_API_KEY")
             .or_else(|_| std::env::var("OPENROUTER_API_KEY"))
@@ -46,11 +46,13 @@ impl LlmConfig {
             "MCC_GAQL_LLM_MODEL must be set (e.g., gpt-4o-mini or google/gemini-flash-2.0)",
         );
 
-        // Temperature: default to 0.1 if not set
-        let temperature: f32 = std::env::var("MCC_GAQL_LLM_TEMPERATURE")
-            .ok()
-            .and_then(|t| t.parse().ok())
-            .unwrap_or(0.1);
+        // Temperature: default to 0.1 if not set, fail fast with explicit error if invalid
+        let temperature: f32 = match std::env::var("MCC_GAQL_LLM_TEMPERATURE") {
+            Ok(val) => val.parse().expect(
+                &format!("MCC_GAQL_LLM_TEMPERATURE must be a valid number (e.g., 0.1), got: '{}'", val)
+            ),
+            Err(_) => 0.1,
+        };
 
         Self {
             api_key,
@@ -75,6 +77,25 @@ fn create_embedding_client() -> (rig_fastembed::Client, rig_fastembed::Embedding
     let fastembed_client = rig_fastembed::Client::new();
     let embedding_model = fastembed_client.embedding_model(&FastembedModel::BGEBaseENV15);
     (fastembed_client, embedding_model)
+}
+
+/// Shared LLM resources for agent initialization
+struct AgentResources {
+    llm_client: openai::CompletionsClient,
+    embed_client: rig_fastembed::Client,
+    embedding_model: rig_fastembed::EmbeddingModel,
+}
+
+/// Initialize shared LLM resources used by both agent types
+fn init_llm_resources(config: &LlmConfig) -> Result<AgentResources, anyhow::Error> {
+    let llm_client = create_llm_client(config)?;
+    let (embed_client, embedding_model) = create_embedding_client();
+
+    Ok(AgentResources {
+        llm_client,
+        embed_client,
+        embedding_model,
+    })
 }
 
 /// Format LLM request for debug logging with human-friendly formatting
@@ -575,22 +596,26 @@ impl Embed for FieldDocument {
 struct RAGAgent {
     agent: Agent<CompletionModel>,
     query_index: LanceDbVectorIndex<rig_fastembed::EmbeddingModel>,
+    // Keep embed client alive to prevent premature resource dropping
+    _embed_client: rig_fastembed::Client,
 }
 
 impl RAGAgent {
-    pub async fn init(query_cookbook: Vec<QueryEntry>) -> Result<Self, anyhow::Error> {
-        let config = LlmConfig::from_env();
+    pub async fn init(
+        query_cookbook: Vec<QueryEntry>,
+        config: &LlmConfig,
+    ) -> Result<Self, anyhow::Error> {
         log::info!("Using LLM: {} via {}", config.model, config.base_url);
 
-        // Create completions client with custom base URL for OpenAI-compatible providers
-        let llm_client = create_llm_client(&config)?;
-
-        let (_fastembed_client, embedding_model) = create_embedding_client();
+        // Initialize shared LLM resources
+        let resources = init_llm_resources(config)?;
 
         // Build or load query vector store with LanceDB caching
-        let query_index = build_or_load_query_vector_store(query_cookbook, embedding_model).await?;
+        let query_index =
+            build_or_load_query_vector_store(query_cookbook, resources.embedding_model).await?;
 
-        let agent = llm_client
+        let agent = resources
+            .llm_client
             .agent(&config.model)
             .preamble("
                 You are a Google Ads GAQL query assistant here to assist the user to translate natural language query requests into valid GAQL.
@@ -612,7 +637,11 @@ impl RAGAgent {
             .temperature(config.temperature as f64)
             .build();
 
-        Ok(RAGAgent { agent, query_index })
+        Ok(RAGAgent {
+            agent,
+            query_index,
+            _embed_client: resources.embed_client,
+        })
     }
 
     pub async fn prompt(&self, prompt: &str) -> Result<String, anyhow::Error> {
@@ -669,9 +698,10 @@ impl RAGAgent {
 pub async fn convert_to_gaql(
     example_queries: Vec<QueryEntry>,
     prompt: &str,
+    config: &LlmConfig,
 ) -> Result<String, anyhow::Error> {
     // Initialize RAGAgent
-    let rag_agent = RAGAgent::init(example_queries).await?;
+    let rag_agent = RAGAgent::init(example_queries, config).await?;
 
     // Use RAGAgent to prompt
     rag_agent.prompt(prompt).await
@@ -683,30 +713,33 @@ struct EnhancedRAGAgent {
     query_index: LanceDbVectorIndex<rig_fastembed::EmbeddingModel>,
     field_cache: Option<FieldMetadataCache>,
     field_vector_store: Option<LanceDbVectorIndex<rig_fastembed::EmbeddingModel>>,
+    // Keep embed client alive to prevent premature resource dropping
+    _embed_client: rig_fastembed::Client,
 }
 
 impl EnhancedRAGAgent {
     pub async fn init(
         query_cookbook: Vec<QueryEntry>,
         field_cache: Option<FieldMetadataCache>,
+        config: &LlmConfig,
     ) -> Result<Self, anyhow::Error> {
         let init_start = std::time::Instant::now();
 
-        let config = LlmConfig::from_env();
         log::info!("Using LLM: {} via {}", config.model, config.base_url);
 
-        // Create completions client with custom base URL for OpenAI-compatible providers
-        let llm_client = create_llm_client(&config)?;
-
-        let (_fastembed_client, embedding_model) = create_embedding_client();
+        // Initialize shared LLM resources
+        let resources = init_llm_resources(config)?;
 
         // Build or load query cookbook vector store with LanceDB caching
         log::info!(
             "Initializing query cookbook embeddings for {} queries",
             query_cookbook.len()
         );
-        let query_index =
-            build_or_load_query_vector_store(query_cookbook, embedding_model.clone()).await?;
+        let query_index = build_or_load_query_vector_store(
+            query_cookbook,
+            resources.embedding_model.clone(),
+        )
+        .await?;
 
         // Build or load field embeddings if field cache is available
         let field_vector_store = if let Some(ref cache) = field_cache {
@@ -714,7 +747,9 @@ impl EnhancedRAGAgent {
                 "Initializing field embeddings for {} fields",
                 cache.fields.len()
             );
-            Some(build_or_load_field_vector_store(cache, embedding_model.clone()).await?)
+            Some(
+                build_or_load_field_vector_store(cache, resources.embedding_model.clone()).await?,
+            )
         } else {
             None
         };
@@ -722,7 +757,8 @@ impl EnhancedRAGAgent {
         // Build enhanced preamble with field metadata
         let preamble = Self::build_preamble(&field_cache);
 
-        let agent = llm_client
+        let agent = resources
+            .llm_client
             .agent(&config.model)
             .preamble(&preamble)
             .temperature(config.temperature as f64)
@@ -738,6 +774,7 @@ impl EnhancedRAGAgent {
             query_index,
             field_cache,
             field_vector_store,
+            _embed_client: resources.embed_client,
         })
     }
 
@@ -1034,9 +1071,10 @@ pub async fn convert_to_gaql_enhanced(
     example_queries: Vec<QueryEntry>,
     field_cache: Option<FieldMetadataCache>,
     prompt: &str,
+    config: &LlmConfig,
 ) -> Result<String, anyhow::Error> {
     // Initialize Enhanced RAGAgent
-    let rag_agent = EnhancedRAGAgent::init(example_queries, field_cache).await?;
+    let rag_agent = EnhancedRAGAgent::init(example_queries, field_cache, config).await?;
 
     // Use Enhanced RAGAgent to prompt
     rag_agent.prompt(prompt).await
