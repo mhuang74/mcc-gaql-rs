@@ -20,29 +20,60 @@ use crate::field_metadata::{FieldMetadata, FieldMetadataCache};
 use crate::lancedb_utils;
 use crate::util::QueryEntry;
 
-/// Load LLM configuration from environment
-/// Returns: (api_key, base_url, model, temperature)
-fn load_llm_config() -> (String, String, String, f32) {
-    // API key: prefer MCC_GAQL_LLM_API_KEY, fall back to OPENROUTER_API_KEY
-    let api_key = std::env::var("MCC_GAQL_LLM_API_KEY")
-        .or_else(|_| std::env::var("OPENROUTER_API_KEY"))
-        .expect("MCC_GAQL_LLM_API_KEY or OPENROUTER_API_KEY must be set");
+/// Configuration for LLM provider
+#[derive(Debug, Clone)]
+struct LlmConfig {
+    api_key: String,
+    base_url: String,
+    model: String,
+    temperature: f32,
+}
 
-    // Base URL: default to OpenRouter for backward compatibility
-    let base_url = std::env::var("MCC_GAQL_LLM_BASE_URL")
-        .unwrap_or_else(|_| "https://openrouter.ai/api/v1".to_string());
+impl LlmConfig {
+    /// Load LLM configuration from environment
+    fn from_env() -> Self {
+        // API key: prefer MCC_GAQL_LLM_API_KEY, fall back to OPENROUTER_API_KEY for backward compatibility
+        let api_key = std::env::var("MCC_GAQL_LLM_API_KEY")
+            .or_else(|_| std::env::var("OPENROUTER_API_KEY"))
+            .expect("MCC_GAQL_LLM_API_KEY or OPENROUTER_API_KEY must be set");
 
-    // Model: default to Gemini Flash
-    let model = std::env::var("MCC_GAQL_LLM_MODEL")
-        .unwrap_or_else(|_| "google/gemini-flash-2.0".to_string());
+        // Base URL: must be explicitly configured - fail fast if not set
+        let base_url = std::env::var("MCC_GAQL_LLM_BASE_URL")
+            .expect("MCC_GAQL_LLM_BASE_URL must be set (e.g., https://api.openai.com/v1 or https://openrouter.ai/api/v1)");
 
-    // Temperature
-    let temperature: f32 = std::env::var("MCC_GAQL_LLM_TEMPERATURE")
-        .ok()
-        .and_then(|t| t.parse().ok())
-        .unwrap_or(0.1);
+        // Model: must be explicitly configured - fail fast if not set
+        let model = std::env::var("MCC_GAQL_LLM_MODEL")
+            .expect("MCC_GAQL_LLM_MODEL must be set (e.g., gpt-4o-mini or google/gemini-flash-2.0)");
 
-    (api_key, base_url, model, temperature)
+        // Temperature: default to 0.1 if not set
+        let temperature: f32 = std::env::var("MCC_GAQL_LLM_TEMPERATURE")
+            .ok()
+            .and_then(|t| t.parse().ok())
+            .unwrap_or(0.1);
+
+        Self {
+            api_key,
+            base_url,
+            model,
+            temperature,
+        }
+    }
+}
+
+/// Create LLM completions client from config
+fn create_llm_client(config: &LlmConfig) -> Result<openai::CompletionsClient, anyhow::Error> {
+    openai::CompletionsClient::builder()
+        .api_key(&config.api_key)
+        .base_url(&config.base_url)
+        .build()
+        .map_err(|e| anyhow::anyhow!("Failed to create LLM client: {}", e))
+}
+
+/// Create embedding client and model
+fn create_embedding_client() -> (rig_fastembed::Client, rig_fastembed::EmbeddingModel) {
+    let fastembed_client = rig_fastembed::Client::new();
+    let embedding_model = fastembed_client.embedding_model(&FastembedModel::BGEBaseENV15);
+    (fastembed_client, embedding_model)
 }
 
 /// Format LLM request for debug logging with human-friendly formatting
@@ -547,23 +578,19 @@ struct RAGAgent {
 
 impl RAGAgent {
     pub async fn init(query_cookbook: Vec<QueryEntry>) -> Result<Self, anyhow::Error> {
-        let (api_key, base_url, model, temperature) = load_llm_config();
-        log::info!("Using LLM: {} via {}", model, base_url);
+        let config = LlmConfig::from_env();
+        log::info!("Using LLM: {} via {}", config.model, config.base_url);
 
         // Create completions client with custom base URL for OpenAI-compatible providers
-        let llm_client = openai::CompletionsClient::builder()
-            .api_key(&api_key)
-            .base_url(&base_url)
-            .build()?;
+        let llm_client = create_llm_client(&config)?;
 
-        let fastembed_client = rig_fastembed::Client::new();
-        let embedding_model = fastembed_client.embedding_model(&FastembedModel::BGEBaseENV15);
+        let (_fastembed_client, embedding_model) = create_embedding_client();
 
         // Build or load query vector store with LanceDB caching
         let query_index = build_or_load_query_vector_store(query_cookbook, embedding_model).await?;
 
         let agent = llm_client
-            .agent(&model)
+            .agent(&config.model)
             .preamble("
                 You are a Google Ads GAQL query assistant here to assist the user to translate natural language query requests into valid GAQL.
 
@@ -581,7 +608,7 @@ impl RAGAgent {
 
                 You will find example GAQL queries in the context provided with each request.
             ")
-            .temperature(temperature as f64)
+            .temperature(config.temperature as f64)
             .build();
 
         Ok(RAGAgent { agent, query_index })
@@ -664,17 +691,13 @@ impl EnhancedRAGAgent {
     ) -> Result<Self, anyhow::Error> {
         let init_start = std::time::Instant::now();
 
-        let (api_key, base_url, model, temperature) = load_llm_config();
-        log::info!("Using LLM: {} via {}", model, base_url);
+        let config = LlmConfig::from_env();
+        log::info!("Using LLM: {} via {}", config.model, config.base_url);
 
         // Create completions client with custom base URL for OpenAI-compatible providers
-        let llm_client = openai::CompletionsClient::builder()
-            .api_key(&api_key)
-            .base_url(&base_url)
-            .build()?;
+        let llm_client = create_llm_client(&config)?;
 
-        let fastembed_client = rig_fastembed::Client::new();
-        let embedding_model = fastembed_client.embedding_model(&FastembedModel::BGEBaseENV15);
+        let (_fastembed_client, embedding_model) = create_embedding_client();
 
         // Build or load query cookbook vector store with LanceDB caching
         log::info!(
@@ -699,9 +722,9 @@ impl EnhancedRAGAgent {
         let preamble = Self::build_preamble(&field_cache);
 
         let agent = llm_client
-            .agent(&model)
+            .agent(&config.model)
             .preamble(&preamble)
-            .temperature(temperature as f64)
+            .temperature(config.temperature as f64)
             .build();
 
         log::info!(
