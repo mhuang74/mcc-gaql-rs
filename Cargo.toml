@@ -20,7 +20,7 @@ figment = { version = "0.10", features = ["toml", "env"] }
 flexi_logger = { version = "0.22", features = ["compress"] }
 futures = { version = "0.3", default-features = false, features = ["alloc"] }
 # googleads-rs = { version = "0.12.1", path = "../googleads-rs" }
-googleads-rs = { git = "https://github.com/mhuang74/googleads-rs.git", branch = "main" }
+googleads-rs = { version = "0.13.0", git = "https://github.com/mhuang74/googleads-rs.git", branch = "main" }
 # googleads-rs = { version = "0.12" }
 itertools = "0.10"
 log = "0.4"

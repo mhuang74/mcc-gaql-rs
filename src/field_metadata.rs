@@ -11,8 +11,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tokio::fs;
 
-use googleads_rs::google::ads::googleads::v22::services::SearchGoogleAdsFieldsRequest;
-use googleads_rs::google::ads::googleads::v22::services::google_ads_field_service_client::GoogleAdsFieldServiceClient;
+use googleads_rs::google::ads::googleads::v23::services::SearchGoogleAdsFieldsRequest;
+use googleads_rs::google::ads::googleads::v23::services::google_ads_field_service_client::GoogleAdsFieldServiceClient;
 
 use crate::googleads::GoogleAdsAPIAccess;
 
@@ -78,7 +78,7 @@ impl FieldMetadataCache {
     pub fn new() -> Self {
         Self {
             last_updated: Utc::now(),
-            api_version: "v22".to_string(),
+            api_version: "v23".to_string(),
             fields: HashMap::new(),
             resources: None,
         }
@@ -226,7 +226,7 @@ impl FieldMetadataCache {
 
         Ok(Self {
             last_updated: Utc::now(),
-            api_version: "v22".to_string(),
+            api_version: "v23".to_string(),
             fields,
             resources: Some(resources),
         })
