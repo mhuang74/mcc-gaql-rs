@@ -42,8 +42,9 @@ impl LlmConfig {
             .expect("MCC_GAQL_LLM_BASE_URL must be set (e.g., https://api.openai.com/v1 or https://openrouter.ai/api/v1)");
 
         // Model: must be explicitly configured - fail fast if not set
-        let model = std::env::var("MCC_GAQL_LLM_MODEL")
-            .expect("MCC_GAQL_LLM_MODEL must be set (e.g., gpt-4o-mini or google/gemini-flash-2.0)");
+        let model = std::env::var("MCC_GAQL_LLM_MODEL").expect(
+            "MCC_GAQL_LLM_MODEL must be set (e.g., gpt-4o-mini or google/gemini-flash-2.0)",
+        );
 
         // Temperature: default to 0.1 if not set
         let temperature: f32 = std::env::var("MCC_GAQL_LLM_TEMPERATURE")
