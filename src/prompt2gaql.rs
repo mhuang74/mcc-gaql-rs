@@ -32,10 +32,9 @@ pub struct LlmConfig {
 impl LlmConfig {
     /// Load LLM configuration from environment
     pub fn from_env() -> Self {
-        // API key: prefer MCC_GAQL_LLM_API_KEY, fall back to OPENROUTER_API_KEY for backward compatibility
+        // API key: must be explicitly configured
         let api_key = std::env::var("MCC_GAQL_LLM_API_KEY")
-            .or_else(|_| std::env::var("OPENROUTER_API_KEY"))
-            .expect("MCC_GAQL_LLM_API_KEY or OPENROUTER_API_KEY must be set");
+            .expect("MCC_GAQL_LLM_API_KEY must be set (e.g., sk-...)");
 
         // Base URL: must be explicitly configured - fail fast if not set
         let base_url = std::env::var("MCC_GAQL_LLM_BASE_URL")
