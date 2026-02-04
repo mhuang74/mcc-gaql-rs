@@ -109,6 +109,10 @@ pub struct Cli {
     #[clap(long)]
     pub refresh_field_cache: bool,
 
+    /// Clear the vector cache (LanceDB embeddings) and exit
+    #[clap(long)]
+    pub clear_vector_cache: bool,
+
     /// Show available fields for a specific resource (e.g., campaign, ad_group)
     #[clap(long)]
     pub show_fields: Option<String>,
@@ -127,6 +131,7 @@ pub fn parse() -> Cli {
         && !cli.setup
         && !cli.show_config
         && !cli.refresh_field_cache
+        && !cli.clear_vector_cache
         && cli.show_fields.is_none()
         && !cli.export_field_metadata
     {

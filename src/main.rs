@@ -22,6 +22,7 @@ use mcc_gaql::args::{self, OutputFormat};
 use mcc_gaql::config::{self, ResolvedConfig};
 use mcc_gaql::field_metadata::FieldMetadataCache;
 use mcc_gaql::googleads;
+use mcc_gaql::lancedb_utils;
 use mcc_gaql::prompt2gaql;
 use mcc_gaql::setup;
 use mcc_gaql::util::{self, QueryEntry};
@@ -43,6 +44,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Handle --show-config flag to display configuration
     if args.show_config {
         config::display_config(args.profile.as_deref())?;
+        return Ok(());
+    }
+
+    // Handle --clear-vector-cache flag to clear LanceDB cache
+    if args.clear_vector_cache {
+        lancedb_utils::clear_cache()?;
         return Ok(());
     }
 
