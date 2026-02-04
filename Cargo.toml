@@ -20,8 +20,8 @@ figment = { version = "0.10", features = ["toml", "env"] }
 flexi_logger = { version = "0.22", features = ["compress"] }
 futures = { version = "0.3", default-features = false, features = ["alloc"] }
 # googleads-rs = { version = "0.12.1", path = "../googleads-rs" }
-googleads-rs = { git = "https://github.com/mhuang74/googleads-rs.git", branch = "main" }
-# googleads-rs = { version = "0.12" }
+# googleads-rs = { git = "https://github.com/mhuang74/googleads-rs.git", branch = "main" }
+googleads-rs = { version = "0.12" }
 itertools = "0.10"
 log = "0.4"
 polars = { version = "0.42", features = ["lazy", "serde-lazy"] }
@@ -34,9 +34,9 @@ toml = "0.5"
 tonic = { version = "0.14", features = ["transport", "tls-ring", "tls-native-roots"] }
 serde_json = "1.0"
 yup-oauth2 = "6.7"
-rig-core = "0.29"
-rig-fastembed = "0.2.21"
-rig-lancedb = "0.2.32"
+rig-core = "0.30.0"
+rig-fastembed = "0.2.22"
+rig-lancedb = "0.2.33"
 lancedb = "0.23"
 arrow-array = "56.2.0"
 arrow-schema = "56.2.0"
