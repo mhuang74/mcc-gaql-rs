@@ -251,52 +251,6 @@ mcc-gaql --profile myprofile \
   " > metric_fields.txt
 ```
 
-### Field Metadata Management
-
-The tool maintains a local cache of Google Ads field metadata to support [natural language queries](#natural-language-queries-experimental) and field exploration. This cache provides the LLM with knowledge of valid fields, their types, and resource relationships. Use these commands to manage the field cache:
-
-#### Refresh Field Cache
-
-Update the local field metadata cache from the Google Ads API:
-
-```bash
-# Refresh cache using a profile
-mcc-gaql --profile myprofile --refresh-field-cache
-
-# Refresh cache with explicit credentials
-mcc-gaql --mcc-id "111-222-3333" --user-email "mcc@company.com" --refresh-field-cache
-```
-
-#### Show Fields for a Resource
-
-Display available fields for a specific resource type (e.g., campaign, ad_group, customer):
-
-```bash
-# Show all fields available for the campaign resource
-mcc-gaql --show-fields campaign
-
-# Show fields for ad_group resource
-mcc-gaql --show-fields ad_group
-
-# Show fields for customer resource
-mcc-gaql --show-fields customer
-
-# Show fields for keyword_view resource
-mcc-gaql --show-fields keyword_view
-```
-
-#### Export Field Metadata
-
-Export the complete field metadata summary to stdout (useful for documentation or analysis):
-
-```bash
-# Export all field metadata to a file
-mcc-gaql --export-field-metadata > field_metadata.txt
-
-# Export and pipe to other tools
-mcc-gaql --export-field-metadata | grep "campaign"
-```
-
 ### Error Handling and Formatting
 
 ```bash
@@ -308,6 +262,7 @@ mcc-gaql --profile myprofile \
 
 # Format output as JSON or table
 mcc-gaql --profile myprofile --format json "SELECT ..."  # json, csv, or table
+```
 
 ## Natural Language Queries (Experimental)
 
@@ -633,6 +588,53 @@ MCC_GAQL_LOG_LEVEL="info,mcc_gaql=debug" mcc-gaql --profile mycompany_mcc -q my_
 
 # Available log levels: error, warn, info, debug, trace
 MCC_GAQL_LOG_LEVEL="debug" mcc-gaql --profile myprofile "SELECT ..."
+```
+
+## Google Ads Field Metadata Caching
+### Field Metadata Management
+
+The tool maintains a local cache of Google Ads field metadata to support [natural language queries](#natural-language-queries-experimental) and field exploration. This cache provides the LLM with knowledge of valid fields, their types, and resource relationships. Use these commands to manage the field cache:
+
+#### Refresh Field Cache
+
+Update the local field metadata cache from the Google Ads API:
+
+```bash
+# Refresh cache using a profile
+mcc-gaql --profile myprofile --refresh-field-cache
+
+# Refresh cache with explicit credentials
+mcc-gaql --mcc-id "111-222-3333" --user-email "mcc@company.com" --refresh-field-cache
+```
+
+#### Show Fields for a Resource
+
+Display available fields for a specific resource type (e.g., campaign, ad_group, customer):
+
+```bash
+# Show all fields available for the campaign resource
+mcc-gaql --show-fields campaign
+
+# Show fields for ad_group resource
+mcc-gaql --show-fields ad_group
+
+# Show fields for customer resource
+mcc-gaql --show-fields customer
+
+# Show fields for keyword_view resource
+mcc-gaql --show-fields keyword_view
+```
+
+#### Export Field Metadata
+
+Export the complete field metadata summary to stdout (useful for documentation or analysis):
+
+```bash
+# Export all field metadata to a file
+mcc-gaql --export-field-metadata > field_metadata.txt
+
+# Export and pipe to other tools
+mcc-gaql --export-field-metadata | grep "campaign"
 ```
 
 ## Alternatives
