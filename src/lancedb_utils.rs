@@ -11,8 +11,8 @@ use std::sync::Arc;
 use crate::prompt2gaql::FieldDocument;
 use crate::util::QueryEntry;
 
-/// Embedding dimension for BGEBaseENV15 model
-const EMBEDDING_DIM: i32 = 768;
+/// Embedding dimension for BGESmallENV15 model
+const EMBEDDING_DIM: i32 = 384;
 
 /// Schema version for tracking schema evolution
 const SCHEMA_VERSION: u8 = 1;
@@ -486,11 +486,11 @@ mod tests {
 
         let embeddings = vec![
             Embedding {
-                vec: vec![0.1_f64; 768],
+                vec: vec![0.1_f64; 384],
                 document: String::new(),
             },
             Embedding {
-                vec: vec![0.2_f64; 768],
+                vec: vec![0.2_f64; 384],
                 document: String::new(),
             },
         ];
@@ -521,7 +521,7 @@ mod tests {
         }];
 
         let embeddings = vec![Embedding {
-            vec: vec![0.1_f64; 768],
+            vec: vec![0.1_f64; 384],
             document: String::new(),
         }];
 

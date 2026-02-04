@@ -38,7 +38,7 @@ impl Embed for FieldDocument {
     }
 }
 
-const EMBEDDING_DIM: i32 = 768; // BGE-Base-EN-v1.5 dimension
+const EMBEDDING_DIM: i32 = 384; // BGESmallENV15 dimension
 
 #[tokio::test]
 async fn test_minimal_rag_loop_with_field_metadata() -> Result<()> {
@@ -254,9 +254,9 @@ async fn test_minimal_rag_loop_with_field_metadata() -> Result<()> {
 
     // Step 2: Create embedding model using rig_fastembed
     let fastembed_client = FastembedClient::new();
-    let embedding_model = fastembed_client.embedding_model(&FastembedModel::BGEBaseENV15);
+    let embedding_model = fastembed_client.embedding_model(&FastembedModel::BGESmallENV15);
 
-    println!("Initialized embedding model: BGE-Base-EN-v1.5");
+    println!("Initialized embedding model: BGESmallENV15");
 
     // Step 3: Generate embeddings using EmbeddingsBuilder
     let embeddings = EmbeddingsBuilder::new(embedding_model.clone())

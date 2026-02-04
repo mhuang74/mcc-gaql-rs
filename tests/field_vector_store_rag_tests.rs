@@ -1,9 +1,19 @@
-use mcc_gaql::field_metadata::FieldMetadataCache;
+use mcc_gaql::field_metadata::{FieldMetadata, FieldMetadataCache};
 use mcc_gaql::prompt2gaql::{FieldDocument, FieldDocumentFlat, build_or_load_field_vector_store};
 use rig::vector_store::{VectorSearchRequest, VectorStoreIndex};
 use rig_fastembed::{Client as FastembedClient, FastembedModel};
 use rig_lancedb::LanceDbVectorIndex;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::sync::OnceLock;
+
+/// Shared embedding model to avoid parallel initialization issues
+fn get_shared_embedding_model() -> &'static rig_fastembed::EmbeddingModel {
+    static MODEL: OnceLock<rig_fastembed::EmbeddingModel> = OnceLock::new();
+    MODEL.get_or_init(|| {
+        let fastembed_client = FastembedClient::new();
+        fastembed_client.embedding_model(&FastembedModel::BGESmallENV15)
+    })
+}
 
 /// Debug utility to print retrieval results with scores
 fn print_retrieval_results(query: &str, results: &[(f64, String, FieldDocumentFlat)]) {
@@ -45,38 +55,127 @@ fn calculate_recall(retrieved_fields: &[String], expected_fields: &HashSet<Strin
     }
 }
 
-/// Helper to load the field vector store for testing
-///
-/// NOTE: These tests require cached field metadata. Run the tool first to populate the cache:
-/// ```
-/// mcc-gaql --myprofile -n "how did impression share metrics changed over past 30 days"
-/// ```
-async fn get_test_field_vector_store()
--> anyhow::Result<LanceDbVectorIndex<rig_fastembed::EmbeddingModel>> {
-    // Load field metadata cache from default location (platform-specific)
-    let cache_path = mcc_gaql::field_metadata::get_default_cache_path()?;
+/// Create synthetic field metadata cache for testing
+fn create_test_field_cache() -> FieldMetadataCache {
+    let mut fields = HashMap::new();
 
-    if !cache_path.exists() {
-        return Err(anyhow::anyhow!(
-            "Field metadata cache not found at {:?}.\n\
-             Please run the mcc-gaql tool first to populate the cache:\n\
-             mcc-gaql --user-email <email> --mcc-id <mcc> \"SELECT campaign.name FROM campaign LIMIT 1\"",
-            cache_path
-        ));
+    // Cost-related metrics
+    let cost_fields = vec![
+        ("metrics.average_cpc", "DOUBLE", "METRIC"),
+        ("metrics.cost_micros", "INT64", "METRIC"),
+        ("metrics.cost_per_conversion", "DOUBLE", "METRIC"),
+        ("metrics.average_cost", "DOUBLE", "METRIC"),
+        ("metrics.average_cpe", "DOUBLE", "METRIC"),
+        ("metrics.average_cpv", "DOUBLE", "METRIC"),
+        ("metrics.average_cpm", "DOUBLE", "METRIC"),
+    ];
+
+    // Conversion-related metrics
+    let conversion_fields = vec![
+        ("metrics.conversions", "DOUBLE", "METRIC"),
+        ("metrics.conversions_value", "DOUBLE", "METRIC"),
+        ("metrics.all_conversions", "DOUBLE", "METRIC"),
+        ("metrics.all_conversions_value", "DOUBLE", "METRIC"),
+        ("metrics.value_per_conversion", "DOUBLE", "METRIC"),
+    ];
+
+    // Impression and click metrics
+    let impression_fields = vec![
+        ("metrics.impressions", "INT64", "METRIC"),
+        ("metrics.clicks", "INT64", "METRIC"),
+        ("metrics.ctr", "DOUBLE", "METRIC"),
+        ("metrics.interactions", "INT64", "METRIC"),
+        ("metrics.interaction_rate", "DOUBLE", "METRIC"),
+    ];
+
+    // Impression share metrics
+    let impression_share_fields = vec![
+        ("metrics.absolute_top_impression_percentage", "DOUBLE", "METRIC"),
+        ("metrics.search_absolute_top_impression_share", "DOUBLE", "METRIC"),
+        ("metrics.search_budget_lost_absolute_top_impression_share", "DOUBLE", "METRIC"),
+        ("metrics.search_budget_lost_impression_share", "DOUBLE", "METRIC"),
+        ("metrics.search_budget_lost_top_impression_share", "DOUBLE", "METRIC"),
+        ("metrics.search_exact_match_impression_share", "DOUBLE", "METRIC"),
+        ("metrics.search_impression_share", "DOUBLE", "METRIC"),
+        ("metrics.search_rank_lost_impression_share", "DOUBLE", "METRIC"),
+        ("metrics.search_top_impression_share", "DOUBLE", "METRIC"),
+    ];
+
+    // Campaign attributes
+    let campaign_fields = vec![
+        ("campaign.name", "STRING", "ATTRIBUTE"),
+        ("campaign.id", "INT64", "ATTRIBUTE"),
+        ("campaign.status", "ENUM", "ATTRIBUTE"),
+        ("campaign.budget_amount_micros", "INT64", "ATTRIBUTE"),
+    ];
+
+    // Segments
+    let segment_fields = vec![
+        ("segments.date", "DATE", "SEGMENT"),
+        ("segments.week", "STRING", "SEGMENT"),
+        ("segments.month", "STRING", "SEGMENT"),
+        ("segments.device", "ENUM", "SEGMENT"),
+    ];
+
+    // Video metrics
+    let video_fields = vec![
+        ("metrics.video_trueview_views", "INT64", "METRIC"),
+        ("metrics.video_trueview_view_rate", "DOUBLE", "METRIC"),
+        ("metrics.video_views", "INT64", "METRIC"),
+        ("metrics.video_view_rate", "DOUBLE", "METRIC"),
+    ];
+
+    // Combine all fields
+    let all_fields: Vec<_> = cost_fields
+        .into_iter()
+        .chain(conversion_fields)
+        .chain(impression_fields)
+        .chain(impression_share_fields)
+        .chain(campaign_fields)
+        .chain(segment_fields)
+        .chain(video_fields)
+        .collect();
+
+    for (name, data_type, category) in all_fields {
+        let resource_name = if name.starts_with("campaign.") {
+            Some("campaign".to_string())
+        } else {
+            None
+        };
+
+        fields.insert(
+            name.to_string(),
+            FieldMetadata {
+                name: name.to_string(),
+                category: category.to_string(),
+                data_type: data_type.to_string(),
+                selectable: true,
+                filterable: name.starts_with("campaign."),
+                sortable: true,
+                metrics_compatible: category == "METRIC",
+                resource_name,
+            },
+        );
     }
 
-    let field_cache = FieldMetadataCache::load_or_fetch(
-        None, // No API context needed for testing (will use cached data)
-        &cache_path,
-        999, // Very high TTL to use cached data
-    )
-    .await?;
+    FieldMetadataCache {
+        last_updated: chrono::Utc::now(),
+        api_version: "v23".to_string(),
+        fields,
+        resources: None,
+    }
+}
 
-    println!("Retrieved {} fields", field_cache.fields.len());
+/// Helper to create the field vector store for testing with synthetic data
+async fn get_test_field_vector_store()
+-> anyhow::Result<LanceDbVectorIndex<rig_fastembed::EmbeddingModel>> {
+    // Create synthetic field cache for testing
+    let field_cache = create_test_field_cache();
 
-    // Create embedding model
-    let fastembed_client = FastembedClient::new();
-    let embedding_model = fastembed_client.embedding_model(&FastembedModel::BGEBaseENV15);
+    println!("Created test field cache with {} fields", field_cache.fields.len());
+
+    // Use shared embedding model to avoid parallel initialization issues
+    let embedding_model = get_shared_embedding_model().clone();
 
     // Build or load vector store
     let vector_store = build_or_load_field_vector_store(&field_cache, embedding_model).await?;
@@ -219,7 +318,6 @@ impl RetrievalTestCase {
 }
 
 #[tokio::test]
-#[ignore = "Requires field metadata cache - run tool first to populate cache"]
 async fn test_field_retrieval_for_cost_metrics() {
     RetrievalTestCase::new(
         "cost per click and average cost metrics",
@@ -240,7 +338,6 @@ async fn test_field_retrieval_for_cost_metrics() {
 }
 
 #[tokio::test]
-#[ignore = "Requires field metadata cache - run tool first to populate cache"]
 async fn test_field_retrieval_for_conversions() {
     RetrievalTestCase::new(
         "metrics for conversions and conversion rate",
@@ -260,7 +357,6 @@ async fn test_field_retrieval_for_conversions() {
 }
 
 #[tokio::test]
-#[ignore = "Requires field metadata cache - run tool first to populate cache"]
 async fn test_field_retrieval_for_impressions_and_clicks() {
     RetrievalTestCase::new(
         "impressions, clicks, and interactions metrics",
@@ -279,7 +375,6 @@ async fn test_field_retrieval_for_impressions_and_clicks() {
 }
 
 #[tokio::test]
-#[ignore = "Requires field metadata cache - run tool first to populate cache"]
 async fn test_field_retrieval_for_impression_share_metrics() {
     RetrievalTestCase::new(
         "impression share metrics",
@@ -302,7 +397,6 @@ async fn test_field_retrieval_for_impression_share_metrics() {
 }
 
 #[tokio::test]
-#[ignore = "Requires field metadata cache - run tool first to populate cache"]
 async fn test_field_retrieval_similarity_scores() {
     // This test validates that similarity scores are reasonable
     let vector_store = get_test_field_vector_store()
@@ -366,7 +460,6 @@ async fn test_field_retrieval_similarity_scores() {
 }
 
 #[tokio::test]
-#[ignore = "Requires field metadata cache - run tool first to populate cache"]
 async fn test_field_retrieval_ranking() {
     // This test ensures more relevant fields rank higher
     let vector_store = get_test_field_vector_store()
@@ -419,7 +512,6 @@ async fn test_field_retrieval_ranking() {
 }
 
 #[tokio::test]
-#[ignore = "Requires field metadata cache - run tool first to populate cache"]
 async fn test_field_retrieval_negative_case() {
     // Test that unrelated queries don't return extremely high scores
     let vector_store = get_test_field_vector_store()
@@ -455,15 +547,9 @@ async fn test_field_retrieval_negative_case() {
 }
 
 #[tokio::test]
-#[ignore = "Requires field metadata cache - run tool first to populate cache"]
 async fn test_field_description_quality() {
     // Test that field descriptions are being generated properly
-    let cache_path =
-        mcc_gaql::field_metadata::get_default_cache_path().expect("Failed to get cache path");
-
-    let field_cache = FieldMetadataCache::load_or_fetch(None, &cache_path, 999)
-        .await
-        .expect("Failed to load field cache");
+    let field_cache = create_test_field_cache();
 
     // Create a few field documents and check their descriptions
     let mut sample_count = 0;
@@ -504,7 +590,6 @@ async fn test_field_description_quality() {
 }
 
 #[tokio::test]
-#[ignore = "Requires field metadata cache - run tool first to populate cache"]
 async fn test_category_specific_retrieval() {
     // Test retrieval for different categories
     let vector_store = get_test_field_vector_store()

@@ -77,7 +77,7 @@ fn create_llm_client(config: &LlmConfig) -> Result<openai::CompletionsClient, an
 /// Create embedding client and model
 fn create_embedding_client() -> (rig_fastembed::Client, rig_fastembed::EmbeddingModel) {
     let fastembed_client = rig_fastembed::Client::new();
-    let embedding_model = fastembed_client.embedding_model(&FastembedModel::BGEBaseENV15);
+    let embedding_model = fastembed_client.embedding_model(&FastembedModel::BGESmallENV15);
     (fastembed_client, embedding_model)
 }
 
@@ -250,7 +250,7 @@ async fn build_or_load_query_vector_store(
             log::warn!("Missing embedding for document ID: {}", document.id);
             // Use zero vector as fallback
             embedding_vecs.push(rig::embeddings::Embedding {
-                vec: vec![0.0_f64; 768],
+                vec: vec![0.0_f64; 384],
                 document: String::new(),
             });
         }
@@ -381,7 +381,7 @@ pub async fn build_or_load_field_vector_store(
             log::warn!("Missing embedding for document ID: {}", document.id);
             // Use zero vector as fallback
             embedding_vecs.push(rig::embeddings::Embedding {
-                vec: vec![0.0_f64; 768],
+                vec: vec![0.0_f64; 384],
                 document: String::new(),
             });
         }
