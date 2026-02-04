@@ -253,7 +253,7 @@ mcc-gaql --profile myprofile \
 
 ### Field Metadata Management
 
-The tool maintains a local cache of Google Ads field metadata to support natural language queries and field exploration. Use these commands to manage the field cache:
+The tool maintains a local cache of Google Ads field metadata to support [natural language queries](#natural-language-queries-experimental) and field exploration. This cache provides the LLM with knowledge of valid fields, their types, and resource relationships. Use these commands to manage the field cache:
 
 #### Refresh Field Cache
 
@@ -309,15 +309,53 @@ mcc-gaql --profile myprofile \
 # Format output as JSON or table
 mcc-gaql --profile myprofile --format json "SELECT ..."  # json, csv, or table
 
-### Natural Language Queries (Experimental)
+## Natural Language Queries (Experimental)
 
-Using natural language (requires LLM integration). See [LLM Configuration](#llm-configuration-for-natural-language-queries) for setup instructions.
+### Overview
+
+Instead of writing GAQL directly, describe what you want in plain English and the tool will generate and execute the query for you. See [LLM Configuration](#llm-configuration-for-natural-language-queries) for setup instructions.
 
 ```bash
 mcc-gaql -n "campaign changes from last 14 days with current campaign status and bidding strategy" -o recent_changes.csv
 ```
 
-Example using a custom model:
+### How It Works
+
+The natural language feature uses a **Retrieval-Augmented Generation (RAG)** approach:
+
+1. **Field Metadata Retrieval**: The tool retrieves relevant Google Ads field definitions from your local field cache (see [Field Metadata Management](#field-metadata-management)). This ensures the LLM knows about valid fields, their types, and which resources they belong to.
+
+2. **Example Retrieval**: If you have a [query cookbook](#stored-queries-file) configured, semantically similar example queries are retrieved to provide additional context for the LLM.
+
+3. **LLM Generation**: The configured LLM combines the field metadata and example queries to generate a GAQL query matching your natural language request.
+
+### Setup Requirements
+
+Natural language queries require an LLM provider to be configured. See [LLM Configuration](#llm-configuration-for-natural-language-queries) for detailed setup instructions.
+
+> **Warning**: This feature is **experimental**. The LLM may generate invalid GAQL queries that will result in errors when executed against the Google Ads API. If you're querying multiple accounts, consider using `--keep-going` to continue processing even if the generated query fails on some accounts. Always review generated queries when possible.
+
+### Basic Usage
+
+```bash
+# Simple natural language query
+mcc-gaql -n "show me all campaigns with status and bidding strategy" -o campaigns.csv
+
+# With specific date range and metrics
+mcc-gaql -n "campaign performance last 30 days including impressions, clicks, and cost" --format csv
+```
+
+### Tips for Better Results
+
+- **Be specific about resources**: Mention the resource type explicitly (campaign, ad_group, keyword_view, etc.)
+- **List desired fields**: Name specific metrics or attributes you want included
+- **Specify date ranges**: Include date ranges explicitly (e.g., "last 30 days", "this month", "during last week")
+- **Include filtering criteria**: Add conditions like "where clicks > 100" or "only active campaigns"
+- **Use field metadata**: Run `--refresh-field-cache` periodically to keep the field metadata current
+
+### Example with Custom Model
+
+Override the default model for a specific query:
 
 ```bash
 MCC_GAQL_LLM_MODEL="hf:MiniMaxAI/MiniMax-M2.1" mcc-gaql --profile themade -n "performance from last week, including impression, clicks, prominence metrics, revenue, conversion, and all video metrics, except for trueview metrics" --format csv
@@ -472,7 +510,7 @@ export MCC_GAQL_KEEP_GOING="true"
 
 ### LLM Configuration for Natural Language Queries
 
-Natural language queries require an LLM provider to convert natural language into GAQL. Configure using the following environment variables:
+[Natural language queries](#natural-language-queries-experimental) require an LLM provider to convert natural language into GAQL. Configure using the following environment variables:
 
 | Variable | Description | Required |
 |----------|-------------|----------|
