@@ -21,7 +21,8 @@ jobs:
 
           # Optional inputs with defaults
           # model_id: 'openai/gpt-4o-mini' # Cheap and Fast
-          model_id: 'anthropic/claude-sonnet-4.5' # Catch nuanced bugs
+          # model_id: 'anthropic/claude-sonnet-4.5' # Catch nuanced bugs
+          model_id: 'z-ai/glm-4.7' # Cheap but goood
           max_tokens: '2048' # Default max tokens
           review_label: 'ai-review' # Optional: Only review PRs with this label
 
