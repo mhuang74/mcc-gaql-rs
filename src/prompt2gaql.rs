@@ -6,7 +6,7 @@ use std::vec;
 use lancedb::DistanceType;
 use rig::{
     agent::Agent,
-    client::CompletionClient,
+    client::{CompletionClient, ProviderClient},
     completion::{Completion, Prompt},
     embeddings::{EmbedError, EmbeddingsBuilder, TextEmbedder, embed::Embed},
     providers::openai::{self, completion::CompletionModel},
