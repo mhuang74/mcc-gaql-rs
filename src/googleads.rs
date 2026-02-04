@@ -645,4 +645,209 @@ mod tests {
         assert_eq!(int_series.null_count(), 1);
         assert_eq!(float_series.null_count(), 2);
     }
+
+    /// Comprehensive test for all Google Ads placeholder values that can be returned for metrics
+    #[test]
+    fn test_all_google_ads_placeholder_values_integer() {
+        // Google Ads API can return various placeholder values when data is not available
+        let placeholder_values = [
+            ("", "empty string"),
+            ("--", "double dash"),
+            ("-", "single dash"),
+            ("n/a", "lowercase n/a"),
+            ("N/A", "uppercase N/A"),
+            ("N/a", "mixed case N/a"),
+            ("na", "na without slashes"),
+            ("NA", "NA without slashes"),
+            ("null", "null string"),
+            ("NULL", "NULL string"),
+            ("none", "none string"),
+            ("NONE", "NONE string"),
+        ];
+
+        for (value, description) in &placeholder_values {
+            let result: Option<u64> = value.parse().ok();
+            assert!(
+                result.is_none(),
+                "Expected None for {} ('{}'), got {:?}",
+                description,
+                value,
+                result
+            );
+        }
+    }
+
+    /// Comprehensive test for all Google Ads placeholder values for float metrics
+    #[test]
+    fn test_all_google_ads_placeholder_values_float() {
+        // Google Ads API can return various placeholder values when data is not available
+        let placeholder_values = [
+            ("", "empty string"),
+            ("--", "double dash"),
+            ("-", "single dash"),
+            ("n/a", "lowercase n/a"),
+            ("N/A", "uppercase N/A"),
+            ("N/a", "mixed case N/a"),
+            ("na", "na without slashes"),
+            ("NA", "NA without slashes"),
+            ("null", "null string"),
+            ("NULL", "NULL string"),
+            ("none", "none string"),
+            ("NONE", "NONE string"),
+        ];
+
+        for (value, description) in &placeholder_values {
+            let result: Option<f64> = value.parse().ok();
+            assert!(
+                result.is_none(),
+                "Expected None for {} ('{}'), got {:?}",
+                description,
+                value,
+                result
+            );
+        }
+    }
+
+    /// Test that valid metrics still parse correctly alongside all placeholder values
+    #[test]
+    fn test_mixed_valid_and_all_placeholder_values() {
+        let input = [
+            "1000".to_string(),
+            "".to_string(),
+            "2000".to_string(),
+            "--".to_string(),
+            "3000".to_string(),
+            "-".to_string(),
+            "4000".to_string(),
+            "n/a".to_string(),
+            "5000".to_string(),
+            "N/A".to_string(),
+        ];
+
+        let result: Vec<Option<u64>> = input.iter().map(|x| x.parse().ok()).collect();
+
+        // Should have 10 values with 5 valid and 5 None
+        assert_eq!(result.len(), 10);
+        assert_eq!(
+            result,
+            vec![
+                Some(1000),
+                None,
+                Some(2000),
+                None,
+                Some(3000),
+                None,
+                Some(4000),
+                None,
+                Some(5000),
+                None,
+            ]
+        );
+
+        // Verify we can create a Series with these values
+        let series = Series::new("metrics.clicks", result);
+        assert_eq!(series.len(), 10);
+        assert_eq!(series.null_count(), 5);
+    }
+
+    /// Test all common impression share metrics with placeholder values
+    #[test]
+    fn test_impression_share_metrics_with_placeholders() {
+        // Simulate a realistic scenario with multiple impression share columns
+        let search_impression_share = [
+            "0.8567".to_string(),
+            "--".to_string(),
+            "0.9215".to_string(),
+            "".to_string(),
+            "0.7500".to_string(),
+            "n/a".to_string(),
+        ];
+
+        let absolute_top_impression_share = [
+            "0.6523".to_string(),
+            "--".to_string(),
+            "".to_string(),
+            "-".to_string(),
+            "0.4521".to_string(),
+            "N/A".to_string(),
+        ];
+
+        let search_top_impression_share = [
+            "0.7534".to_string(),
+            "n/a".to_string(),
+            "0.8923".to_string(),
+            "--".to_string(),
+            "-".to_string(),
+            "".to_string(),
+        ];
+
+        let parsed_search: Vec<Option<f64>> =
+            search_impression_share.iter().map(|x| x.parse().ok()).collect();
+        let parsed_absolute_top: Vec<Option<f64>> =
+            absolute_top_impression_share.iter().map(|x| x.parse().ok()).collect();
+        let parsed_top: Vec<Option<f64>> =
+            search_top_impression_share.iter().map(|x| x.parse().ok()).collect();
+
+        // All should have 6 rows
+        assert_eq!(parsed_search.len(), 6);
+        assert_eq!(parsed_absolute_top.len(), 6);
+        assert_eq!(parsed_top.len(), 6);
+
+        // Verify specific null positions
+        assert!(parsed_search[1].is_none());
+        assert!(parsed_search[3].is_none());
+        assert!(parsed_search[5].is_none());
+
+        assert!(parsed_absolute_top[1].is_none());
+        assert!(parsed_absolute_top[3].is_none());
+        assert!(parsed_absolute_top[5].is_none());
+
+        assert!(parsed_top[1].is_none());
+        assert!(parsed_top[3].is_none());
+        assert!(parsed_top[4].is_none());
+        assert!(parsed_top[5].is_none());
+
+        // Create DataFrame and verify structure
+        let search_series = Series::new("metrics.search_impression_share", parsed_search);
+        let absolute_top_series =
+            Series::new("metrics.search_absolute_top_impression_share", parsed_absolute_top);
+        let top_series = Series::new("metrics.search_top_impression_share", parsed_top);
+
+        let df = DataFrame::new(vec![search_series, absolute_top_series, top_series]).unwrap();
+
+        assert_eq!(df.height(), 6);
+        assert_eq!(df.width(), 3);
+    }
+
+    /// Test edge cases with whitespace and special characters
+    #[test]
+    fn test_whitespace_and_special_characters() {
+        let edge_cases = [
+            ("  ", "whitespace only"),
+            ("\t", "tab character"),
+            ("\n", "newline character"),
+            (" 100 ", "number with spaces"),
+            ("0.85 ", "float with trailing space"),
+        ];
+
+        for (value, description) in &edge_cases {
+            let int_result: Option<u64> = value.parse().ok();
+            let float_result: Option<f64> = value.parse().ok();
+
+            assert!(
+                int_result.is_none(),
+                "Expected None for integer {} ('{:?}'), got {:?}",
+                description,
+                value,
+                int_result
+            );
+            assert!(
+                float_result.is_none(),
+                "Expected None for float {} ('{:?}'), got {:?}",
+                description,
+                value,
+                float_result
+            );
+        }
+    }
 }
