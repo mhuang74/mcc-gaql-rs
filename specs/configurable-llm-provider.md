@@ -10,7 +10,7 @@
 
 ## Summary
 
-Replace the hardcoded OpenRouter/Gemini Flash LLM configuration with a configurable provider system that supports OpenAI-compatible APIs, including Nano-gpt.com.
+Replace the hardcoded OpenRouter/Gemini Flash LLM configuration with a configurable provider system that supports OpenAI-compatible APIs.
 
 ---
 
@@ -30,7 +30,7 @@ let agent = openrouter_client
 
 **Problems:**
 - Cannot switch providers without code changes
-- Cannot use Nano-gpt.com or other OpenAI-compatible providers
+- Cannot use other OpenAI-compatible providers
 - Requires `OPENROUTER_API_KEY` even if user prefers different provider
 
 ---
@@ -47,11 +47,11 @@ Rig's OpenAI `ClientBuilder` supports custom base URLs:
 use rig::providers::openai;
 
 let client = openai::ClientBuilder::new(&api_key)
-    .base_url("https://nano-gpt.com/api/v1")
+    .base_url("https://api.openai.com/v1")
     .build();
 
 let agent = client
-    .agent("glm-4-9b")
+    .agent("gpt-4o")
     .preamble(&preamble)
     .temperature(0.1)
     .build();
@@ -63,9 +63,9 @@ let agent = client
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `MCC_GAQL_LLM_API_KEY` | API key for the LLM provider | `your-nano-gpt-key` |
-| `MCC_GAQL_LLM_BASE_URL` | Base URL for OpenAI-compatible API | `https://nano-gpt.com/api/v1` |
-| `MCC_GAQL_LLM_MODEL` | Model name | `glm-4-9b` |
+| `MCC_GAQL_LLM_API_KEY` | API key for the LLM provider | `your-api-key` |
+| `MCC_GAQL_LLM_BASE_URL` | Base URL for OpenAI-compatible API | `https://openrouter.ai/api/v1` |
+| `MCC_GAQL_LLM_MODEL` | Model name | `google/gemini-flash-2.0` |
 | `MCC_GAQL_LLM_TEMPERATURE` | Temperature (optional, default: 0.1) | `0.1` |
 
 **Backward Compatibility:**
@@ -82,7 +82,6 @@ Common providers with their base URLs:
 | Provider | Base URL | Example Models |
 |----------|----------|----------------|
 | OpenRouter | `https://openrouter.ai/api/v1` | `google/gemini-flash-2.0`, `anthropic/claude-3.5-sonnet` |
-| Nano-gpt | `https://nano-gpt.com/api/v1` | `glm-4-9b`, `glm-4-plus` |
 | OpenAI | `https://api.openai.com/v1` | `gpt-4o`, `gpt-4-turbo` |
 | Ollama | `http://localhost:11434/v1` | `llama3.1`, `mistral` |
 
@@ -183,17 +182,7 @@ No changes needed - `rig-core` already includes the OpenAI provider.
 
 ## Usage Examples
 
-### Example 1: Nano-gpt with GLM-4
-
-```bash
-export MCC_GAQL_LLM_API_KEY="your-nano-gpt-key"
-export MCC_GAQL_LLM_BASE_URL="https://nano-gpt.com/api/v1"
-export MCC_GAQL_LLM_MODEL="glm-4-9b"
-
-mcc-gaql -n "show me campaigns with high CTR"
-```
-
-### Example 2: OpenRouter (backward compatible)
+### Example 1: OpenRouter (backward compatible)
 
 ```bash
 # Works exactly as before
@@ -201,7 +190,7 @@ export OPENROUTER_API_KEY="your-openrouter-key"
 mcc-gaql -n "show me campaigns"
 ```
 
-### Example 3: Local Ollama
+### Example 2: Local Ollama
 
 ```bash
 export MCC_GAQL_LLM_BASE_URL="http://localhost:11434/v1"
@@ -211,7 +200,7 @@ export MCC_GAQL_LLM_API_KEY="ollama"  # Ollama ignores this but rig requires it
 mcc-gaql -n "show me campaigns"
 ```
 
-### Example 4: One-time override
+### Example 3: One-time override
 
 ```bash
 # Use Claude via OpenRouter just for this query
@@ -242,16 +231,16 @@ fn test_load_llm_config_defaults() {
 
 #[test]
 fn test_load_llm_config_custom() {
-    std::env::set_var("MCC_GAQL_LLM_API_KEY", "nano-key");
-    std::env::set_var("MCC_GAQL_LLM_BASE_URL", "https://nano-gpt.com/api/v1");
-    std::env::set_var("MCC_GAQL_LLM_MODEL", "glm-4-9b");
+    std::env::set_var("MCC_GAQL_LLM_API_KEY", "custom-key");
+    std::env::set_var("MCC_GAQL_LLM_BASE_URL", "https://api.openai.com/v1");
+    std::env::set_var("MCC_GAQL_LLM_MODEL", "gpt-4o");
     std::env::set_var("MCC_GAQL_LLM_TEMPERATURE", "0.2");
 
     let (api_key, base_url, model, temp) = load_llm_config();
 
-    assert_eq!(api_key, "nano-key");
-    assert_eq!(base_url, "https://nano-gpt.com/api/v1");
-    assert_eq!(model, "glm-4-9b");
+    assert_eq!(api_key, "custom-key");
+    assert_eq!(base_url, "https://api.openai.com/v1");
+    assert_eq!(model, "gpt-4o");
     assert_eq!(temp, 0.2);
 }
 ```
@@ -261,10 +250,10 @@ fn test_load_llm_config_custom() {
 ```rust
 #[tokio::test]
 #[ignore]  // Requires real API key
-async fn test_nano_gpt_integration() {
-    std::env::set_var("MCC_GAQL_LLM_API_KEY", std::env::var("NANO_GPT_API_KEY").unwrap());
-    std::env::set_var("MCC_GAQL_LLM_BASE_URL", "https://nano-gpt.com/api/v1");
-    std::env::set_var("MCC_GAQL_LLM_MODEL", "glm-4-9b");
+async fn test_openai_integration() {
+    std::env::set_var("MCC_GAQL_LLM_API_KEY", std::env::var("OPENAI_API_KEY").unwrap());
+    std::env::set_var("MCC_GAQL_LLM_BASE_URL", "https://api.openai.com/v1");
+    std::env::set_var("MCC_GAQL_LLM_MODEL", "gpt-4o-mini");
 
     let result = convert_to_gaql_enhanced(
         vec![],  // empty cookbook for test
@@ -297,15 +286,15 @@ After implementation, verify with:
 # 1. Backward compatibility (should work unchanged)
 OPENROUTER_API_KEY="..." mcc-gaql -n "show campaigns"
 
-# 2. Nano-gpt integration
+# 2. OpenAI integration
 MCC_GAQL_LLM_API_KEY="..." \
-MCC_GAQL_LLM_BASE_URL="https://nano-gpt.com/api/v1" \
-MCC_GAQL_LLM_MODEL="glm-4-9b" \
+MCC_GAQL_LLM_BASE_URL="https://api.openai.com/v1" \
+MCC_GAQL_LLM_MODEL="gpt-4o-mini" \
 mcc-gaql -n "show campaigns"
 
 # 3. Check logs show correct provider
 RUST_LOG=info mcc-gaql -n "show campaigns"
-# Should log: "Using LLM: glm-4-9b via https://nano-gpt.com/api/v1"
+# Should log: "Using LLM: gpt-4o-mini via https://api.openai.com/v1"
 ```
 
 ---
@@ -322,5 +311,5 @@ RUST_LOG=info mcc-gaql -n "show campaigns"
 ## Future Enhancements
 
 1. **Config file support** - Add `[llm]` section to `~/.config/mcc-gaql/config.toml`
-2. **Provider presets** - `LLM_PROVIDER=nano-gpt` auto-sets base_url
+2. **Provider presets** - `LLM_PROVIDER=openai` auto-sets base_url
 3. **Model aliases** - Short names like `glm4` -> `glm-4-9b`
