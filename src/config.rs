@@ -812,6 +812,7 @@ mod tests {
             setup: false,
             show_config: false,
             refresh_field_cache: false,
+            clear_vector_cache: false,
             show_fields: None,
             export_field_metadata: false,
         };
