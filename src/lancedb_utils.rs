@@ -14,8 +14,11 @@ use crate::util::QueryEntry;
 /// Embedding dimension for BGESmallENV15 model
 const EMBEDDING_DIM: i32 = 384;
 
-/// Schema version for tracking schema evolution
-const SCHEMA_VERSION: u8 = 1;
+/// Schema version for tracking schema evolution (includes embedding dimension)
+/// Format: "v1-dim384" - changing EMBEDDING_DIM will invalidate old caches
+fn schema_version() -> String {
+    format!("v1-dim{}", EMBEDDING_DIM)
+}
 
 /// Get the LanceDB database path
 pub fn get_lancedb_path() -> Result<PathBuf> {
@@ -38,10 +41,37 @@ pub fn get_hash_path(cache_type: &str) -> Result<PathBuf> {
     Ok(cache_dir.join(format!("{}.hash", cache_type)))
 }
 
+/// Clear all vector cache files (LanceDB tables and hash files)
+pub fn clear_cache() -> Result<()> {
+    let cache_dir = dirs::cache_dir()
+        .ok_or_else(|| anyhow::anyhow!("Failed to get cache directory"))?
+        .join("mcc-gaql");
+
+    // Remove LanceDB directory
+    let lancedb_path = cache_dir.join("lancedb");
+    if lancedb_path.exists() {
+        std::fs::remove_dir_all(&lancedb_path)?;
+        println!("Removed LanceDB cache directory: {}", lancedb_path.display());
+    }
+
+    // Remove hash files
+    let hash_files = ["query_cookbook.hash", "field_metadata.hash"];
+    for hash_file in &hash_files {
+        let hash_path = cache_dir.join(hash_file);
+        if hash_path.exists() {
+            std::fs::remove_file(&hash_path)?;
+            println!("Removed hash file: {}", hash_path.display());
+        }
+    }
+
+    println!("Vector cache cleared successfully.");
+    Ok(())
+}
+
 /// Save hash to file with schema version
 pub fn save_hash(cache_type: &str, hash: u64) -> Result<()> {
     let hash_path = get_hash_path(cache_type)?;
-    let content = format!("v{}\n{}", SCHEMA_VERSION, hash);
+    let content = format!("{}\n{}", schema_version(), hash);
     std::fs::write(&hash_path, content)?;
     log::debug!("Saved hash {} to {:?}", hash, hash_path);
     Ok(())
@@ -62,11 +92,14 @@ pub fn load_hash(cache_type: &str) -> Result<Option<u64>> {
         return Ok(None);
     }
 
-    // Check schema version
-    if lines[0] != format!("v{}", SCHEMA_VERSION) {
+    // Check schema version (includes embedding dimension)
+    let expected_version = schema_version();
+    if lines[0] != expected_version {
         log::warn!(
-            "Schema version mismatch in {}, rebuilding cache...",
-            cache_type
+            "Schema version mismatch in {} (found: {}, expected: {}), rebuilding cache...",
+            cache_type,
+            lines[0],
+            expected_version
         );
         return Ok(None);
     }
