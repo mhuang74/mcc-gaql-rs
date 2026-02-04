@@ -313,7 +313,7 @@ mcc-gaql --profile myprofile --format json "SELECT ..."  # json, csv, or table
 
 ### Overview
 
-Instead of writing GAQL directly, describe what you want in plain English and the tool will generate and execute the query for you:
+Instead of writing GAQL directly, describe what you want in plain English and the tool will generate and execute the query for you. See [LLM Configuration](#llm-configuration-for-natural-language-queries) for setup instructions.
 
 ```bash
 mcc-gaql -n "campaign changes from last 14 days with current campaign status and bidding strategy" -o recent_changes.csv
