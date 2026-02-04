@@ -339,15 +339,23 @@ pub async fn gaql_query_with_client(
                             .iter()
                             .any(|f| f == header)
                         {
-                            let v: Vec<u64> = columns
+                            let v: Vec<Option<u64>> = columns
                                 .get(i)
-                                .map(|col| col.iter().map(|x| x.parse::<u64>().unwrap()).collect())
+                                .map(|col| {
+                                    col.iter()
+                                        .map(|x| x.parse::<u64>().ok())
+                                        .collect()
+                                })
                                 .unwrap_or_default();
                             series_vec.push(Series::new(header, v));
                         } else {
-                            let v: Vec<f64> = columns
+                            let v: Vec<Option<f64>> = columns
                                 .get(i)
-                                .map(|col| col.iter().map(|x| x.parse::<f64>().unwrap()).collect())
+                                .map(|col| {
+                                    col.iter()
+                                        .map(|x| x.parse::<f64>().ok())
+                                        .collect()
+                                })
                                 .unwrap_or_default();
                             series_vec.push(Series::new(header, v));
                         }
@@ -469,4 +477,172 @@ pub async fn get_child_account_ids(
     };
 
     Ok(customer_ids.unwrap())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Test that metric parsing handles valid numeric values correctly
+    #[test]
+    fn test_integer_metric_parsing_valid_values() {
+        let input = ["100".to_string(), "200".to_string(), "0".to_string()];
+        let result: Vec<Option<u64>> = input.iter().map(|x| x.parse::<u64>().ok()).collect();
+
+        assert_eq!(result, vec![Some(100), Some(200), Some(0)]);
+    }
+
+    /// Test that metric parsing handles invalid values (empty, "--", "N/A") as None
+    #[test]
+    fn test_integer_metric_parsing_invalid_values() {
+        let input = ["".to_string(),
+            "--".to_string(),
+            "N/A".to_string(),
+            " ".to_string()];
+        let result: Vec<Option<u64>> = input.iter().map(|x| x.parse::<u64>().ok()).collect();
+
+        assert_eq!(result, vec![None, None, None, None]);
+    }
+
+    /// Test that metric parsing handles a mix of valid and invalid values
+    #[test]
+    fn test_integer_metric_parsing_mixed_values() {
+        let input = ["100".to_string(),
+            "".to_string(),
+            "200".to_string(),
+            "--".to_string(),
+            "50".to_string()];
+        let result: Vec<Option<u64>> = input.iter().map(|x| x.parse::<u64>().ok()).collect();
+
+        assert_eq!(result, vec![Some(100), None, Some(200), None, Some(50)]);
+    }
+
+    /// Test that float metric parsing handles valid values correctly
+    #[test]
+    fn test_float_metric_parsing_valid_values() {
+        let input = ["1.5".to_string(), "0.0".to_string(), "99.99".to_string()];
+        let result: Vec<Option<f64>> = input.iter().map(|x| x.parse::<f64>().ok()).collect();
+
+        assert_eq!(result, vec![Some(1.5), Some(0.0), Some(99.99)]);
+    }
+
+    /// Test that float metric parsing handles invalid impression share values
+    #[test]
+    fn test_float_metric_parsing_invalid_values() {
+        let input = ["--".to_string(),
+            "".to_string(),
+            "N/A".to_string(),
+            " ".to_string()];
+        let result: Vec<Option<f64>> = input.iter().map(|x| x.parse::<f64>().ok()).collect();
+
+        assert_eq!(result, vec![None, None, None, None]);
+    }
+
+    /// Test that float metric parsing handles mixed valid and invalid values
+    #[test]
+    fn test_float_metric_parsing_mixed_values() {
+        let input = ["0.85".to_string(),
+            "--".to_string(),
+            "0.95".to_string(),
+            "".to_string(),
+            "0.75".to_string()];
+        let result: Vec<Option<f64>> = input.iter().map(|x| x.parse::<f64>().ok()).collect();
+
+        assert_eq!(result, vec![Some(0.85), None, Some(0.95), None, Some(0.75)]);
+    }
+
+    /// Test creating a Polars Series from optional integer values (simulates the fixed code path)
+    #[test]
+    fn test_series_from_optional_integer_values() {
+        let values: Vec<Option<u64>> = vec![Some(100), None, Some(200), None, Some(50)];
+        let series = Series::new("metrics.clicks", values);
+
+        assert_eq!(series.len(), 5);
+        assert_eq!(series.name(), "metrics.clicks");
+        assert_eq!(series.null_count(), 2);
+    }
+
+    /// Test creating a Polars Series from optional float values (simulates the fixed code path)
+    #[test]
+    fn test_series_from_optional_float_values() {
+        let values: Vec<Option<f64>> = vec![Some(0.85), None, Some(0.95), None, Some(0.75)];
+        let series = Series::new("metrics.search_impression_share", values);
+
+        assert_eq!(series.len(), 5);
+        assert_eq!(series.name(), "metrics.search_impression_share");
+        assert_eq!(series.null_count(), 2);
+    }
+
+    /// Test parsing realistic impression share values from Google Ads API
+    #[test]
+    fn test_realistic_impression_share_values() {
+        // These are typical values returned by Google Ads API for impression share metrics
+        let input = [
+            "0.8567".to_string(),      // Valid percentage (85.67%)
+            "--".to_string(),          // No data available
+            "0.9215".to_string(),      // Valid percentage (92.15%)
+            "".to_string(),            // Empty (no data)
+            "0.0000".to_string(),      // Zero value
+            "N/A".to_string(),         // Not applicable
+        ];
+        let result: Vec<Option<f64>> = input.iter().map(|x| x.parse::<f64>().ok()).collect();
+
+        assert_eq!(
+            result,
+            vec![
+                Some(0.8567),
+                None,
+                Some(0.9215),
+                None,
+                Some(0.0000),
+                None
+            ]
+        );
+    }
+
+    /// Test that row count is preserved when parsing fails (the key fix)
+    #[test]
+    fn test_row_count_preserved_with_null_values() {
+        let columns: Vec<Vec<String>> = vec![
+            vec![
+                "100".to_string(),
+                "200".to_string(),
+                "".to_string(),
+                "400".to_string(),
+            ],
+            vec![
+                "0.85".to_string(),
+                "--".to_string(),
+                "0.75".to_string(),
+                "".to_string(),
+            ],
+        ];
+
+        // Simulate parsing like the code does
+        let int_values: Vec<Option<u64>> = columns[0]
+            .iter()
+            .map(|x| x.parse::<u64>().ok())
+            .collect();
+        let float_values: Vec<Option<f64>> = columns[1]
+            .iter()
+            .map(|x| x.parse::<f64>().ok())
+            .collect();
+
+        // Both should have 4 rows (same as input)
+        assert_eq!(int_values.len(), 4);
+        assert_eq!(float_values.len(), 4);
+
+        // Verify the specific values
+        assert_eq!(int_values, vec![Some(100), Some(200), None, Some(400)]);
+        assert_eq!(float_values, vec![Some(0.85), None, Some(0.75), None]);
+
+        // Create series and verify DataFrame can be constructed
+        let int_series = Series::new("metrics.clicks", int_values);
+        let float_series = Series::new("metrics.search_impression_share", float_values);
+
+        assert_eq!(int_series.len(), 4);
+        assert_eq!(float_series.len(), 4);
+        assert_eq!(int_series.null_count(), 1);
+        assert_eq!(float_series.null_count(), 2);
+    }
 }
