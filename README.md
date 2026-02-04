@@ -311,10 +311,16 @@ mcc-gaql --profile myprofile --format json "SELECT ..."  # json, csv, or table
 
 ### Natural Language Queries (Experimental)
 
-Using natural language (requires LLM integration):
+Using natural language (requires LLM integration). See [LLM Configuration](#llm-configuration-for-natural-language-queries) for setup instructions.
 
 ```bash
 mcc-gaql -n "campaign changes from last 14 days with current campaign status and bidding strategy" -o recent_changes.csv
+```
+
+Example using a custom model:
+
+```bash
+MCC_GAQL_LLM_MODEL="hf:MiniMaxAI/MiniMax-M2.1" mcc-gaql --profile themade -n "performance from last week, including impression, clicks, prominence metrics, revenue, conversion, and all video metrics, except for trueview metrics" --format csv
 ```
 
 ## CLI Reference
@@ -341,6 +347,7 @@ OPTIONS:
     -l, --list-child-accounts          List all child accounts under MCC
     -m, --mcc-id <MCC_ID>              MCC (Manager) Customer ID for login-customer-id header
     -n, --natural-language             Use natural language prompt instead of GAQL
+        --clear-vector-cache           Clear the vector cache (LanceDB embeddings) and exit
     -o, --output <OUTPUT>              GAQL output filename
     -p, --profile <PROFILE>            Query using profile from config
     -q, --stored-query <STORED_QUERY>  Load named query from file
@@ -374,6 +381,7 @@ OPTIONS:
 | `--show-fields <resource>` | Show available fields for a resource |
 | `--refresh-field-cache` | Refresh field metadata cache from API |
 | `--export-field-metadata` | Export field metadata summary to stdout |
+| `--clear-vector-cache` | Clear the vector cache (LanceDB embeddings) and exit |
 | `--setup` | Run interactive setup wizard |
 | `--show-config` | Show configuration |
 | `--version` | Show version |
@@ -460,6 +468,46 @@ For example:
 export MCC_GAQL_QUERIES_FILENAME="my_queries.toml"
 export MCC_GAQL_FORMAT="csv"
 export MCC_GAQL_KEEP_GOING="true"
+```
+
+### LLM Configuration for Natural Language Queries
+
+Natural language queries require an LLM provider to convert natural language into GAQL. Configure using the following environment variables:
+
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `MCC_GAQL_LLM_API_KEY` | API key for LLM provider | Yes |
+| `MCC_GAQL_LLM_BASE_URL` | Base URL for LLM provider | Yes |
+| `MCC_GAQL_LLM_MODEL` | Model name (e.g., `google/gemini-flash-2.0`, `gpt-4o-mini`, `hf:MiniMaxAI/MiniMax-M2.1`) | Yes |
+| `MCC_GAQL_LLM_TEMPERATURE` | Temperature for LLM generation (default: 0.1) | No |
+
+#### Provider Examples
+
+**OpenRouter** (default):
+```bash
+export MCC_GAQL_LLM_API_KEY="your_openrouter_api_key"
+export MCC_GAQL_LLM_BASE_URL="https://openrouter.ai/api/v1"
+export MCC_GAQL_LLM_MODEL="google/gemini-flash-2.0"
+```
+
+**OpenAI**:
+```bash
+export MCC_GAQL_LLM_API_KEY="your_openai_api_key"
+export MCC_GAQL_LLM_BASE_URL="https://api.openai.com/v1"
+export MCC_GAQL_LLM_MODEL="gpt-4o-mini"
+```
+
+**Ollama** (local):
+```bash
+export MCC_GAQL_LLM_BASE_URL="http://localhost:11434/v1"
+export MCC_GAQL_LLM_MODEL="llama3.2"
+```
+
+#### Example Commands
+
+Using a specific model with natural language:
+```bash
+MCC_GAQL_LLM_MODEL="hf:MiniMaxAI/MiniMax-M2.1" mcc-gaql --profile themade -n "performance from last week, including impression, clicks, prominence metrics, revenue, conversion, and all video metrics, except for trueview metrics" --format csv
 ```
 
 ## Stored Queries File
