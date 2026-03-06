@@ -23,6 +23,8 @@ use mcc_gaql::config::{self, ResolvedConfig};
 use mcc_gaql::field_metadata::FieldMetadataCache;
 use mcc_gaql::googleads;
 use mcc_gaql::lancedb_utils;
+use mcc_gaql::metadata_enricher;
+use mcc_gaql::metadata_scraper;
 use mcc_gaql::prompt2gaql;
 use mcc_gaql::setup;
 use mcc_gaql::util::{self, QueryEntry};
@@ -58,7 +60,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Handle field metadata operations early (before loading full config)
     // These operations need minimal config
-    if args.export_field_metadata || args.show_fields.is_some() || args.refresh_field_cache {
+    if args.export_field_metadata
+        || args.show_fields.is_some()
+        || args.refresh_field_cache
+        || args.refresh_metadata
+        || args.show_resources
+    {
         // Load minimal config for field metadata operations
         let config = if let Some(profile) = &args.profile {
             Some(config::load(profile).context(format!("Loading config for profile: {profile}"))?)
@@ -70,7 +77,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Obtain API access for field metadata operations
         let api_context =
-            if args.refresh_field_cache || args.export_field_metadata || args.show_fields.is_some()
+            if args.refresh_field_cache
+                || args.export_field_metadata
+                || args.show_fields.is_some()
+                || args.refresh_metadata
             {
                 resolved_config.validate_for_operation(&args)?;
                 Some(
@@ -149,9 +159,87 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         if field.filterable { "Yes" } else { "No" },
                         if field.sortable { "Yes" } else { "No" },
                     );
+                    if let Some(desc) = &field.description {
+                        println!("  {}", desc);
+                    }
                 }
                 println!("\nTotal: {} fields", fields.len());
             }
+            return Ok(());
+        }
+
+        if args.show_resources {
+            println!("Loading field metadata cache...");
+            let cache = FieldMetadataCache::load_or_fetch(
+                api_context.as_ref(),
+                &cache_path,
+                resolved_config.field_metadata_ttl_days,
+            )
+            .await?;
+            print!("{}", cache.show_resources());
+            return Ok(());
+        }
+
+        if args.refresh_metadata {
+            // Validate LLM API key is configured
+            if std::env::var("MCC_GAQL_LLM_API_KEY").is_err()
+                && std::env::var("OPENROUTER_API_KEY").is_err()
+            {
+                return Err(anyhow::anyhow!(
+                    "Either MCC_GAQL_LLM_API_KEY or OPENROUTER_API_KEY must be set for --refresh-metadata"
+                ));
+            }
+            let llm_config = prompt2gaql::LlmConfig::from_env();
+
+            // Stage 0: Fetch fresh structural metadata from Fields Service API
+            println!("Stage 0/2: Fetching structural metadata from Google Ads Fields Service API...");
+            let mut cache =
+                FieldMetadataCache::fetch_from_api(api_context.as_ref().unwrap()).await?;
+            println!(
+                "  Fetched {} fields from {} resources",
+                cache.fields.len(),
+                cache.get_resources().len()
+            );
+
+            // Determine scrape cache path (same directory as field metadata cache)
+            let scrape_cache_path = cache_path
+                .parent()
+                .unwrap_or(std::path::Path::new("."))
+                .join("scraped_docs.json");
+            let enriched_cache_path = metadata_scraper::get_scraped_docs_cache_path()
+                .unwrap_or_else(|_| scrape_cache_path.clone());
+
+            // Stages 1 and 2: Scrape + LLM enrich
+            metadata_enricher::run_enrichment_pipeline(
+                &mut cache,
+                &llm_config,
+                &scrape_cache_path,
+                30,   // scrape TTL: 30 days
+                500,  // rate limit: 500ms between requests
+            )
+            .await?;
+
+            // Save enriched cache
+            let enriched_path = enriched_cache_path
+                .parent()
+                .unwrap_or(std::path::Path::new("."))
+                .join("field_metadata_enriched.json");
+            cache.save_to_disk(&enriched_path).await?;
+
+            // Also update the main metadata cache so --natural-language benefits immediately
+            cache.save_to_disk(&cache_path).await?;
+
+            // Clear LanceDB vector cache so it gets rebuilt with richer embeddings next run
+            println!("Clearing vector cache so it gets rebuilt with enriched embeddings...");
+            lancedb_utils::clear_cache()?;
+
+            println!(
+                "\nMetadata refresh complete. Enriched cache saved to: {}",
+                cache_path.display()
+            );
+            println!(
+                "Next --natural-language query will rebuild the vector store with richer embeddings."
+            );
             return Ok(());
         }
     }

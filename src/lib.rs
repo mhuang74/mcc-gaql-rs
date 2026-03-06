@@ -8,6 +8,8 @@ pub mod config;
 pub mod field_metadata;
 pub mod googleads;
 pub mod lancedb_utils;
+pub mod metadata_enricher;
+pub mod metadata_scraper;
 pub mod prompt2gaql;
 pub mod setup;
 pub mod util;

@@ -549,6 +549,11 @@ mod tests {
                 sortable: true,
                 metrics_compatible: false,
                 resource_name: Some("campaign".to_string()),
+                selectable_with: vec![],
+                enum_values: vec![],
+                attribute_resources: vec![],
+                description: None,
+                usage_notes: None,
             },
             description: "Campaign name attribute".to_string(),
         }];

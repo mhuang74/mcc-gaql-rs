@@ -30,6 +30,19 @@ pub struct LlmConfig {
 }
 
 impl LlmConfig {
+    /// Create a dummy config for unit tests (does not make real LLM calls)
+    #[cfg(test)]
+    pub fn from_env_or_dummy() -> Self {
+        Self {
+            api_key: std::env::var("MCC_GAQL_LLM_API_KEY").unwrap_or_else(|_| "dummy".to_string()),
+            base_url: std::env::var("MCC_GAQL_LLM_BASE_URL")
+                .unwrap_or_else(|_| "https://api.openai.com/v1".to_string()),
+            model: std::env::var("MCC_GAQL_LLM_MODEL")
+                .unwrap_or_else(|_| "gpt-4o-mini".to_string()),
+            temperature: 0.1,
+        }
+    }
+
     /// Load LLM configuration from environment
     pub fn from_env() -> Self {
         // API key: must be explicitly configured
@@ -72,6 +85,23 @@ fn create_llm_client(config: &LlmConfig) -> Result<openai::CompletionsClient, an
         .base_url(&config.base_url)
         .build()
         .map_err(|e| anyhow::anyhow!("Failed to create LLM client: {}", e))
+}
+
+impl LlmConfig {
+    /// Create a simple LLM agent suitable for direct prompt/response (no RAG).
+    /// Used by the metadata enricher and other modules that need LLM text generation.
+    pub fn create_agent(
+        &self,
+        system_prompt: &str,
+    ) -> Result<Agent<CompletionModel>, anyhow::Error> {
+        let client = create_llm_client(self)?;
+        let agent = client
+            .agent(&self.model)
+            .preamble(system_prompt)
+            .temperature(self.temperature as f64)
+            .build();
+        Ok(agent)
+    }
 }
 
 /// Create embedding client and model
@@ -478,40 +508,53 @@ impl From<FieldDocumentFlat> for FieldMetadata {
             sortable: flat.sortable,
             metrics_compatible: flat.metrics_compatible,
             resource_name: flat.resource_name,
+            // New fields default to empty when loading from legacy LanceDB records
+            selectable_with: vec![],
+            enum_values: vec![],
+            attribute_resources: vec![],
+            description: None,
+            usage_notes: None,
         }
     }
 }
 
 impl FieldDocument {
-    /// Create a new field document with synthetic description
+    /// Create a new field document.
+    ///
+    /// Uses the enriched `field.build_embedding_text()` when a description is available
+    /// (populated by `MetadataEnricher`), falling back to a synthetic description based
+    /// on the field name and inferred purpose for unenriched fields.
     pub fn new(field: FieldMetadata) -> Self {
-        let description = Self::generate_description(&field);
+        let description = if field.description.is_some() {
+            // Enriched: use the rich embedding text that includes description, enum values, etc.
+            field.build_embedding_text()
+        } else {
+            // Unenriched fallback: synthetic description from field name patterns
+            Self::generate_synthetic_description(&field)
+        };
 
-        // Generate stable ID from field name
         let id = field.name.clone();
+        Self { id, field, description }
+    }
 
-        Self {
-            id,
-            field,
-            description,
+    /// Generate a synthetic description for better semantic matching (fallback for unenriched fields)
+    fn generate_synthetic_description(field: &FieldMetadata) -> String {
+        // Start with the rich embedding text (which includes structural info)
+        let base = field.build_embedding_text();
+
+        // Add inferred purpose for better semantic retrieval
+        let purpose = Self::infer_purpose(&field.name);
+        if purpose.is_empty() {
+            base
+        } else {
+            format!("{}. Used for {}.", base, purpose)
         }
     }
 
-    /// Generate a synthetic description for better semantic matching
+    /// Generate a synthetic description for better semantic matching (kept for backward compat)
+    #[allow(dead_code)]
     fn generate_description(field: &FieldMetadata) -> String {
-        let mut parts = Vec::new();
-
-        // Field name with underscores replaced by spaces for better matching
-        let processed_name = field.name.replace(['.', '_'], " ");
-        parts.push(processed_name);
-
-        // Purpose inference based on common patterns
-        let purpose = Self::infer_purpose(&field.name);
-        if !purpose.is_empty() {
-            parts.push(format!("used for {}", purpose));
-        }
-
-        parts.join(", ")
+        Self::generate_synthetic_description(field)
     }
 
     /// Infer the purpose of a field based on its name
