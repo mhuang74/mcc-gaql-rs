@@ -30,7 +30,7 @@ use mcc_gaql::setup;
 use mcc_gaql::util::{self, QueryEntry};
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<()> {
     util::init_logger();
 
     // Format validation happens at parse time via OutputFormat enum type system.

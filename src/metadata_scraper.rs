@@ -111,7 +111,20 @@ impl ScrapedDocs {
         api_version: &str,
         delay_ms: u64,
     ) -> Result<Self> {
-        // Build an HTTP client with a descriptive user-agent and timeout
+        let base_url = "https://developers.google.com/google-ads/api/fields";
+        Self::scrape_all_with_base_url(resources, api_version, delay_ms, base_url).await
+    }
+
+    /// Scrape documentation using a custom base URL (used by tests with a mock HTTP server).
+    /// URL pattern: `{base_url}/{api_version}/{resource}`
+    pub async fn scrape_all_with_base_url(
+        resources: &[String],
+        api_version: &str,
+        delay_ms: u64,
+        base_url: &str,
+    ) -> Result<Self> {
+        // Build an HTTP client with a descriptive user-agent and timeout.
+        // In tests this hits the mock server; in production it hits the Google Ads docs.
         let client = reqwest::Client::builder()
             .user_agent("mcc-gaql metadata scraper (educational/documentation use)")
             .timeout(std::time::Duration::from_secs(15))
@@ -137,7 +150,7 @@ impl ScrapedDocs {
                 resource
             );
 
-            match Self::scrape_resource(resource, api_version, &client).await {
+            match Self::scrape_resource(resource, api_version, &client, base_url).await {
                 Ok(field_docs) if !field_docs.is_empty() => {
                     let count = field_docs.len();
                     for (field_name, field_doc) in field_docs {
@@ -185,11 +198,9 @@ impl ScrapedDocs {
         resource: &str,
         api_version: &str,
         client: &reqwest::Client,
+        base_url: &str,
     ) -> Result<HashMap<String, ScrapedFieldDoc>> {
-        let url = format!(
-            "https://developers.google.com/google-ads/api/fields/{}/{}",
-            api_version, resource
-        );
+        let url = format!("{}/{}/{}", base_url, api_version, resource);
 
         let response = client
             .get(&url)
@@ -224,7 +235,7 @@ impl ScrapedDocs {
 
     /// Parse the HTML of a resource reference page to extract field documentation.
     /// Uses simple string-based extraction since the Google Ads docs have a consistent structure.
-    fn parse_field_docs(resource: &str, html: &str) -> HashMap<String, ScrapedFieldDoc> {
+    pub fn parse_field_docs(resource: &str, html: &str) -> HashMap<String, ScrapedFieldDoc> {
         let mut docs = HashMap::new();
 
         // Strategy: look for patterns like:
