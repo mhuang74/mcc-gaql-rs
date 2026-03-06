@@ -120,6 +120,15 @@ pub struct Cli {
     /// Export field metadata summary to stdout
     #[clap(long)]
     pub export_field_metadata: bool,
+
+    /// Run full metadata pipeline: harvest from Fields Service + scrape API docs + LLM enrichment + rebuild vector store.
+    /// Requires LLM environment variables (MCC_GAQL_LLM_API_KEY, MCC_GAQL_LLM_BASE_URL, MCC_GAQL_LLM_MODEL).
+    #[clap(long)]
+    pub refresh_metadata: bool,
+
+    /// Show resource hierarchy: all available resources with field counts, key attributes, and compatibility info
+    #[clap(long)]
+    pub show_resources: bool,
 }
 
 pub fn parse() -> Cli {
@@ -134,6 +143,8 @@ pub fn parse() -> Cli {
         && !cli.clear_vector_cache
         && cli.show_fields.is_none()
         && !cli.export_field_metadata
+        && !cli.refresh_metadata
+        && !cli.show_resources
     {
         let mut buffer = String::new();
         io::stdin()
