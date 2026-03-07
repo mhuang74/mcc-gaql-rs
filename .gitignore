@@ -19,4 +19,4 @@ Cargo.lock
 perf.data*
 
 .fastembed_cache
-.DS_Store
+.DS_StoreDevNotes.md

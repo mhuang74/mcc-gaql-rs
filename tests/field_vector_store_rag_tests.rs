@@ -1,3 +1,5 @@
+#![cfg(feature = "llm")]
+
 use mcc_gaql::field_metadata::{FieldMetadata, FieldMetadataCache};
 use mcc_gaql::prompt2gaql::{FieldDocument, FieldDocumentFlat, build_or_load_field_vector_store};
 use rig::vector_store::{VectorSearchRequest, VectorStoreIndex};
@@ -574,12 +576,11 @@ async fn test_field_description_quality() {
             doc.field.name
         );
 
-        // Description should contain the field name (with dots/underscores converted to spaces)
-        let normalized_name = doc.field.name.replace(['.', '_'], " ");
+        // Description should contain the field name
         assert!(
             doc.description
                 .to_lowercase()
-                .contains(&normalized_name.to_lowercase()),
+                .contains(&doc.field.name.to_lowercase()),
             "Description should contain field name. Field: {}, Description: {}",
             doc.field.name,
             doc.description
