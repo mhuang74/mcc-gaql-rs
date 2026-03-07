@@ -12,9 +12,11 @@
 // - Enriched descriptions update FieldMetadata.description and FieldMetadata.usage_notes
 
 use anyhow::{Context, Result};
+use futures::stream::{self, StreamExt};
 use rig::completion::Prompt;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::field_metadata::{FieldMetadata, FieldMetadataCache, ResourceMetadata};
 use crate::metadata_scraper::ScrapedDocs;
@@ -25,6 +27,8 @@ pub struct MetadataEnricher {
     llm_config: LlmConfig,
     /// Maximum fields per LLM batch (controls token usage)
     batch_size: usize,
+    /// Maximum concurrent LLM API calls
+    concurrency: usize,
 }
 
 impl MetadataEnricher {
@@ -32,6 +36,7 @@ impl MetadataEnricher {
         Self {
             llm_config,
             batch_size: 15,
+            concurrency: 3, // Default: 3 concurrent LLM calls
         }
     }
 
@@ -40,29 +45,34 @@ impl MetadataEnricher {
         self
     }
 
+    pub fn with_concurrency(mut self, concurrency: usize) -> Self {
+        self.concurrency = concurrency.max(1); // At least 1
+        self
+    }
+
     /// Enrich all fields in the cache with LLM-generated descriptions.
     /// Also enriches resource-level metadata.
+    /// Uses concurrent processing for improved performance.
     /// Modifies the cache in place.
     pub async fn enrich(&self, cache: &mut FieldMetadataCache, scraped: &ScrapedDocs) -> Result<()> {
         let resources = cache.get_resources();
         let total_resources = resources.len();
 
         log::info!(
-            "Starting LLM enrichment for {} resources ({} fields total)",
+            "Starting LLM enrichment for {} resources ({} fields total, concurrency: {})",
             total_resources,
-            cache.fields.len()
+            cache.fields.len(),
+            self.concurrency
         );
 
-        // Process resources one at a time to keep memory and API usage bounded
-        for (idx, resource) in resources.iter().enumerate() {
-            log::info!(
-                "[{}/{}] Enriching resource: {}",
-                idx + 1,
-                total_resources,
-                resource
-            );
+        // Wrap scraped docs in Arc for sharing across concurrent tasks
+        let scraped = Arc::new(scraped.clone());
+        let llm_config = Arc::new(self.llm_config.clone());
 
-            // Collect field names for this resource
+        // Collect all batches across all resources for parallel processing
+        let mut all_batches: Vec<(String, Vec<FieldMetadata>)> = Vec::new();
+
+        for resource in &resources {
             let resource_field_names: Vec<String> = cache
                 .get_resource_fields(resource)
                 .iter()
@@ -73,52 +83,98 @@ impl MetadataEnricher {
                 continue;
             }
 
-            // Process in batches
             for batch in resource_field_names.chunks(self.batch_size) {
                 let batch_fields: Vec<FieldMetadata> = batch
                     .iter()
                     .filter_map(|name| cache.fields.get(name).cloned())
                     .collect();
 
-                match self.enrich_batch(resource, &batch_fields, scraped).await {
-                    Ok(descriptions) => {
-                        // Write enriched descriptions back into the cache
-                        for (field_name, (description, usage_notes)) in &descriptions {
-                            if let Some(field) = cache.fields.get_mut(field_name) {
-                                if !description.is_empty() {
-                                    field.description = Some(description.clone());
-                                }
-                                if let Some(notes) = usage_notes {
-                                    if !notes.is_empty() {
-                                        field.usage_notes = Some(notes.clone());
-                                    }
-                                }
+                if !batch_fields.is_empty() {
+                    all_batches.push((resource.clone(), batch_fields));
+                }
+            }
+        }
+
+        let total_batches = all_batches.len();
+        log::info!("Processing {} batches with concurrency {}", total_batches, self.concurrency);
+
+        // Process batches concurrently using buffer_unordered
+        let batch_size = self.batch_size;
+        let results: Vec<_> = stream::iter(all_batches.into_iter().enumerate())
+            .map(|(idx, (resource, batch_fields))| {
+                let scraped = Arc::clone(&scraped);
+                let llm_config = Arc::clone(&llm_config);
+                async move {
+                    log::info!(
+                        "[{}/{}] Enriching batch for resource: {} ({} fields)",
+                        idx + 1,
+                        total_batches,
+                        resource,
+                        batch_fields.len()
+                    );
+
+                    let result = Self::enrich_batch_static(
+                        &llm_config,
+                        &resource,
+                        &batch_fields,
+                        &scraped,
+                        batch_size,
+                    )
+                    .await;
+
+                    match &result {
+                        Ok(descriptions) => {
+                            log::info!(
+                                "  Batch {}: enriched {}/{} fields",
+                                idx + 1,
+                                descriptions.len(),
+                                batch_fields.len()
+                            );
+                        }
+                        Err(e) => {
+                            log::warn!(
+                                "  Batch {} failed for resource '{}': {}",
+                                idx + 1,
+                                resource,
+                                e
+                            );
+                        }
+                    }
+
+                    result
+                }
+            })
+            .buffer_unordered(self.concurrency)
+            .collect()
+            .await;
+
+        // Apply all results to the cache
+        for result in results {
+            if let Ok(descriptions) = result {
+                for (field_name, (description, usage_notes)) in descriptions {
+                    if let Some(field) = cache.fields.get_mut(&field_name) {
+                        if !description.is_empty() {
+                            field.description = Some(description);
+                        }
+                        if let Some(notes) = usage_notes {
+                            if !notes.is_empty() {
+                                field.usage_notes = Some(notes);
                             }
                         }
-                        log::info!(
-                            "  Enriched {}/{} fields in batch",
-                            descriptions.len(),
-                            batch.len()
-                        );
-                    }
-                    Err(e) => {
-                        log::warn!(
-                            "  LLM enrichment failed for batch in resource '{}': {}",
-                            resource,
-                            e
-                        );
-                        // Continue with next batch — don't abort the whole enrichment
                     }
                 }
             }
+        }
 
-            // Enrich resource-level metadata
+        // Enrich resource-level metadata (sequential, since there are fewer resources)
+        log::info!("Enriching resource-level metadata for {} resources", resources.len());
+        for resource in &resources {
             if let Some(rm) = cache
                 .resource_metadata
                 .as_mut()
                 .and_then(|m| m.get_mut(resource))
             {
-                match self.enrich_resource(resource, rm, scraped).await {
+                match self.enrich_resource(resource, rm, &scraped).await {
                     Ok(desc) => {
                         if !desc.is_empty() {
                             rm.description = Some(desc);
@@ -141,13 +197,13 @@ impl MetadataEnricher {
         Ok(())
     }
 
-    /// Send a batch of fields to the LLM for description generation.
-    /// Returns a map from field_name to (description, optional usage_notes).
-    async fn enrich_batch(
-        &self,
+    /// Static version of enrich_batch for use in concurrent contexts
+    async fn enrich_batch_static(
+        llm_config: &LlmConfig,
         resource: &str,
         fields: &[FieldMetadata],
         scraped: &ScrapedDocs,
+        _batch_size: usize,
     ) -> Result<HashMap<String, (String, Option<String>)>> {
         let system_prompt = "\
 You are a Google Ads API documentation expert. Your task is to write concise, \
@@ -172,10 +228,9 @@ Use in SELECT to label rows in reports.\",\n\
   }\n\
 }";
 
-        let user_prompt = self.build_batch_prompt(resource, fields, scraped);
+        let user_prompt = Self::build_batch_prompt_static(resource, fields, scraped);
 
-        let agent = self
-            .llm_config
+        let agent = llm_config
             .create_agent(system_prompt)
             .context("Failed to create LLM agent for enrichment")?;
 
@@ -184,12 +239,11 @@ Use in SELECT to label rows in reports.\",\n\
             .await
             .map_err(|e| anyhow::anyhow!("LLM prompt failed: {}", e))?;
 
-        self.parse_enrichment_response(&response)
+        Self::parse_enrichment_response_static(&response)
     }
 
-    /// Build the user-facing prompt for a batch of fields
-    fn build_batch_prompt(
-        &self,
+    /// Static version of build_batch_prompt for use in concurrent contexts
+    fn build_batch_prompt_static(
         resource: &str,
         fields: &[FieldMetadata],
         scraped: &ScrapedDocs,
@@ -219,18 +273,15 @@ Use in SELECT to label rows in reports.\",\n\
             }
 
             if !field.enum_values.is_empty() {
-                // Include enum values from Fields Service (ground truth)
                 let values: Vec<&str> = field.enum_values.iter().take(20).map(String::as_str).collect();
                 prompt.push_str(&format!("  Enum values: {}\n", values.join(", ")));
             }
 
-            // Include any scraped documentation as additional context
             if let Some(scraped_desc) = scraped.get_description(&field.name) {
                 prompt.push_str(&format!("  Documentation: {}\n", scraped_desc));
             }
             if let Some(scraped_enums) = scraped.get_enum_values(&field.name) {
                 if !field.enum_values.is_empty() {
-                    // Already have enum values from Fields Service; use scraped for descriptions
                     let scraped_str: Vec<&str> = scraped_enums.iter().take(10).map(String::as_str).collect();
                     if !scraped_str.is_empty() {
                         prompt.push_str(&format!(
@@ -246,6 +297,47 @@ Use in SELECT to label rows in reports.\",\n\
 
         prompt.push_str("\nRespond with JSON only:");
         prompt
+    }
+
+    /// Static version of parse_enrichment_response for use in concurrent contexts
+    fn parse_enrichment_response_static(
+        response: &str,
+    ) -> Result<HashMap<String, (String, Option<String>)>> {
+        let cleaned = strip_json_fences(response);
+
+        let parsed: Value =
+            serde_json::from_str(&cleaned).context("LLM returned invalid JSON for enrichment")?;
+
+        let obj = parsed
+            .as_object()
+            .ok_or_else(|| anyhow::anyhow!("LLM enrichment response is not a JSON object"))?;
+
+        let mut result = HashMap::new();
+
+        for (field_name, value) in obj {
+            match value {
+                Value::Object(field_obj) => {
+                    let description = field_obj
+                        .get("description")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string();
+                    let usage_notes = field_obj
+                        .get("usage_notes")
+                        .and_then(Value::as_str)
+                        .map(str::to_string);
+                    result.insert(field_name.clone(), (description, usage_notes));
+                }
+                Value::String(s) => {
+                    result.insert(field_name.clone(), (s.clone(), None));
+                }
+                _ => {
+                    log::debug!("Unexpected JSON value type for field '{}', skipping", field_name);
+                }
+            }
+        }
+
+        Ok(result)
     }
 
     /// Generate a description for a resource (not a field)
@@ -295,51 +387,6 @@ used to query. Return ONLY the sentence, no formatting.";
             .map_err(|e| anyhow::anyhow!("LLM prompt failed for resource {}: {}", resource_name, e))?;
 
         Ok(response.trim().to_string())
-    }
-
-    /// Parse the JSON response from the LLM into a map of enriched descriptions
-    fn parse_enrichment_response(
-        &self,
-        response: &str,
-    ) -> Result<HashMap<String, (String, Option<String>)>> {
-        // Strip any accidental markdown code fences
-        let cleaned = strip_json_fences(response);
-
-        let parsed: Value =
-            serde_json::from_str(&cleaned).context("LLM returned invalid JSON for enrichment")?;
-
-        let obj = parsed
-            .as_object()
-            .ok_or_else(|| anyhow::anyhow!("LLM enrichment response is not a JSON object"))?;
-
-        let mut result = HashMap::new();
-
-        for (field_name, value) in obj {
-            match value {
-                // Expected format: {"field.name": {"description": "...", "usage_notes": "..."}}
-                Value::Object(field_obj) => {
-                    let description = field_obj
-                        .get("description")
-                        .and_then(Value::as_str)
-                        .unwrap_or("")
-                        .to_string();
-                    let usage_notes = field_obj
-                        .get("usage_notes")
-                        .and_then(Value::as_str)
-                        .map(str::to_string);
-                    result.insert(field_name.clone(), (description, usage_notes));
-                }
-                // Fallback: plain string value used as description
-                Value::String(s) => {
-                    result.insert(field_name.clone(), (s.clone(), None));
-                }
-                _ => {
-                    log::debug!("Unexpected JSON value type for field '{}', skipping", field_name);
-                }
-            }
-        }
-
-        Ok(result)
     }
 }
 
@@ -439,9 +486,6 @@ mod tests {
 
     #[test]
     fn test_parse_enrichment_response_object_format() {
-        let config = LlmConfig::from_env_or_dummy();
-        let enricher = MetadataEnricher::new(config);
-
         let response = r#"{
             "campaign.name": {
                 "description": "The name of the campaign.",
@@ -453,7 +497,7 @@ mod tests {
             }
         }"#;
 
-        let result = enricher.parse_enrichment_response(response).unwrap();
+        let result = MetadataEnricher::parse_enrichment_response_static(response).unwrap();
         assert_eq!(result.len(), 2);
 
         let (desc, notes) = result.get("campaign.name").unwrap();
@@ -463,11 +507,8 @@ mod tests {
 
     #[test]
     fn test_parse_enrichment_response_string_format() {
-        let config = LlmConfig::from_env_or_dummy();
-        let enricher = MetadataEnricher::new(config);
-
         let response = r#"{"campaign.name": "The name of the campaign."}"#;
-        let result = enricher.parse_enrichment_response(response).unwrap();
+        let result = MetadataEnricher::parse_enrichment_response_static(response).unwrap();
         assert_eq!(result.len(), 1);
         let (desc, notes) = result.get("campaign.name").unwrap();
         assert_eq!(desc, "The name of the campaign.");
@@ -476,9 +517,7 @@ mod tests {
 
     #[test]
     fn test_parse_enrichment_response_invalid_json() {
-        let config = LlmConfig::from_env_or_dummy();
-        let enricher = MetadataEnricher::new(config);
-        let result = enricher.parse_enrichment_response("not json");
+        let result = MetadataEnricher::parse_enrichment_response_static("not json");
         assert!(result.is_err());
     }
 }
