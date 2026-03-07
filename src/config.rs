@@ -815,6 +815,8 @@ mod tests {
             clear_vector_cache: false,
             show_fields: None,
             export_field_metadata: false,
+            refresh_metadata: false,
+            show_resources: false,
         };
 
         // Create resolved config with customer_id from config file

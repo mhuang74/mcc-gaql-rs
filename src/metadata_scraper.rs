@@ -14,6 +14,7 @@
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Duration, Utc};
+use scraper::{Html, Selector};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
@@ -234,44 +235,59 @@ impl ScrapedDocs {
     }
 
     /// Parse the HTML of a resource reference page to extract field documentation.
-    /// Uses simple string-based extraction since the Google Ads docs have a consistent structure.
+    /// Uses CSS selectors via the scraper crate for robust HTML parsing.
     pub fn parse_field_docs(resource: &str, html: &str) -> HashMap<String, ScrapedFieldDoc> {
         let mut docs = HashMap::new();
+        let document = Html::parse_document(html);
 
-        // Strategy: look for patterns like:
-        //   <h3 id="field_name">field_name</h3>
-        //   followed by <p>description text</p>
-        //   and optionally <td>ENUM_VALUE</td> patterns
+        // Select heading elements with id attributes (h2, h3, h4)
+        let heading_selector =
+            Selector::parse("h2[id], h3[id], h4[id]").expect("Invalid heading selector");
 
-        // Split by field header anchors — Google Ads docs use id attributes matching field names
-        // e.g. <h3 id="campaign.name"> or <h2 id="name">
-        let lines: Vec<&str> = html.lines().collect();
+        for heading in document.select(&heading_selector) {
+            let id = match heading.value().attr("id") {
+                Some(id) => id,
+                None => continue,
+            };
 
-        let mut i = 0;
-        while i < lines.len() {
-            let line = lines[i].trim();
-
-            // Look for heading tags with field-name-like ids (contain dots or underscores)
-            if let Some(field_name) = extract_field_id_from_heading(resource, line) {
-                // Collect text from the next ~20 lines as potential description
-                let context_end = (i + 30).min(lines.len());
-                let context = lines[i + 1..context_end].join(" ");
-
-                let description = extract_description_text(&context);
-                let enum_values = extract_enum_values(&context);
-
-                if !description.is_empty() || !enum_values.is_empty() {
-                    docs.insert(
-                        field_name,
-                        ScrapedFieldDoc {
-                            description,
-                            enum_values,
-                        },
-                    );
-                }
+            // Skip non-field IDs (contain spaces, empty, or don't look like fields)
+            if id.contains(' ') || id.is_empty() {
+                continue;
             }
 
-            i += 1;
+            // Qualify the field name
+            let field_name = if id.contains('.') {
+                // Already qualified - validate it belongs to this resource
+                if id.starts_with(resource)
+                    || id.starts_with("metrics.")
+                    || id.starts_with("segments.")
+                {
+                    id.to_string()
+                } else {
+                    continue;
+                }
+            } else if id.chars().all(|c| c.is_alphanumeric() || c == '_') && id.len() > 1 {
+                // Unqualified field name - prefix with resource
+                format!("{}.{}", resource, id)
+            } else {
+                continue;
+            };
+
+            // Extract description from following siblings
+            let description = extract_description_from_siblings(&heading);
+
+            // Extract enum values from the section
+            let enum_values = extract_enum_values_from_section(&heading);
+
+            if !description.is_empty() || !enum_values.is_empty() {
+                docs.insert(
+                    field_name,
+                    ScrapedFieldDoc {
+                        description,
+                        enum_values,
+                    },
+                );
+            }
         }
 
         docs
@@ -302,69 +318,56 @@ impl ScrapedDocs {
     }
 }
 
-/// Extract a fully-qualified field name from an HTML heading line.
-/// Returns None if the heading doesn't look like a field reference.
-///
-/// Example inputs:
-///   `<h3 id="campaign.name">campaign.name</h3>` → Some("campaign.name")
-///   `<h2 id="name">name</h2>` + resource="campaign" → Some("campaign.name")
-fn extract_field_id_from_heading(resource: &str, line: &str) -> Option<String> {
-    // Only process heading tags
-    if !line.contains("<h2") && !line.contains("<h3") && !line.contains("<h4") {
-        return None;
-    }
+/// Extract description text from the siblings following a heading element.
+/// Looks for <p> tags and collects their text content.
+fn extract_description_from_siblings(heading: &scraper::ElementRef) -> String {
+    use scraper::Node;
 
-    // Extract id attribute value
-    let id_start = line.find("id=\"")?;
-    let after_id = &line[id_start + 4..];
-    let id_end = after_id.find('"')?;
-    let id = &after_id[..id_end];
+    let mut description_parts = Vec::new();
+    let mut sibling = heading.next_sibling();
 
-    // Must look like a field reference: contains dot or underscore, no spaces
-    if id.contains(' ') || id.is_empty() {
-        return None;
-    }
+    // Look at up to 5 following siblings for description content
+    for _ in 0..5 {
+        let Some(node) = sibling else { break };
 
-    // Already fully qualified (e.g. "campaign.name")
-    if id.contains('.') {
-        // Make sure it belongs to our resource
-        if id.starts_with(resource) || id.starts_with("metrics.") || id.starts_with("segments.") {
-            return Some(id.to_string());
+        if let Node::Element(el) = node.value() {
+            let tag = el.name();
+
+            // Stop at the next heading (new field section)
+            if tag == "h2" || tag == "h3" || tag == "h4" {
+                break;
+            }
+
+            // Extract text from paragraph and div elements
+            if tag == "p" || tag == "div" {
+                let text: String = node
+                    .descendants()
+                    .filter_map(|n| n.value().as_text().map(|t| t.text.as_ref()))
+                    .collect::<Vec<&str>>()
+                    .join(" ");
+
+                let text = text.split_whitespace().collect::<Vec<&str>>().join(" ");
+                if !text.is_empty() && text.len() > 10 {
+                    description_parts.push(text);
+                    // Usually the first meaningful paragraph is the description
+                    if description_parts.len() >= 2 {
+                        break;
+                    }
+                }
+            }
         }
-        return None;
+
+        sibling = node.next_sibling();
     }
 
-    // Single-word ids that look like field names — qualify with resource
-    if id.chars().all(|c| c.is_alphanumeric() || c == '_') && id.len() > 1 {
-        return Some(format!("{}.{}", resource, id));
+    let full_text = description_parts.join(" ");
+
+    // Truncate to ~300 chars at sentence boundary
+    if full_text.len() <= 300 {
+        return full_text.trim().to_string();
     }
 
-    None
-}
-
-/// Extract the first meaningful plain-text description from an HTML snippet.
-/// Strips HTML tags and returns up to the first sentence boundary (~200 chars).
-fn extract_description_text(html_snippet: &str) -> String {
-    // Strip HTML tags
-    let text = strip_html_tags(html_snippet);
-
-    // Clean up whitespace
-    let text: String = text
-        .split_whitespace()
-        .collect::<Vec<&str>>()
-        .join(" ");
-
-    if text.is_empty() {
-        return String::new();
-    }
-
-    // Trim to first 300 chars, ending at a sentence boundary if possible
-    if text.len() <= 300 {
-        return text.trim().to_string();
-    }
-
-    // Try to end at a sentence boundary
-    let truncated = &text[..300];
+    let truncated = &full_text[..300];
     if let Some(pos) = truncated.rfind(". ") {
         return truncated[..pos + 1].trim().to_string();
     }
@@ -372,56 +375,57 @@ fn extract_description_text(html_snippet: &str) -> String {
     truncated.trim().to_string()
 }
 
-/// Extract enum values from an HTML snippet.
-/// Looks for patterns like UPPER_CASE_WORDS in table cells or code spans.
-fn extract_enum_values(html_snippet: &str) -> Vec<String> {
-    let mut values = Vec::new();
-    let mut seen = std::collections::HashSet::new();
+/// Extract enum values from the section following a heading element.
+/// Looks for <code>, <td>, and <span> elements containing UPPER_SNAKE_CASE text.
+fn extract_enum_values_from_section(heading: &scraper::ElementRef) -> Vec<String> {
+    use scraper::Node;
+    use std::collections::HashSet;
 
-    // Look for content in <td> or <code> tags that looks like enum values (UPPER_SNAKE_CASE)
-    for part in html_snippet.split('<') {
-        if let Some(close) = part.find('>') {
-            let content = part[close + 1..].trim();
-            // UPPER_SNAKE_CASE pattern: all uppercase, may contain underscores, length 2-50
-            if content.len() >= 2
-                && content.len() <= 50
-                && content
-                    .chars()
-                    .all(|c| c.is_uppercase() || c == '_' || c.is_numeric())
-                && content.chars().any(|c| c.is_uppercase())
-                && !content.starts_with('_')
-                && !seen.contains(content)
-            {
-                seen.insert(content.to_string());
-                values.push(content.to_string());
+    let mut values = Vec::new();
+    let mut seen = HashSet::new();
+
+    // Look at siblings and their descendants for enum values
+    let mut sibling = heading.next_sibling();
+
+    for _ in 0..20 {
+        let Some(node) = sibling else { break };
+
+        if let Node::Element(el) = node.value() {
+            let tag = el.name();
+
+            // Stop at the next heading
+            if tag == "h2" || tag == "h3" || tag == "h4" {
+                break;
             }
         }
+
+        // Look for text nodes that match enum pattern
+        for descendant in node.descendants() {
+            if let Some(text) = descendant.value().as_text() {
+                let content = text.text.trim();
+
+                // UPPER_SNAKE_CASE pattern
+                if content.len() >= 2
+                    && content.len() <= 50
+                    && content
+                        .chars()
+                        .all(|c| c.is_uppercase() || c == '_' || c.is_numeric())
+                    && content.chars().any(|c| c.is_uppercase())
+                    && !content.starts_with('_')
+                    && !seen.contains(content)
+                {
+                    seen.insert(content.to_string());
+                    values.push(content.to_string());
+                }
+            }
+        }
+
+        sibling = node.next_sibling();
     }
 
-    // Limit to 50 enum values to avoid noise
+    // Limit to 50 enum values
     values.truncate(50);
     values
-}
-
-/// Strip HTML tags from a string, returning plain text
-fn strip_html_tags(html: &str) -> String {
-    let mut result = String::with_capacity(html.len());
-    let mut in_tag = false;
-
-    for ch in html.chars() {
-        match ch {
-            '<' => in_tag = true,
-            '>' => {
-                in_tag = false;
-                // Add a space where a tag was to avoid word merging
-                result.push(' ');
-            }
-            _ if !in_tag => result.push(ch),
-            _ => {}
-        }
-    }
-
-    result
 }
 
 /// Helper to get the default scraped docs cache path
@@ -436,44 +440,73 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_strip_html_tags() {
-        let html = "<p>Hello <strong>world</strong></p>";
-        let text = strip_html_tags(html);
-        assert!(text.contains("Hello"));
-        assert!(text.contains("world"));
-        assert!(!text.contains('<'));
+    fn test_parse_field_docs_qualified_id() {
+        let html = r#"
+            <html>
+            <body>
+                <h3 id="campaign.name">campaign.name</h3>
+                <p>The display name of the campaign.</p>
+            </body>
+            </html>
+        "#;
+        let docs = ScrapedDocs::parse_field_docs("campaign", html);
+        assert!(docs.contains_key("campaign.name"));
+        let doc = docs.get("campaign.name").unwrap();
+        assert!(doc.description.contains("display name"));
     }
 
     #[test]
-    fn test_extract_enum_values() {
-        let html = "<td>ENABLED</td><td>PAUSED</td><td>REMOVED</td>";
-        let values = extract_enum_values(html);
-        assert!(values.contains(&"ENABLED".to_string()));
-        assert!(values.contains(&"PAUSED".to_string()));
-        assert!(values.contains(&"REMOVED".to_string()));
+    fn test_parse_field_docs_unqualified_id() {
+        let html = r#"
+            <html>
+            <body>
+                <h3 id="name">name</h3>
+                <p>The name field for the resource.</p>
+            </body>
+            </html>
+        "#;
+        let docs = ScrapedDocs::parse_field_docs("campaign", html);
+        assert!(docs.contains_key("campaign.name"));
     }
 
     #[test]
-    fn test_extract_field_id_from_heading_qualified() {
-        let line = r#"<h3 id="campaign.name">campaign.name</h3>"#;
-        let result = extract_field_id_from_heading("campaign", line);
-        assert_eq!(result, Some("campaign.name".to_string()));
+    fn test_parse_field_docs_extracts_enum_values() {
+        let html = r#"
+            <html>
+            <body>
+                <h3 id="campaign.status">campaign.status</h3>
+                <p>The status of the campaign.</p>
+                <table>
+                    <tr><td>ENABLED</td><td>Campaign is active</td></tr>
+                    <tr><td>PAUSED</td><td>Campaign is paused</td></tr>
+                    <tr><td>REMOVED</td><td>Campaign is removed</td></tr>
+                </table>
+            </body>
+            </html>
+        "#;
+        let docs = ScrapedDocs::parse_field_docs("campaign", html);
+        let doc = docs.get("campaign.status").unwrap();
+        assert!(doc.enum_values.contains(&"ENABLED".to_string()));
+        assert!(doc.enum_values.contains(&"PAUSED".to_string()));
+        assert!(doc.enum_values.contains(&"REMOVED".to_string()));
     }
 
     #[test]
-    fn test_extract_field_id_from_heading_unqualified() {
-        let line = r#"<h3 id="name">name</h3>"#;
-        let result = extract_field_id_from_heading("campaign", line);
-        assert_eq!(result, Some("campaign.name".to_string()));
-    }
-
-    #[test]
-    fn test_extract_field_id_ignores_non_fields() {
-        let line = r#"<h2 id="overview">Overview</h2>"#;
-        let result = extract_field_id_from_heading("campaign", line);
-        // "overview" is a valid-looking id, will be qualified to "campaign.overview"
-        // which is fine — the enricher will just not find it in the field metadata
-        assert!(result.is_some() || result.is_none());
+    fn test_parse_field_docs_ignores_invalid_ids() {
+        let html = r#"
+            <html>
+            <body>
+                <h2 id="page title">Page Title</h2>
+                <h3 id="">Empty ID</h3>
+                <h3 id="campaign.name">campaign.name</h3>
+                <p>Valid field.</p>
+            </body>
+            </html>
+        "#;
+        let docs = ScrapedDocs::parse_field_docs("campaign", html);
+        // Should only contain the valid field
+        assert_eq!(docs.len(), 1);
+        assert!(docs.contains_key("campaign.name"));
     }
 
     #[test]
@@ -499,5 +532,29 @@ mod tests {
             Some("The name of the campaign.")
         );
         assert_eq!(docs.get_description("campaign.status"), None);
+    }
+
+    #[test]
+    fn test_scraped_docs_get_enum_values() {
+        let mut docs = ScrapedDocs {
+            scraped_at: Utc::now(),
+            api_version: "v23".to_string(),
+            docs: HashMap::new(),
+            resources_scraped: 0,
+            resources_skipped: 0,
+        };
+
+        docs.docs.insert(
+            "campaign.status".to_string(),
+            ScrapedFieldDoc {
+                description: "Status field.".to_string(),
+                enum_values: vec!["ENABLED".to_string(), "PAUSED".to_string()],
+            },
+        );
+
+        let enums = docs.get_enum_values("campaign.status").unwrap();
+        assert!(enums.contains(&"ENABLED".to_string()));
+        assert!(enums.contains(&"PAUSED".to_string()));
+        assert!(docs.get_enum_values("campaign.name").is_none());
     }
 }
