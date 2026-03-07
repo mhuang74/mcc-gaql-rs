@@ -35,17 +35,20 @@ tonic = { version = "0.14", features = ["transport", "tls-ring", "tls-native-roo
 serde_json = "1.0"
 yup-oauth2 = "6.7"
 reqwest = { version = "0.11", default-features = false, features = ["json", "rustls-tls"] }
-rig-core = "0.30.0"
-rig-fastembed = "=0.2.22"
-rig-lancedb = "0.2.33"
-lancedb = "0.23"
-arrow-array = "56.2.0"
-arrow-schema = "56.2.0"
+rig-core = { version = "0.32.0", optional = true }
+rig-fastembed = { version = "0.3", optional = true }
+rig-lancedb = { version = "0.4", optional = true }
+lancedb = { version = "0.23", optional = true }
+arrow-array = { version = "56.2.0", optional = true }
+arrow-schema = { version = "56.2.0", optional = true }
 
 [dev-dependencies]
 tempfile = "3.8"
 
 [features]
+default = ["llm"]
+# LLM/RAG features using lancedb for vector storage
+llm = ["dep:rig-core", "dep:rig-fastembed", "dep:rig-lancedb", "dep:lancedb", "dep:arrow-array", "dep:arrow-schema"]
 # When enabled, always load OAuth2 credentials from config directory at runtime
 # instead of using embedded credentials. Useful for builds that should not
 # bundle credentials for security or distribution reasons.

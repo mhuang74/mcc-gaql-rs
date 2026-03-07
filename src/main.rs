@@ -22,12 +22,18 @@ use mcc_gaql::args::{self, OutputFormat};
 use mcc_gaql::config::{self, ResolvedConfig};
 use mcc_gaql::field_metadata::FieldMetadataCache;
 use mcc_gaql::googleads;
+#[cfg(feature = "llm")]
 use mcc_gaql::lancedb_utils;
+#[cfg(feature = "llm")]
 use mcc_gaql::metadata_enricher;
+#[cfg(feature = "llm")]
 use mcc_gaql::metadata_scraper;
+#[cfg(feature = "llm")]
 use mcc_gaql::prompt2gaql;
 use mcc_gaql::setup;
-use mcc_gaql::util::{self, QueryEntry};
+#[cfg(feature = "llm")]
+use mcc_gaql::util::QueryEntry;
+use mcc_gaql::util;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -50,9 +56,14 @@ async fn main() -> Result<()> {
     }
 
     // Handle --clear-vector-cache flag to clear LanceDB cache
+    #[cfg(feature = "llm")]
     if args.clear_vector_cache {
         lancedb_utils::clear_cache()?;
         return Ok(());
+    }
+    #[cfg(not(feature = "llm"))]
+    if args.clear_vector_cache {
+        return Err(anyhow::anyhow!("LLM features not enabled. Rebuild with --features llm"));
     }
 
     // Validate argument combinations
@@ -180,6 +191,7 @@ async fn main() -> Result<()> {
             return Ok(());
         }
 
+        #[cfg(feature = "llm")]
         if args.refresh_metadata {
             // Validate LLM API key is configured
             if std::env::var("MCC_GAQL_LLM_API_KEY").is_err()
@@ -242,6 +254,10 @@ async fn main() -> Result<()> {
             );
             return Ok(());
         }
+        #[cfg(not(feature = "llm"))]
+        if args.refresh_metadata {
+            return Err(anyhow::anyhow!("LLM features not enabled. Rebuild with --features llm"));
+        }
     }
 
     // Only load config if profile is explicitly specified
@@ -298,6 +314,7 @@ async fn main() -> Result<()> {
     }
 
     // convert natural language prompt into GAQL
+    #[cfg(feature = "llm")]
     if args.natural_language {
         // Validate LLM API key is configured (supports multiple providers)
         if std::env::var("MCC_GAQL_LLM_API_KEY").is_err()
@@ -372,6 +389,10 @@ async fn main() -> Result<()> {
         log::info!("Generated GAQL Query:\n{}", query);
 
         args.gaql_query = Some(query);
+    }
+    #[cfg(not(feature = "llm"))]
+    if args.natural_language {
+        return Err(anyhow::anyhow!("LLM features not enabled. Rebuild with --features llm"));
     }
 
     // for non-FieldService queries, reduce network traffic by excluding resource_name by default
