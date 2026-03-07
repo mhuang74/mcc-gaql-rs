@@ -77,9 +77,9 @@ external_client_secret = []
 
 ## Caveats & Known Issues
 
-### Lance Crate Recursion Bug (Rust 1.94+)
+### Lance Crate Recursion Bug
 
-The `lance` crate v1.0.1 (dependency of `lancedb 0.23`) has a compiler recursion limit issue with modern Rust:
+The `lance` crate v1.0.1 (dependency of `lancedb 0.23`) has a compiler recursion limit issue:
 
 ```
 error: queries overflow the depth limit!
@@ -87,7 +87,7 @@ error: queries overflow the depth limit!
           `{async block@lance-1.0.1/src/index.rs:873:5}`
 ```
 
-**Root cause**: The lance crate's async code triggers a compiler bug in Rust 1.94+.
+**Root cause**: The lance crate's async code triggers a compiler recursion limit.
 
 **Workaround**: LLM features are optional. Build/test without them:
 ```bash
@@ -99,9 +99,9 @@ cargo test --no-default-features
 - `lance` crate fix for the async layout issue
 - `rig-lancedb` update to support `lancedb 0.26+` (which uses lance 2.0)
 
-### Edition 2024 Required
+### Rust Version
 
-The project uses Rust edition 2024. Dependencies require Rust 1.86+ for full compilation.
+The project uses Rust 1.90 with edition 2024.
 
 ## Running Tests
 
