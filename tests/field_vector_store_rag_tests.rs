@@ -154,6 +154,11 @@ fn create_test_field_cache() -> FieldMetadataCache {
                 sortable: true,
                 metrics_compatible: category == "METRIC",
                 resource_name,
+                selectable_with: vec![],
+                enum_values: vec![],
+                attribute_resources: vec![],
+                description: None,
+                usage_notes: None,
             },
         );
     }
@@ -163,6 +168,7 @@ fn create_test_field_cache() -> FieldMetadataCache {
         api_version: "v23".to_string(),
         fields,
         resources: None,
+        resource_metadata: None,
     }
 }
 
