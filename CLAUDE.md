@@ -77,54 +77,30 @@ external_client_secret = []
 
 ## Caveats & Known Issues
 
-### Lance Crate Recursion Bug
-
-The `lance` crate v1.0.1 (dependency of `lancedb 0.23`) has a compiler recursion limit issue:
-
-```
-error: queries overflow the depth limit!
-  = note: query depth increased by 130 when computing layout of
-          `{async block@lance-1.0.1/src/index.rs:873:5}`
-```
-
-**Root cause**: The lance crate's async code triggers a compiler recursion limit.
-
-**Workaround**: LLM features are optional. Build/test without them:
-```bash
-cargo build --no-default-features
-cargo test --no-default-features
-```
-
-**Upstream fix required**: Either:
-- `lance` crate fix for the async layout issue
-- `rig-lancedb` update to support `lancedb 0.26+` (which uses lance 2.0)
-
 ### Rust Version
 
 The project uses Rust 1.90 with edition 2024.
 
 ## Running Tests
 
+### All Tests
+
+```bash
+cargo test
+```
+
+### Unit Tests (without LLM features)
+
+```bash
+cargo test --no-default-features --lib
+```
+
 ### Metadata Scraper Tests (Live)
 
 These tests hit the actual Google Ads documentation website:
 
 ```bash
-# Run without LLM features (avoids lance compilation issue)
-cargo test --no-default-features --test metadata_scraper_live_tests -- --ignored --nocapture
-```
-
-### All Tests (requires LLM fix)
-
-```bash
-# Only works when lance crate issue is resolved
-cargo test
-```
-
-### Unit Tests
-
-```bash
-cargo test --no-default-features --lib
+cargo test --test metadata_scraper_live_tests -- --ignored --nocapture
 ```
 
 ## Environment Variables
@@ -159,24 +135,24 @@ cargo test --no-default-features --lib
 ## Common Development Tasks
 
 ```bash
-# Build without LLM (fast, avoids lance issue)
-cargo build --no-default-features
+# Build
+cargo build
 
 # Build release with embedded credentials
 MCC_GAQL_DEV_TOKEN="token" MCC_GAQL_EMBED_CLIENT_SECRET="$(cat clientsecret.json)" \
   cargo build --release
 
 # Run with debug logging
-MCC_GAQL_LOG_LEVEL="debug" cargo run --no-default-features -- --help
+MCC_GAQL_LOG_LEVEL="debug" cargo run -- --help
 
 # Check code without building
-cargo check --no-default-features
+cargo check
 
 # Format code
 cargo fmt
 
 # Lint
-cargo clippy --no-default-features
+cargo clippy
 ```
 
 ## Dependencies Overview
