@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use anyhow::{Result, bail};
 use polars::prelude::*;
+use std::io::{self, Write};
 use tokio_stream::StreamExt;
 use tonic::{
     Response, Status, Streaming,
@@ -15,7 +16,6 @@ use yup_oauth2::{
     AccessToken, ApplicationSecret, InstalledFlowAuthenticator, InstalledFlowReturnMethod,
     authenticator::{Authenticator, DefaultHyperClient, HyperClientBuilder},
 };
-use std::io::{self, Write};
 
 use googleads_rs::google::ads::googleads::v23::services::google_ads_field_service_client::GoogleAdsFieldServiceClient;
 use googleads_rs::google::ads::googleads::v23::services::google_ads_service_client::GoogleAdsServiceClient;
@@ -233,20 +233,24 @@ pub async fn get_api_access(
     let token_cache_path =
         crate::config::config_file_path(token_cache_filename).expect("token cache path");
 
+    // Check if cache exists before attempting auth to avoid redundant prompts
+    let cache_existed_prior = token_cache_path.exists();
+
+    // Determine the flow method based on the flag
+    let auth_method = if use_remote_auth {
+        log::info!("Using remote OAuth flow (interactive)");
+        InstalledFlowReturnMethod::Interactive
+    } else {
+        log::debug!("Using standard OAuth flow (HTTP redirect)");
+        InstalledFlowReturnMethod::HTTPRedirect
+    };
+
+    // Build the authenticator once
     let auth: Authenticator<<DefaultHyperClient as HyperClientBuilder>::Connector> =
-        if use_remote_auth {
-            log::info!("Using remote OAuth flow (interactive)");
-            InstalledFlowAuthenticator::builder(app_secret, InstalledFlowReturnMethod::Interactive)
-                .persist_tokens_to_disk(token_cache_path.as_path())
-                .build()
-                .await?
-        } else {
-            log::debug!("Using standard OAuth flow (HTTP redirect)");
-            InstalledFlowAuthenticator::builder(app_secret, InstalledFlowReturnMethod::HTTPRedirect)
-                .persist_tokens_to_disk(token_cache_path.as_path())
-                .build()
-                .await?
-        };
+        InstalledFlowAuthenticator::builder(app_secret, auth_method)
+            .persist_tokens_to_disk(token_cache_path.as_path())
+            .build()
+            .await?;
 
     // Get developer token using priority order: config > runtime env > compile-time
     let dev_token_value = get_dev_token(dev_token)?;
@@ -275,8 +279,9 @@ pub async fn get_api_access(
     // Get initial token and verify user identity
     access.renew_token().await?;
 
-    // Verify and confirm authentication if using remote auth
-    if use_remote_auth {
+    // Only verify/confirm if we are using remote auth AND the cache didn't exist before.
+    // This avoids re-prompting if the token was already cached.
+    if use_remote_auth && !cache_existed_prior {
         verify_and_confirm_auth(&access, &token_cache_path).await?;
     }
 
@@ -309,7 +314,8 @@ async fn verify_and_confirm_auth(
     if confirmed == "n" || confirmed == "no" {
         // Remove the token cache file if user declined
         if token_cache_path.exists() {
-            fs::remove_file(token_cache_path).ok();
+            fs::remove_file(token_cache_path)
+                .context("Failed to delete token cache after user cancellation")?;
         }
         bail!("Authentication cancelled by user. No tokens were saved.");
     }
@@ -401,21 +407,13 @@ pub async fn gaql_query_with_client(
                         {
                             let v: Vec<Option<u64>> = columns
                                 .get(i)
-                                .map(|col| {
-                                    col.iter()
-                                        .map(|x| x.parse::<u64>().ok())
-                                        .collect()
-                                })
+                                .map(|col| col.iter().map(|x| x.parse::<u64>().ok()).collect())
                                 .unwrap_or_default();
                             series_vec.push(Series::new(header, v));
                         } else {
                             let v: Vec<Option<f64>> = columns
                                 .get(i)
-                                .map(|col| {
-                                    col.iter()
-                                        .map(|x| x.parse::<f64>().ok())
-                                        .collect()
-                                })
+                                .map(|col| col.iter().map(|x| x.parse::<f64>().ok()).collect())
                                 .unwrap_or_default();
                             series_vec.push(Series::new(header, v));
                         }
@@ -555,10 +553,12 @@ mod tests {
     /// Test that metric parsing handles invalid values (empty, "--", "N/A") as None
     #[test]
     fn test_integer_metric_parsing_invalid_values() {
-        let input = ["".to_string(),
+        let input = [
+            "".to_string(),
             "--".to_string(),
             "N/A".to_string(),
-            " ".to_string()];
+            " ".to_string(),
+        ];
         let result: Vec<Option<u64>> = input.iter().map(|x| x.parse::<u64>().ok()).collect();
 
         assert_eq!(result, vec![None, None, None, None]);
@@ -567,11 +567,13 @@ mod tests {
     /// Test that metric parsing handles a mix of valid and invalid values
     #[test]
     fn test_integer_metric_parsing_mixed_values() {
-        let input = ["100".to_string(),
+        let input = [
+            "100".to_string(),
             "".to_string(),
             "200".to_string(),
             "--".to_string(),
-            "50".to_string()];
+            "50".to_string(),
+        ];
         let result: Vec<Option<u64>> = input.iter().map(|x| x.parse::<u64>().ok()).collect();
 
         assert_eq!(result, vec![Some(100), None, Some(200), None, Some(50)]);
@@ -589,10 +591,12 @@ mod tests {
     /// Test that float metric parsing handles invalid impression share values
     #[test]
     fn test_float_metric_parsing_invalid_values() {
-        let input = ["--".to_string(),
+        let input = [
+            "--".to_string(),
             "".to_string(),
             "N/A".to_string(),
-            " ".to_string()];
+            " ".to_string(),
+        ];
         let result: Vec<Option<f64>> = input.iter().map(|x| x.parse::<f64>().ok()).collect();
 
         assert_eq!(result, vec![None, None, None, None]);
@@ -601,11 +605,13 @@ mod tests {
     /// Test that float metric parsing handles mixed valid and invalid values
     #[test]
     fn test_float_metric_parsing_mixed_values() {
-        let input = ["0.85".to_string(),
+        let input = [
+            "0.85".to_string(),
             "--".to_string(),
             "0.95".to_string(),
             "".to_string(),
-            "0.75".to_string()];
+            "0.75".to_string(),
+        ];
         let result: Vec<Option<f64>> = input.iter().map(|x| x.parse::<f64>().ok()).collect();
 
         assert_eq!(result, vec![Some(0.85), None, Some(0.95), None, Some(0.75)]);
@@ -638,25 +644,18 @@ mod tests {
     fn test_realistic_impression_share_values() {
         // These are typical values returned by Google Ads API for impression share metrics
         let input = [
-            "0.8567".to_string(),      // Valid percentage (85.67%)
-            "--".to_string(),          // No data available
-            "0.9215".to_string(),      // Valid percentage (92.15%)
-            "".to_string(),            // Empty (no data)
-            "0.0000".to_string(),      // Zero value
-            "N/A".to_string(),         // Not applicable
+            "0.8567".to_string(), // Valid percentage (85.67%)
+            "--".to_string(),     // No data available
+            "0.9215".to_string(), // Valid percentage (92.15%)
+            "".to_string(),       // Empty (no data)
+            "0.0000".to_string(), // Zero value
+            "N/A".to_string(),    // Not applicable
         ];
         let result: Vec<Option<f64>> = input.iter().map(|x| x.parse::<f64>().ok()).collect();
 
         assert_eq!(
             result,
-            vec![
-                Some(0.8567),
-                None,
-                Some(0.9215),
-                None,
-                Some(0.0000),
-                None
-            ]
+            vec![Some(0.8567), None, Some(0.9215), None, Some(0.0000), None]
         );
     }
 
@@ -679,14 +678,10 @@ mod tests {
         ];
 
         // Simulate parsing like the code does
-        let int_values: Vec<Option<u64>> = columns[0]
-            .iter()
-            .map(|x| x.parse::<u64>().ok())
-            .collect();
-        let float_values: Vec<Option<f64>> = columns[1]
-            .iter()
-            .map(|x| x.parse::<f64>().ok())
-            .collect();
+        let int_values: Vec<Option<u64>> =
+            columns[0].iter().map(|x| x.parse::<u64>().ok()).collect();
+        let float_values: Vec<Option<f64>> =
+            columns[1].iter().map(|x| x.parse::<f64>().ok()).collect();
 
         // Both should have 4 rows (same as input)
         assert_eq!(int_values.len(), 4);
@@ -841,12 +836,18 @@ mod tests {
             "".to_string(),
         ];
 
-        let parsed_search: Vec<Option<f64>> =
-            search_impression_share.iter().map(|x| x.parse().ok()).collect();
-        let parsed_absolute_top: Vec<Option<f64>> =
-            absolute_top_impression_share.iter().map(|x| x.parse().ok()).collect();
-        let parsed_top: Vec<Option<f64>> =
-            search_top_impression_share.iter().map(|x| x.parse().ok()).collect();
+        let parsed_search: Vec<Option<f64>> = search_impression_share
+            .iter()
+            .map(|x| x.parse().ok())
+            .collect();
+        let parsed_absolute_top: Vec<Option<f64>> = absolute_top_impression_share
+            .iter()
+            .map(|x| x.parse().ok())
+            .collect();
+        let parsed_top: Vec<Option<f64>> = search_top_impression_share
+            .iter()
+            .map(|x| x.parse().ok())
+            .collect();
 
         // All should have 6 rows
         assert_eq!(parsed_search.len(), 6);
@@ -869,8 +870,10 @@ mod tests {
 
         // Create DataFrame and verify structure
         let search_series = Series::new("metrics.search_impression_share", parsed_search);
-        let absolute_top_series =
-            Series::new("metrics.search_absolute_top_impression_share", parsed_absolute_top);
+        let absolute_top_series = Series::new(
+            "metrics.search_absolute_top_impression_share",
+            parsed_absolute_top,
+        );
         let top_series = Series::new("metrics.search_top_impression_share", parsed_top);
 
         let df = DataFrame::new(vec![search_series, absolute_top_series, top_series]).unwrap();

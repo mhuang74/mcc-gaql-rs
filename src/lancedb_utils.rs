@@ -51,7 +51,10 @@ pub fn clear_cache() -> Result<()> {
     let lancedb_path = cache_dir.join("lancedb");
     if lancedb_path.exists() {
         std::fs::remove_dir_all(&lancedb_path)?;
-        println!("Removed LanceDB cache directory: {}", lancedb_path.display());
+        println!(
+            "Removed LanceDB cache directory: {}",
+            lancedb_path.display()
+        );
     }
 
     // Remove hash files
