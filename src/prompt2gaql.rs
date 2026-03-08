@@ -25,20 +25,46 @@ use crate::util::QueryEntry;
 pub struct LlmConfig {
     api_key: String,
     base_url: String,
-    model: String,
+    /// Ordered list of model names; index 0 is the preferred/primary model.
+    models: Vec<String>,
     temperature: f32,
 }
 
 impl LlmConfig {
+    /// Create a config from an explicit list of model names for unit tests.
+    ///
+    /// Uses placeholder values for all other fields so no real LLM calls are made.
+    #[cfg(test)]
+    pub fn from_models_for_test(models: Vec<String>) -> Self {
+        assert!(!models.is_empty(), "models must not be empty");
+        Self {
+            api_key: "dummy".to_string(),
+            base_url: "https://api.openai.com/v1".to_string(),
+            models,
+            temperature: 0.1,
+        }
+    }
+
     /// Create a dummy config for unit tests (does not make real LLM calls)
     #[cfg(test)]
     pub fn from_env_or_dummy() -> Self {
+        let models_str =
+            std::env::var("MCC_GAQL_LLM_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string());
+        let models: Vec<String> = models_str
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        let models = if models.is_empty() {
+            vec!["gpt-4o-mini".to_string()]
+        } else {
+            models
+        };
         Self {
             api_key: std::env::var("MCC_GAQL_LLM_API_KEY").unwrap_or_else(|_| "dummy".to_string()),
             base_url: std::env::var("MCC_GAQL_LLM_BASE_URL")
                 .unwrap_or_else(|_| "https://api.openai.com/v1".to_string()),
-            model: std::env::var("MCC_GAQL_LLM_MODEL")
-                .unwrap_or_else(|_| "gpt-4o-mini".to_string()),
+            models,
             temperature: 0.1,
         }
     }
@@ -53,10 +79,17 @@ impl LlmConfig {
         let base_url = std::env::var("MCC_GAQL_LLM_BASE_URL")
             .expect("MCC_GAQL_LLM_BASE_URL must be set (e.g., https://api.openai.com/v1 or https://openrouter.ai/api/v1)");
 
-        // Model: must be explicitly configured - fail fast if not set
-        let model = std::env::var("MCC_GAQL_LLM_MODEL").expect(
-            "MCC_GAQL_LLM_MODEL must be set (e.g., gpt-4o-mini or google/gemini-flash-2.0)",
-        );
+        // Models: comma-separated list; at least one required
+        let models: Vec<String> = std::env::var("MCC_GAQL_LLM_MODEL")
+            .expect("MCC_GAQL_LLM_MODEL must be set (e.g., gpt-4o-mini or google/gemini-flash-2.0)")
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        if models.is_empty() {
+            panic!("MCC_GAQL_LLM_MODEL must contain at least one model name");
+        }
 
         // Temperature: default to 0.1 if not set, fail fast with explicit error if invalid
         let temperature: f32 = match std::env::var("MCC_GAQL_LLM_TEMPERATURE") {
@@ -72,31 +105,55 @@ impl LlmConfig {
         Self {
             api_key,
             base_url,
-            model,
+            models,
             temperature,
         }
     }
-}
 
-/// Create LLM completions client from config
-fn create_llm_client(config: &LlmConfig) -> Result<openai::CompletionsClient, anyhow::Error> {
-    openai::CompletionsClient::builder()
-        .api_key(&config.api_key)
-        .base_url(&config.base_url)
-        .build()
-        .map_err(|e| anyhow::anyhow!("Failed to create LLM client: {}", e))
+    /// Returns the first (preferred) model name.
+    pub fn preferred_model(&self) -> &str {
+        &self.models[0]
+    }
+
+    /// Returns all configured model names.
+    pub fn all_models(&self) -> &[String] {
+        &self.models
+    }
+
+    /// Returns the number of configured models.
+    pub fn model_count(&self) -> usize {
+        self.models.len()
+    }
 }
 
 impl LlmConfig {
-    /// Create a simple LLM agent suitable for direct prompt/response (no RAG).
-    /// Used by the metadata enricher and other modules that need LLM text generation.
+    /// Create an OpenAI-compatible completions client from this config.
+    pub fn create_llm_client(&self) -> Result<openai::CompletionsClient, anyhow::Error> {
+        openai::CompletionsClient::builder()
+            .api_key(&self.api_key)
+            .base_url(&self.base_url)
+            .build()
+            .map_err(|e| anyhow::anyhow!("Failed to create LLM client: {}", e))
+    }
+
+    /// Create a simple LLM agent for the preferred (first) model with the given system prompt.
+    /// Used by callers that always want the primary model.
     pub fn create_agent(
         &self,
         system_prompt: &str,
     ) -> Result<Agent<CompletionModel>, anyhow::Error> {
-        let client = create_llm_client(self)?;
+        self.create_agent_for_model(self.preferred_model(), system_prompt)
+    }
+
+    /// Create a simple LLM agent for the specified model name with the given system prompt.
+    pub fn create_agent_for_model(
+        &self,
+        model: &str,
+        system_prompt: &str,
+    ) -> Result<Agent<CompletionModel>, anyhow::Error> {
+        let client = self.create_llm_client()?;
         let agent = client
-            .agent(&self.model)
+            .agent(model)
             .preamble(system_prompt)
             .temperature(self.temperature as f64)
             .build();
@@ -120,7 +177,7 @@ struct AgentResources {
 
 /// Initialize shared LLM resources used by both agent types
 fn init_llm_resources(config: &LlmConfig) -> Result<AgentResources, anyhow::Error> {
-    let llm_client = create_llm_client(config)?;
+    let llm_client = config.create_llm_client()?;
     let (embed_client, embedding_model) = create_embedding_client();
 
     Ok(AgentResources {
@@ -534,7 +591,11 @@ impl FieldDocument {
         };
 
         let id = field.name.clone();
-        Self { id, field, description }
+        Self {
+            id,
+            field,
+            description,
+        }
     }
 
     /// Generate a synthetic description for better semantic matching (fallback for unenriched fields)
@@ -650,7 +711,11 @@ impl RAGAgent {
         query_cookbook: Vec<QueryEntry>,
         config: &LlmConfig,
     ) -> Result<Self, anyhow::Error> {
-        log::info!("Using LLM: {} via {}", config.model, config.base_url);
+        log::info!(
+            "Using LLM: {} via {}",
+            config.preferred_model(),
+            config.base_url
+        );
 
         // Initialize shared LLM resources
         let resources = init_llm_resources(config)?;
@@ -661,7 +726,7 @@ impl RAGAgent {
 
         let agent = resources
             .llm_client
-            .agent(&config.model)
+            .agent(config.preferred_model())
             .preamble("
                 You are a Google Ads GAQL query assistant here to assist the user to translate natural language query requests into valid GAQL.
 
@@ -770,7 +835,11 @@ impl EnhancedRAGAgent {
     ) -> Result<Self, anyhow::Error> {
         let init_start = std::time::Instant::now();
 
-        log::info!("Using LLM: {} via {}", config.model, config.base_url);
+        log::info!(
+            "Using LLM: {} via {}",
+            config.preferred_model(),
+            config.base_url
+        );
 
         // Initialize shared LLM resources
         let resources = init_llm_resources(config)?;
@@ -800,7 +869,7 @@ impl EnhancedRAGAgent {
 
         let agent = resources
             .llm_client
-            .agent(&config.model)
+            .agent(config.preferred_model())
             .preamble(&preamble)
             .temperature(config.temperature as f64)
             .build();
@@ -1370,5 +1439,75 @@ mod tests {
 
         // Different queries should produce different hash
         assert_ne!(hash1, hash2, "Changing query should change hash");
+    }
+
+    // ── LlmConfig parsing tests ──────────────────────────────────────────────
+
+    /// Helper: build an `LlmConfig` from a raw `MCC_GAQL_LLM_MODEL` string,
+    /// using placeholder values for the other required fields.
+    fn make_config_from_model_str(model_str: &str) -> LlmConfig {
+        let models: Vec<String> = model_str
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        LlmConfig {
+            api_key: "dummy".to_string(),
+            base_url: "https://api.openai.com/v1".to_string(),
+            models,
+            temperature: 0.1,
+        }
+    }
+
+    #[test]
+    fn test_llm_config_single_model() {
+        let config = make_config_from_model_str("model-a");
+        assert_eq!(config.all_models(), &["model-a"]);
+        assert_eq!(config.preferred_model(), "model-a");
+        assert_eq!(config.model_count(), 1);
+    }
+
+    #[test]
+    fn test_llm_config_multiple_models() {
+        let config = make_config_from_model_str("model-a,model-b,model-c");
+        assert_eq!(config.all_models(), &["model-a", "model-b", "model-c"]);
+        assert_eq!(config.preferred_model(), "model-a");
+        assert_eq!(config.model_count(), 3);
+    }
+
+    #[test]
+    fn test_llm_config_whitespace_trimming() {
+        let config = make_config_from_model_str(" model-a , model-b ");
+        assert_eq!(config.all_models(), &["model-a", "model-b"]);
+        assert_eq!(config.preferred_model(), "model-a");
+        assert_eq!(config.model_count(), 2);
+    }
+
+    #[test]
+    #[should_panic(expected = "MCC_GAQL_LLM_MODEL must contain at least one model name")]
+    fn test_llm_config_empty_panics() {
+        // Simulate what from_env() does when the value is empty
+        let models: Vec<String> = ""
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if models.is_empty() {
+            panic!("MCC_GAQL_LLM_MODEL must contain at least one model name");
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "MCC_GAQL_LLM_MODEL must contain at least one model name")]
+    fn test_llm_config_only_commas_panics() {
+        // Simulate what from_env() does when value is ",,"
+        let models: Vec<String> = ",,"
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if models.is_empty() {
+            panic!("MCC_GAQL_LLM_MODEL must contain at least one model name");
+        }
     }
 }

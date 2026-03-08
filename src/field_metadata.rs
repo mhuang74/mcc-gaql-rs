@@ -83,9 +83,21 @@ impl FieldMetadata {
 
         // Field name + structural tags
         let flags: Vec<&str> = [
-            if self.selectable { Some("selectable") } else { None },
-            if self.filterable { Some("filterable") } else { None },
-            if self.sortable { Some("sortable") } else { None },
+            if self.selectable {
+                Some("selectable")
+            } else {
+                None
+            },
+            if self.filterable {
+                Some("filterable")
+            } else {
+                None
+            },
+            if self.sortable {
+                Some("sortable")
+            } else {
+                None
+            },
         ]
         .into_iter()
         .flatten()
@@ -121,10 +133,11 @@ impl FieldMetadata {
         // Resource context
         if !self.attribute_resources.is_empty() {
             parts.push(format!("Resource: {}", self.attribute_resources.join(", ")));
-        } else if let Some(r) = self.get_resource() {
-            if r != "metrics" && r != "segments" {
-                parts.push(format!("Resource: {}", r));
-            }
+        } else if let Some(r) = self.get_resource()
+            && r != "metrics"
+            && r != "segments"
+        {
+            parts.push(format!("Resource: {}", r));
         }
 
         parts.join(". ")
@@ -341,10 +354,8 @@ impl FieldMetadataCache {
         let mut resource_metadata = HashMap::new();
 
         for (resource_name, field_names) in resources {
-            let resource_fields: Vec<&FieldMetadata> = field_names
-                .iter()
-                .filter_map(|n| fields.get(n))
-                .collect();
+            let resource_fields: Vec<&FieldMetadata> =
+                field_names.iter().filter_map(|n| fields.get(n)).collect();
 
             // Collect key attributes (selectable + filterable)
             let mut key_attributes: Vec<String> = resource_fields
@@ -518,7 +529,10 @@ impl FieldMetadataCache {
 
     /// Count enriched fields (those with a description set)
     pub fn enriched_field_count(&self) -> usize {
-        self.fields.values().filter(|f| f.description.is_some()).count()
+        self.fields
+            .values()
+            .filter(|f| f.description.is_some())
+            .count()
     }
 
     /// Validate if a set of fields can be selected together
@@ -657,7 +671,10 @@ impl FieldMetadataCache {
                     .as_deref()
                     .map(|d| format!(" — {}", d))
                     .unwrap_or_default();
-                output.push_str(&format!("- {}: {}{}\n", field.name, field.data_type, desc_suffix));
+                output.push_str(&format!(
+                    "- {}: {}{}\n",
+                    field.name, field.data_type, desc_suffix
+                ));
             }
         }
 
@@ -681,17 +698,20 @@ impl FieldMetadataCache {
         for resource in &resources {
             let field_count = self.get_resource_fields(resource).len();
 
-            let (selectable_with, key_attrs, key_metrics, desc) =
-                if let Some(rm) = self.resource_metadata.as_ref().and_then(|m| m.get(resource)) {
-                    (
-                        rm.selectable_with.clone(),
-                        rm.key_attributes.clone(),
-                        rm.key_metrics.clone(),
-                        rm.description.clone(),
-                    )
-                } else {
-                    (vec![], vec![], vec![], None)
-                };
+            let (selectable_with, key_attrs, key_metrics, desc) = if let Some(rm) = self
+                .resource_metadata
+                .as_ref()
+                .and_then(|m| m.get(resource))
+            {
+                (
+                    rm.selectable_with.clone(),
+                    rm.key_attributes.clone(),
+                    rm.key_metrics.clone(),
+                    rm.description.clone(),
+                )
+            } else {
+                (vec![], vec![], vec![], None)
+            };
 
             output.push_str(&format!("## {}\n", resource));
             output.push_str(&format!("Fields: {}\n", field_count));
@@ -701,7 +721,8 @@ impl FieldMetadataCache {
             }
 
             if !selectable_with.is_empty() {
-                let displayed: Vec<&str> = selectable_with.iter().take(8).map(String::as_str).collect();
+                let displayed: Vec<&str> =
+                    selectable_with.iter().take(8).map(String::as_str).collect();
                 let suffix = if selectable_with.len() > 8 {
                     format!(" (+{})", selectable_with.len() - 8)
                 } else {
@@ -820,7 +841,9 @@ pub fn get_enriched_cache_path() -> Result<PathBuf> {
     let cache_dir =
         dirs::cache_dir().ok_or_else(|| anyhow!("Could not determine cache directory"))?;
 
-    Ok(cache_dir.join("mcc-gaql").join("field_metadata_enriched.json"))
+    Ok(cache_dir
+        .join("mcc-gaql")
+        .join("field_metadata_enriched.json"))
 }
 
 #[cfg(test)]
@@ -885,7 +908,11 @@ mod tests {
             metrics_compatible: true,
             resource_name: None,
             selectable_with: vec![],
-            enum_values: vec!["ENABLED".to_string(), "PAUSED".to_string(), "REMOVED".to_string()],
+            enum_values: vec![
+                "ENABLED".to_string(),
+                "PAUSED".to_string(),
+                "REMOVED".to_string(),
+            ],
             attribute_resources: vec!["campaign".to_string()],
             description: Some("Current serving status of the campaign.".to_string()),
             usage_notes: Some("Filter with = to focus on active campaigns.".to_string()),

@@ -54,3 +54,17 @@ llm = ["dep:rig-core", "dep:rig-fastembed", "dep:rig-lancedb", "dep:lancedb", "d
 # instead of using embedded credentials. Useful for builds that should not
 # bundle credentials for security or distribution reasons.
 external_client_secret = []
+
+[profile.dev]
+# 1. Reduces the number of parallel "units" the compiler creates. 
+# Lower number = Lower memory usage during linking.
+codegen-units = 1 
+
+# 2. Optimization level 1 makes the code clean enough that the 
+# linker doesn't have to work as hard to merge symbols.
+opt-level = 1
+
+[profile.dev.package."*"]
+# 3. Keep dependencies fast so your LLM/GAQL logic doesn't 
+# drag down the test execution.
+opt-level = 3

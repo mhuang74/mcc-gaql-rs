@@ -32,11 +32,13 @@ use mcc_gaql::metadata_enricher;
 #[cfg(feature = "llm")]
 use mcc_gaql::metadata_scraper;
 #[cfg(feature = "llm")]
+use mcc_gaql::model_pool::ModelPool;
+#[cfg(feature = "llm")]
 use mcc_gaql::prompt2gaql;
 use mcc_gaql::setup;
+use mcc_gaql::util;
 #[cfg(feature = "llm")]
 use mcc_gaql::util::QueryEntry;
-use mcc_gaql::util;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -66,7 +68,9 @@ async fn main() -> Result<()> {
     }
     #[cfg(not(feature = "llm"))]
     if args.clear_vector_cache {
-        return Err(anyhow::anyhow!("LLM features not enabled. Rebuild with --features llm"));
+        return Err(anyhow::anyhow!(
+            "LLM features not enabled. Rebuild with --features llm"
+        ));
     }
 
     // Validate argument combinations
@@ -90,27 +94,26 @@ async fn main() -> Result<()> {
         log::debug!("Handle Field Metadata command. Resolved configuration: {resolved_config:?}");
 
         // Obtain API access for field metadata operations
-        let api_context =
-            if args.refresh_field_cache
-                || args.export_field_metadata
-                || args.show_fields.is_some()
-                || args.refresh_metadata
-            {
-                resolved_config.validate_for_operation(&args)?;
-                Some(
-                    googleads::get_api_access(&googleads::ApiAccessConfig {
-                        mcc_customer_id: resolved_config.mcc_customer_id.clone(),
-                        token_cache_filename: resolved_config.token_cache_filename.clone(),
-                        user_email: resolved_config.user_email.clone(),
-                        dev_token: resolved_config.dev_token.clone(),
-                        use_remote_auth: resolved_config.remote_auth,
-                    })
-                    .await
-                    .context("Authentication required for field metadata operations")?,
-                )
-            } else {
-                None
-            };
+        let api_context = if args.refresh_field_cache
+            || args.export_field_metadata
+            || args.show_fields.is_some()
+            || args.refresh_metadata
+        {
+            resolved_config.validate_for_operation(&args)?;
+            Some(
+                googleads::get_api_access(&googleads::ApiAccessConfig {
+                    mcc_customer_id: resolved_config.mcc_customer_id.clone(),
+                    token_cache_filename: resolved_config.token_cache_filename.clone(),
+                    user_email: resolved_config.user_email.clone(),
+                    dev_token: resolved_config.dev_token.clone(),
+                    use_remote_auth: resolved_config.remote_auth,
+                })
+                .await
+                .context("Authentication required for field metadata operations")?,
+            )
+        } else {
+            None
+        };
 
         let cache_path = std::path::PathBuf::from(&resolved_config.field_metadata_cache);
 
@@ -205,10 +208,19 @@ async fn main() -> Result<()> {
                     "Either MCC_GAQL_LLM_API_KEY or OPENROUTER_API_KEY must be set for --refresh-metadata"
                 ));
             }
-            let llm_config = prompt2gaql::LlmConfig::from_env();
+            let llm_config = std::sync::Arc::new(prompt2gaql::LlmConfig::from_env());
+            log::info!(
+                "LLM configured with {} model(s): {:?}",
+                llm_config.model_count(),
+                llm_config.all_models()
+            );
+            let model_pool =
+                std::sync::Arc::new(ModelPool::new(std::sync::Arc::clone(&llm_config)));
 
             // Stage 0: Fetch fresh structural metadata from Fields Service API
-            println!("Stage 0/2: Fetching structural metadata from Google Ads Fields Service API...");
+            println!(
+                "Stage 0/2: Fetching structural metadata from Google Ads Fields Service API..."
+            );
             let mut cache =
                 FieldMetadataCache::fetch_from_api(api_context.as_ref().unwrap()).await?;
             println!(
@@ -228,10 +240,10 @@ async fn main() -> Result<()> {
             // Stages 1 and 2: Scrape + LLM enrich
             metadata_enricher::run_enrichment_pipeline(
                 &mut cache,
-                &llm_config,
+                model_pool,
                 &scrape_cache_path,
-                30,   // scrape TTL: 30 days
-                500,  // rate limit: 500ms between requests
+                30,  // scrape TTL: 30 days
+                500, // rate limit: 500ms between requests
             )
             .await?;
 
@@ -260,7 +272,9 @@ async fn main() -> Result<()> {
         }
         #[cfg(not(feature = "llm"))]
         if args.refresh_metadata {
-            return Err(anyhow::anyhow!("LLM features not enabled. Rebuild with --features llm"));
+            return Err(anyhow::anyhow!(
+                "LLM features not enabled. Rebuild with --features llm"
+            ));
         }
     }
 
@@ -396,7 +410,9 @@ async fn main() -> Result<()> {
     }
     #[cfg(not(feature = "llm"))]
     if args.natural_language {
-        return Err(anyhow::anyhow!("LLM features not enabled. Rebuild with --features llm"));
+        return Err(anyhow::anyhow!(
+            "LLM features not enabled. Rebuild with --features llm"
+        ));
     }
 
     // for non-FieldService queries, reduce network traffic by excluding resource_name by default

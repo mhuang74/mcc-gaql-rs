@@ -20,54 +20,53 @@ use std::sync::Arc;
 
 use crate::field_metadata::{FieldMetadata, FieldMetadataCache, ResourceMetadata};
 use crate::metadata_scraper::ScrapedDocs;
-use crate::prompt2gaql::LlmConfig;
+use crate::model_pool::{ModelLease, ModelPool};
 
 /// LLM-based enricher for Google Ads field metadata
 pub struct MetadataEnricher {
-    llm_config: LlmConfig,
+    model_pool: Arc<ModelPool>,
     /// Maximum fields per LLM batch (controls token usage)
     batch_size: usize,
-    /// Maximum concurrent LLM API calls
-    concurrency: usize,
 }
 
 impl MetadataEnricher {
-    pub fn new(llm_config: LlmConfig) -> Self {
+    /// Create a new enricher backed by the given model pool.
+    pub fn new(model_pool: Arc<ModelPool>) -> Self {
         Self {
-            llm_config,
+            model_pool,
             batch_size: 15,
-            concurrency: 3, // Default: 3 concurrent LLM calls
         }
     }
 
+    /// Override the number of fields sent per LLM batch (default: 15).
     pub fn with_batch_size(mut self, batch_size: usize) -> Self {
         self.batch_size = batch_size;
         self
     }
 
-    pub fn with_concurrency(mut self, concurrency: usize) -> Self {
-        self.concurrency = concurrency.max(1); // At least 1
-        self
-    }
-
     /// Enrich all fields in the cache with LLM-generated descriptions.
     /// Also enriches resource-level metadata.
-    /// Uses concurrent processing for improved performance.
+    /// Uses concurrent processing across all models in the pool.
     /// Modifies the cache in place.
-    pub async fn enrich(&self, cache: &mut FieldMetadataCache, scraped: &ScrapedDocs) -> Result<()> {
+    pub async fn enrich(
+        &self,
+        cache: &mut FieldMetadataCache,
+        scraped: &ScrapedDocs,
+    ) -> Result<()> {
         let resources = cache.get_resources();
         let total_resources = resources.len();
+        let concurrency = self.model_pool.model_count();
 
         log::info!(
             "Starting LLM enrichment for {} resources ({} fields total, concurrency: {})",
             total_resources,
             cache.fields.len(),
-            self.concurrency
+            concurrency
         );
 
         // Wrap scraped docs in Arc for sharing across concurrent tasks
         let scraped = Arc::new(scraped.clone());
-        let llm_config = Arc::new(self.llm_config.clone());
+        let model_pool = Arc::clone(&self.model_pool);
 
         // Collect all batches across all resources for parallel processing
         let mut all_batches: Vec<(String, Vec<FieldMetadata>)> = Vec::new();
@@ -96,32 +95,37 @@ impl MetadataEnricher {
         }
 
         let total_batches = all_batches.len();
-        log::info!("Processing {} batches with concurrency {}", total_batches, self.concurrency);
+        log::info!(
+            "Processing {} batches with concurrency {}",
+            total_batches,
+            concurrency
+        );
 
-        // Process batches concurrently using buffer_unordered
-        let batch_size = self.batch_size;
+        // Process batches concurrently using buffer_unordered(model_count).
+        // Each task acquires a model lease from the pool so that at most one
+        // request is in-flight per model at any time.
         let results: Vec<_> = stream::iter(all_batches.into_iter().enumerate())
             .map(|(idx, (resource, batch_fields))| {
+                let pool = Arc::clone(&model_pool);
                 let scraped = Arc::clone(&scraped);
-                let llm_config = Arc::clone(&llm_config);
                 async move {
+                    // Acquire a model lease (waits if all models are busy)
+                    let lease = pool.acquire().await;
+
                     log::info!(
-                        "[{}/{}] Enriching batch for resource: {} ({} fields)",
+                        "[{}/{}] Enriching batch for resource: {} ({} fields) using model '{}'",
                         idx + 1,
                         total_batches,
                         resource,
-                        batch_fields.len()
+                        batch_fields.len(),
+                        lease.model_name()
                     );
 
-                    let result = Self::enrich_batch_static(
-                        &llm_config,
-                        &resource,
-                        &batch_fields,
-                        &scraped,
-                        batch_size,
-                    )
-                    .await;
+                    let result =
+                        Self::enrich_batch_with_lease(&lease, &resource, &batch_fields, &scraped)
+                            .await;
 
+                    // lease dropped here, model slot released
                     match &result {
                         Ok(descriptions) => {
                             log::info!(
@@ -144,30 +148,31 @@ impl MetadataEnricher {
                     result
                 }
             })
-            .buffer_unordered(self.concurrency)
+            .buffer_unordered(concurrency)
             .collect()
             .await;
 
         // Apply all results to the cache
-        for result in results {
-            if let Ok(descriptions) = result {
-                for (field_name, (description, usage_notes)) in descriptions {
-                    if let Some(field) = cache.fields.get_mut(&field_name) {
-                        if !description.is_empty() {
-                            field.description = Some(description);
-                        }
-                        if let Some(notes) = usage_notes {
-                            if !notes.is_empty() {
-                                field.usage_notes = Some(notes);
-                            }
-                        }
+        for descriptions in results.into_iter().flatten() {
+            for (field_name, (description, usage_notes)) in descriptions {
+                if let Some(field) = cache.fields.get_mut(&field_name) {
+                    if !description.is_empty() {
+                        field.description = Some(description);
+                    }
+                    if let Some(notes) = usage_notes
+                        && !notes.is_empty()
+                    {
+                        field.usage_notes = Some(notes);
                     }
                 }
             }
         }
 
         // Enrich resource-level metadata (sequential, since there are fewer resources)
-        log::info!("Enriching resource-level metadata for {} resources", resources.len());
+        log::info!(
+            "Enriching resource-level metadata for {} resources",
+            resources.len()
+        );
         for resource in &resources {
             if let Some(rm) = cache
                 .resource_metadata
@@ -181,7 +186,11 @@ impl MetadataEnricher {
                         }
                     }
                     Err(e) => {
-                        log::warn!("  Resource description generation failed for '{}': {}", resource, e);
+                        log::warn!(
+                            "  Resource description generation failed for '{}': {}",
+                            resource,
+                            e
+                        );
                     }
                 }
             }
@@ -197,13 +206,15 @@ impl MetadataEnricher {
         Ok(())
     }
 
-    /// Static version of enrich_batch for use in concurrent contexts
-    async fn enrich_batch_static(
-        llm_config: &LlmConfig,
+    /// Enrich a batch of fields using the model referenced by `lease`.
+    ///
+    /// The caller is responsible for acquiring the lease from a [`ModelPool`]
+    /// and dropping it when this call returns.
+    async fn enrich_batch_with_lease(
+        lease: &ModelLease,
         resource: &str,
         fields: &[FieldMetadata],
         scraped: &ScrapedDocs,
-        _batch_size: usize,
     ) -> Result<HashMap<String, (String, Option<String>)>> {
         let system_prompt = "\
 You are a Google Ads API documentation expert. Your task is to write concise, \
@@ -230,7 +241,7 @@ Use in SELECT to label rows in reports.\",\n\
 
         let user_prompt = Self::build_batch_prompt_static(resource, fields, scraped);
 
-        let agent = llm_config
+        let agent = lease
             .create_agent(system_prompt)
             .context("Failed to create LLM agent for enrichment")?;
 
@@ -261,9 +272,21 @@ Use in SELECT to label rows in reports.\",\n\
             ));
 
             let flags: Vec<&str> = [
-                if field.selectable { Some("selectable") } else { None },
-                if field.filterable { Some("filterable") } else { None },
-                if field.sortable { Some("sortable") } else { None },
+                if field.selectable {
+                    Some("selectable")
+                } else {
+                    None
+                },
+                if field.filterable {
+                    Some("filterable")
+                } else {
+                    None
+                },
+                if field.sortable {
+                    Some("sortable")
+                } else {
+                    None
+                },
             ]
             .into_iter()
             .flatten()
@@ -273,22 +296,28 @@ Use in SELECT to label rows in reports.\",\n\
             }
 
             if !field.enum_values.is_empty() {
-                let values: Vec<&str> = field.enum_values.iter().take(20).map(String::as_str).collect();
+                let values: Vec<&str> = field
+                    .enum_values
+                    .iter()
+                    .take(20)
+                    .map(String::as_str)
+                    .collect();
                 prompt.push_str(&format!("  Enum values: {}\n", values.join(", ")));
             }
 
             if let Some(scraped_desc) = scraped.get_description(&field.name) {
                 prompt.push_str(&format!("  Documentation: {}\n", scraped_desc));
             }
-            if let Some(scraped_enums) = scraped.get_enum_values(&field.name) {
-                if !field.enum_values.is_empty() {
-                    let scraped_str: Vec<&str> = scraped_enums.iter().take(10).map(String::as_str).collect();
-                    if !scraped_str.is_empty() {
-                        prompt.push_str(&format!(
-                            "  Additional enum context: {}\n",
-                            scraped_str.join(", ")
-                        ));
-                    }
+            if let Some(scraped_enums) = scraped.get_enum_values(&field.name)
+                && !field.enum_values.is_empty()
+            {
+                let scraped_str: Vec<&str> =
+                    scraped_enums.iter().take(10).map(String::as_str).collect();
+                if !scraped_str.is_empty() {
+                    prompt.push_str(&format!(
+                        "  Additional enum context: {}\n",
+                        scraped_str.join(", ")
+                    ));
                 }
             }
 
@@ -332,7 +361,10 @@ Use in SELECT to label rows in reports.\",\n\
                     result.insert(field_name.clone(), (s.clone(), None));
                 }
                 _ => {
-                    log::debug!("Unexpected JSON value type for field '{}', skipping", field_name);
+                    log::debug!(
+                        "Unexpected JSON value type for field '{}', skipping",
+                        field_name
+                    );
                 }
             }
         }
@@ -361,13 +393,23 @@ used to query. Return ONLY the sentence, no formatting.";
         if !rm.key_attributes.is_empty() {
             user_prompt.push_str(&format!(
                 "Key attributes: {}\n",
-                rm.key_attributes.iter().take(5).cloned().collect::<Vec<_>>().join(", ")
+                rm.key_attributes
+                    .iter()
+                    .take(5)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ));
         }
         if !rm.key_metrics.is_empty() {
             user_prompt.push_str(&format!(
                 "Key metrics: {}\n",
-                rm.key_metrics.iter().take(5).cloned().collect::<Vec<_>>().join(", ")
+                rm.key_metrics
+                    .iter()
+                    .take(5)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ));
         }
 
@@ -376,15 +418,14 @@ used to query. Return ONLY the sentence, no formatting.";
             user_prompt.push_str(&format!("Documentation: {}\n", scraped_desc));
         }
 
-        let agent = self
-            .llm_config
+        let lease = self.model_pool.acquire_preferred().await;
+        let agent = lease
             .create_agent(system_prompt)
             .context("Failed to create LLM agent for resource enrichment")?;
 
-        let response = agent
-            .prompt(&user_prompt)
-            .await
-            .map_err(|e| anyhow::anyhow!("LLM prompt failed for resource {}: {}", resource_name, e))?;
+        let response = agent.prompt(&user_prompt).await.map_err(|e| {
+            anyhow::anyhow!("LLM prompt failed for resource {}: {}", resource_name, e)
+        })?;
 
         Ok(response.trim().to_string())
     }
@@ -421,7 +462,7 @@ fn strip_json_fences(s: &str) -> String {
 /// Returns the modified cache (caller is responsible for saving to disk).
 pub async fn run_enrichment_pipeline(
     cache: &mut FieldMetadataCache,
-    llm_config: &LlmConfig,
+    model_pool: Arc<ModelPool>,
     scrape_cache_path: &std::path::Path,
     scrape_ttl_days: i64,
     scrape_delay_ms: u64,
@@ -454,7 +495,7 @@ pub async fn run_enrichment_pipeline(
         "Stage 2/2: Generating LLM descriptions for {} fields...",
         cache.fields.len()
     );
-    let enricher = MetadataEnricher::new(llm_config.clone());
+    let enricher = MetadataEnricher::new(model_pool);
     enricher.enrich(cache, &scraped).await?;
 
     println!(
