@@ -1,7 +1,7 @@
 use std::fs;
 use std::time::Duration;
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use polars::prelude::*;
 use std::io::{self, Write};
 use tokio_stream::StreamExt;

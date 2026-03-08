@@ -120,6 +120,7 @@ fn test_validate_requires_user_or_token_cache() {
         dev_token: None,
         field_metadata_cache: "~/.cache/mcc-gaql/field_metadata.json".to_string(),
         field_metadata_ttl_days: 7,
+        remote_auth: false,
     };
 
     let result = resolved.validate_for_operation(&args);
@@ -171,6 +172,7 @@ fn test_validate_succeeds_with_existing_token_cache() {
         dev_token: None,
         field_metadata_cache: "~/.cache/mcc-gaql/field_metadata.json".to_string(),
         field_metadata_ttl_days: 7,
+        remote_auth: false,
     };
 
     let result = resolved.validate_for_operation(&args);
