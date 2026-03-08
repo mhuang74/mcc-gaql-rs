@@ -1,9 +1,8 @@
-use std::fs;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use polars::prelude::*;
-use std::io::{self, Write};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio_stream::StreamExt;
 use tonic::{
     Response, Status, Streaming,
@@ -196,48 +195,51 @@ async fn get_client_secret() -> Result<ApplicationSecret> {
     let app_secret: ApplicationSecret = if let Some(embedded_json) = EMBEDDED_CLIENT_SECRET {
         log::debug!("Using embedded client secret");
         yup_oauth2::parse_application_secret(embedded_json)
-            .expect("Failed to parse embedded client secret")
+            .context("Failed to parse embedded client secret")?
     } else {
         log::debug!("No embedded client secret found, loading from file");
-        let client_secret_path =
-            crate::config::config_file_path(FILENAME_CLIENT_SECRET).expect("clientsecret path");
+        let client_secret_path = crate::config::config_file_path(FILENAME_CLIENT_SECRET)
+            .context("Failed to determine client secret path")?;
         yup_oauth2::read_application_secret(client_secret_path.as_path())
             .await
-            .expect("clientsecret.json file not found and no embedded secret available")
+            .context("clientsecret.json file not found and no embedded secret available")?
     };
 
     // For builds with external_client_secret feature, always load from file
     #[cfg(feature = "external_client_secret")]
     let app_secret: ApplicationSecret = {
         log::debug!("Loading client secret from file (external_client_secret feature enabled)");
-        let client_secret_path =
-            crate::config::config_file_path(FILENAME_CLIENT_SECRET).expect("clientsecret path");
+        let client_secret_path = crate::config::config_file_path(FILENAME_CLIENT_SECRET)
+            .context("Failed to determine client secret path")?;
         yup_oauth2::read_application_secret(client_secret_path.as_path())
             .await
-            .expect("clientsecret.json")
+            .context("Failed to read clientsecret.json")?
     };
 
     Ok(app_secret)
 }
 
+/// Configuration for Google Ads API access
+pub struct ApiAccessConfig {
+    pub mcc_customer_id: String,
+    pub token_cache_filename: String,
+    pub user_email: Option<String>,
+    pub dev_token: Option<String>,
+    pub use_remote_auth: bool,
+}
+
 /// Get access to Google Ads API via OAuth2 flow and return API Credentials
-pub async fn get_api_access(
-    mcc_customer_id: &str,
-    token_cache_filename: &str,
-    user_email: Option<&str>,
-    dev_token: Option<&str>,
-    use_remote_auth: bool,
-) -> Result<GoogleAdsAPIAccess> {
+pub async fn get_api_access(config: &ApiAccessConfig) -> Result<GoogleAdsAPIAccess> {
     let app_secret = get_client_secret().await?;
 
-    let token_cache_path =
-        crate::config::config_file_path(token_cache_filename).expect("token cache path");
+    let token_cache_path = crate::config::config_file_path(&config.token_cache_filename)
+        .context("Failed to determine token cache path")?;
 
     // Check if cache exists before attempting auth to avoid redundant prompts
     let cache_existed_prior = token_cache_path.exists();
 
     // Determine the flow method based on the flag
-    let auth_method = if use_remote_auth {
+    let auth_method = if config.use_remote_auth {
         log::info!("Using remote OAuth flow (interactive)");
         InstalledFlowReturnMethod::Interactive
     } else {
@@ -253,9 +255,9 @@ pub async fn get_api_access(
             .await?;
 
     // Get developer token using priority order: config > runtime env > compile-time
-    let dev_token_value = get_dev_token(dev_token)?;
+    let dev_token_value = get_dev_token(config.dev_token.as_deref())?;
     let header_value_dev_token = MetadataValue::try_from(&dev_token_value)?;
-    let header_value_login_customer = MetadataValue::try_from(mcc_customer_id)?;
+    let header_value_login_customer = MetadataValue::try_from(&config.mcc_customer_id)?;
 
     let tls_config = tonic::transport::ClientTlsConfig::new().with_native_roots();
 
@@ -273,7 +275,7 @@ pub async fn get_api_access(
         auth_token: None,
         token: None,
         authenticator: auth,
-        user_email: user_email.map(|s| s.to_string()),
+        user_email: config.user_email.clone(),
     };
 
     // Get initial token and verify user identity
@@ -281,7 +283,7 @@ pub async fn get_api_access(
 
     // Only verify/confirm if we are using remote auth AND the cache didn't exist before.
     // This avoids re-prompting if the token was already cached.
-    if use_remote_auth && !cache_existed_prior {
+    if config.use_remote_auth && !cache_existed_prior {
         verify_and_confirm_auth(&access, &token_cache_path).await?;
     }
 
@@ -303,18 +305,20 @@ async fn verify_and_confirm_auth(
     println!("\nAuthenticated as: {}", user_email);
     println!("Token will be saved to: {}", token_cache_path.display());
 
-    // Prompt for confirmation
+    // Prompt for confirmation using async I/O
     print!("\nSave this authentication? [Y/n] ");
-    io::stdout().flush()?;
+    tokio::io::stdout().flush().await?;
 
+    let mut reader = BufReader::new(tokio::io::stdin());
     let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
+    reader.read_line(&mut input).await?;
 
     let confirmed = input.trim().to_lowercase();
     if confirmed == "n" || confirmed == "no" {
         // Remove the token cache file if user declined
         if token_cache_path.exists() {
-            fs::remove_file(token_cache_path)
+            tokio::fs::remove_file(token_cache_path)
+                .await
                 .context("Failed to delete token cache after user cancellation")?;
         }
         bail!("Authentication cancelled by user. No tokens were saved.");
