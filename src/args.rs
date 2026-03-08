@@ -2,6 +2,12 @@ use anyhow::Result;
 use clap::Parser;
 use std::io::{self, Read};
 use std::str::FromStr;
+use std::sync::LazyLock;
+
+/// Version string including git hash (computed lazily at first use)
+static VERSION: LazyLock<String> = LazyLock::new(|| {
+    format!("{} ({})", env!("CARGO_PKG_VERSION"), env!("GIT_HASH"))
+});
 
 /// Output format for query results
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,7 +38,7 @@ impl FromStr for OutputFormat {
 /// Supports profile-based configuration and ENV VAR override.
 ///
 #[derive(Parser, Debug)]
-#[clap(author, version, about)]
+#[clap(author, about, version = VERSION.as_str())]
 pub struct Cli {
     /// Google Ads GAQL query to run
     pub gaql_query: Option<String>,
