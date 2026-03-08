@@ -1,6 +1,7 @@
 #![cfg(feature = "llm")]
 
 use mcc_gaql::field_metadata::{FieldMetadata, FieldMetadataCache};
+use mcc_gaql::lancedb_utils::clear_cache;
 use mcc_gaql::prompt2gaql::{FieldDocument, FieldDocumentFlat, build_or_load_field_vector_store};
 use rig::vector_store::{VectorSearchRequest, VectorStoreIndex};
 use rig_fastembed::{Client as FastembedClient, FastembedModel};
@@ -205,6 +206,10 @@ fn create_test_field_cache() -> FieldMetadataCache {
 /// Helper to create the field vector store for testing with synthetic data
 async fn get_test_field_vector_store()
 -> anyhow::Result<LanceDbVectorIndex<rig_fastembed::EmbeddingModel>> {
+    // Clear cache before creating to avoid "table already exists" errors
+    // when running tests concurrently or after interrupted runs
+    let _ = clear_cache();
+
     // Create synthetic field cache for testing
     let field_cache = create_test_field_cache();
 
