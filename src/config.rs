@@ -86,6 +86,7 @@ pub struct ResolvedConfig {
     pub dev_token: Option<String>,
     pub field_metadata_cache: String,
     pub field_metadata_ttl_days: i64,
+    pub remote_auth: bool,
 }
 
 impl ResolvedConfig {
@@ -215,6 +216,9 @@ impl ResolvedConfig {
             .and_then(|c| c.field_metadata_ttl_days)
             .unwrap_or(30);
 
+        // Resolve remote_auth: CLI flag only (no config file support needed)
+        let remote_auth = args.remote_auth;
+
         Ok(Self {
             mcc_customer_id,
             user_email,
@@ -227,6 +231,7 @@ impl ResolvedConfig {
             dev_token,
             field_metadata_cache,
             field_metadata_ttl_days,
+            remote_auth,
         })
     }
 
@@ -714,6 +719,7 @@ mod tests {
             dev_token: Some("test-dev-token".to_string()),
             field_metadata_cache: "~/.cache/mcc-gaql/field_metadata.json".to_string(),
             field_metadata_ttl_days: 7,
+            remote_auth: false,
         };
 
         // Serialize to TOML string
@@ -817,6 +823,7 @@ mod tests {
             export_field_metadata: false,
             refresh_metadata: false,
             show_resources: false,
+            remote_auth: false,
         };
 
         // Create resolved config with customer_id from config file
@@ -832,6 +839,7 @@ mod tests {
             dev_token: None,
             field_metadata_cache: "~/.cache/mcc-gaql/field_metadata.json".to_string(),
             field_metadata_ttl_days: 7,
+            remote_auth: false,
         };
 
         // Validation should succeed because resolved config has customer_id

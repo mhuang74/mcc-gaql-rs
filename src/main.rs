@@ -2,6 +2,9 @@
 // Author: Michael S. Huang (mhuang74@gmail.com)
 //
 
+// Increase recursion limit to prevent lance crate compilation overflow
+#![recursion_limit = "512"]
+
 use std::{
     fs::{self, File},
     io::{BufWriter, Write},
@@ -95,12 +98,13 @@ async fn main() -> Result<()> {
             {
                 resolved_config.validate_for_operation(&args)?;
                 Some(
-                    googleads::get_api_access(
-                        &resolved_config.mcc_customer_id,
-                        &resolved_config.token_cache_filename,
-                        resolved_config.user_email.as_deref(),
-                        resolved_config.dev_token.as_deref(),
-                    )
+                    googleads::get_api_access(&googleads::ApiAccessConfig {
+                        mcc_customer_id: resolved_config.mcc_customer_id.clone(),
+                        token_cache_filename: resolved_config.token_cache_filename.clone(),
+                        user_email: resolved_config.user_email.clone(),
+                        dev_token: resolved_config.dev_token.clone(),
+                        use_remote_auth: resolved_config.remote_auth,
+                    })
                     .await
                     .context("Authentication required for field metadata operations")?,
                 )
@@ -405,12 +409,13 @@ async fn main() -> Result<()> {
     }
 
     // obtain Google Ads API credentials
-    let api_context = match googleads::get_api_access(
-        mcc_customer_id,
-        &resolved_config.token_cache_filename,
-        user_email,
-        resolved_config.dev_token.as_deref(),
-    )
+    let api_context = match googleads::get_api_access(&googleads::ApiAccessConfig {
+        mcc_customer_id: mcc_customer_id.to_string(),
+        token_cache_filename: resolved_config.token_cache_filename.clone(),
+        user_email: user_email.map(|s| s.to_string()),
+        dev_token: resolved_config.dev_token.clone(),
+        use_remote_auth: resolved_config.remote_auth,
+    })
     .await
     .context(format!(
         "Initial OAuth2 authentication failed for MCC: {}, User: {:?}",
@@ -435,12 +440,13 @@ async fn main() -> Result<()> {
 
             log::info!("Removed cached token at: {}", token_cache_path.display());
 
-            googleads::get_api_access(
-                mcc_customer_id,
-                &resolved_config.token_cache_filename,
-                user_email,
-                resolved_config.dev_token.as_deref(),
-            )
+            googleads::get_api_access(&googleads::ApiAccessConfig {
+                mcc_customer_id: mcc_customer_id.to_string(),
+                token_cache_filename: resolved_config.token_cache_filename.clone(),
+                user_email: user_email.map(|s| s.to_string()),
+                dev_token: resolved_config.dev_token.clone(),
+                use_remote_auth: resolved_config.remote_auth,
+            })
             .await
             .context(format!(
                 "Re-authentication failed after clearing token cache. \

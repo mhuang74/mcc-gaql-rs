@@ -1,7 +1,8 @@
 use std::time::Duration;
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use polars::prelude::*;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio_stream::StreamExt;
 use tonic::{
     Response, Status, Streaming,
@@ -187,52 +188,76 @@ fn get_dev_token(config_token: Option<&str>) -> Result<String> {
     )
 }
 
-/// Get access to Google Ads API via OAuth2 flow and return API Credentials
-pub async fn get_api_access(
-    mcc_customer_id: &str,
-    token_cache_filename: &str,
-    user_email: Option<&str>,
-    dev_token: Option<&str>,
-) -> Result<GoogleAdsAPIAccess> {
+/// Get client secret from embedded or file
+async fn get_client_secret() -> Result<ApplicationSecret> {
     // Try embedded secret first (if compiled with credentials), then fall back to file
     #[cfg(not(feature = "external_client_secret"))]
     let app_secret: ApplicationSecret = if let Some(embedded_json) = EMBEDDED_CLIENT_SECRET {
         log::debug!("Using embedded client secret");
         yup_oauth2::parse_application_secret(embedded_json)
-            .expect("Failed to parse embedded client secret")
+            .context("Failed to parse embedded client secret")?
     } else {
         log::debug!("No embedded client secret found, loading from file");
-        let client_secret_path =
-            crate::config::config_file_path(FILENAME_CLIENT_SECRET).expect("clientsecret path");
+        let client_secret_path = crate::config::config_file_path(FILENAME_CLIENT_SECRET)
+            .context("Failed to determine client secret path")?;
         yup_oauth2::read_application_secret(client_secret_path.as_path())
             .await
-            .expect("clientsecret.json file not found and no embedded secret available")
+            .context("clientsecret.json file not found and no embedded secret available")?
     };
 
     // For builds with external_client_secret feature, always load from file
     #[cfg(feature = "external_client_secret")]
     let app_secret: ApplicationSecret = {
         log::debug!("Loading client secret from file (external_client_secret feature enabled)");
-        let client_secret_path =
-            crate::config::config_file_path(FILENAME_CLIENT_SECRET).expect("clientsecret path");
+        let client_secret_path = crate::config::config_file_path(FILENAME_CLIENT_SECRET)
+            .context("Failed to determine client secret path")?;
         yup_oauth2::read_application_secret(client_secret_path.as_path())
             .await
-            .expect("clientsecret.json")
+            .context("Failed to read clientsecret.json")?
     };
 
-    let token_cache_path =
-        crate::config::config_file_path(token_cache_filename).expect("token cache path");
+    Ok(app_secret)
+}
 
+/// Configuration for Google Ads API access
+pub struct ApiAccessConfig {
+    pub mcc_customer_id: String,
+    pub token_cache_filename: String,
+    pub user_email: Option<String>,
+    pub dev_token: Option<String>,
+    pub use_remote_auth: bool,
+}
+
+/// Get access to Google Ads API via OAuth2 flow and return API Credentials
+pub async fn get_api_access(config: &ApiAccessConfig) -> Result<GoogleAdsAPIAccess> {
+    let app_secret = get_client_secret().await?;
+
+    let token_cache_path = crate::config::config_file_path(&config.token_cache_filename)
+        .context("Failed to determine token cache path")?;
+
+    // Check if cache exists before attempting auth to avoid redundant prompts
+    let cache_existed_prior = token_cache_path.exists();
+
+    // Determine the flow method based on the flag
+    let auth_method = if config.use_remote_auth {
+        log::info!("Using remote OAuth flow (interactive)");
+        InstalledFlowReturnMethod::Interactive
+    } else {
+        log::debug!("Using standard OAuth flow (HTTP redirect)");
+        InstalledFlowReturnMethod::HTTPRedirect
+    };
+
+    // Build the authenticator once
     let auth: Authenticator<<DefaultHyperClient as HyperClientBuilder>::Connector> =
-        InstalledFlowAuthenticator::builder(app_secret, InstalledFlowReturnMethod::HTTPRedirect)
+        InstalledFlowAuthenticator::builder(app_secret, auth_method)
             .persist_tokens_to_disk(token_cache_path.as_path())
             .build()
             .await?;
 
     // Get developer token using priority order: config > runtime env > compile-time
-    let dev_token_value = get_dev_token(dev_token)?;
+    let dev_token_value = get_dev_token(config.dev_token.as_deref())?;
     let header_value_dev_token = MetadataValue::try_from(&dev_token_value)?;
-    let header_value_login_customer = MetadataValue::try_from(mcc_customer_id)?;
+    let header_value_login_customer = MetadataValue::try_from(&config.mcc_customer_id)?;
 
     let tls_config = tonic::transport::ClientTlsConfig::new().with_native_roots();
 
@@ -250,12 +275,57 @@ pub async fn get_api_access(
         auth_token: None,
         token: None,
         authenticator: auth,
-        user_email: user_email.map(|s| s.to_string()),
+        user_email: config.user_email.clone(),
     };
 
+    // Get initial token and verify user identity
     access.renew_token().await?;
 
+    // Only verify/confirm if we are using remote auth AND the cache didn't exist before.
+    // This avoids re-prompting if the token was already cached.
+    if config.use_remote_auth && !cache_existed_prior {
+        verify_and_confirm_auth(&access, &token_cache_path).await?;
+    }
+
     Ok(access)
+}
+
+/// Verify authentication and prompt user for confirmation before saving tokens
+async fn verify_and_confirm_auth(
+    access: &GoogleAdsAPIAccess,
+    token_cache_path: &std::path::Path,
+) -> Result<()> {
+    // Get user info from the token
+    let user_email = access
+        .user_email
+        .as_ref()
+        .map(|e| e.as_str())
+        .unwrap_or("(unknown)");
+
+    println!("\nAuthenticated as: {}", user_email);
+    println!("Token will be saved to: {}", token_cache_path.display());
+
+    // Prompt for confirmation using async I/O
+    print!("\nSave this authentication? [Y/n] ");
+    tokio::io::stdout().flush().await?;
+
+    let mut reader = BufReader::new(tokio::io::stdin());
+    let mut input = String::new();
+    reader.read_line(&mut input).await?;
+
+    let confirmed = input.trim().to_lowercase();
+    if confirmed == "n" || confirmed == "no" {
+        // Remove the token cache file if user declined
+        if token_cache_path.exists() {
+            tokio::fs::remove_file(token_cache_path)
+                .await
+                .context("Failed to delete token cache after user cancellation")?;
+        }
+        bail!("Authentication cancelled by user. No tokens were saved.");
+    }
+
+    println!("Authentication saved successfully.\n");
+    Ok(())
 }
 
 /// Run query via GoogleAdsServiceClient to get performance data
@@ -341,21 +411,13 @@ pub async fn gaql_query_with_client(
                         {
                             let v: Vec<Option<u64>> = columns
                                 .get(i)
-                                .map(|col| {
-                                    col.iter()
-                                        .map(|x| x.parse::<u64>().ok())
-                                        .collect()
-                                })
+                                .map(|col| col.iter().map(|x| x.parse::<u64>().ok()).collect())
                                 .unwrap_or_default();
                             series_vec.push(Series::new(header, v));
                         } else {
                             let v: Vec<Option<f64>> = columns
                                 .get(i)
-                                .map(|col| {
-                                    col.iter()
-                                        .map(|x| x.parse::<f64>().ok())
-                                        .collect()
-                                })
+                                .map(|col| col.iter().map(|x| x.parse::<f64>().ok()).collect())
                                 .unwrap_or_default();
                             series_vec.push(Series::new(header, v));
                         }
@@ -495,10 +557,12 @@ mod tests {
     /// Test that metric parsing handles invalid values (empty, "--", "N/A") as None
     #[test]
     fn test_integer_metric_parsing_invalid_values() {
-        let input = ["".to_string(),
+        let input = [
+            "".to_string(),
             "--".to_string(),
             "N/A".to_string(),
-            " ".to_string()];
+            " ".to_string(),
+        ];
         let result: Vec<Option<u64>> = input.iter().map(|x| x.parse::<u64>().ok()).collect();
 
         assert_eq!(result, vec![None, None, None, None]);
@@ -507,11 +571,13 @@ mod tests {
     /// Test that metric parsing handles a mix of valid and invalid values
     #[test]
     fn test_integer_metric_parsing_mixed_values() {
-        let input = ["100".to_string(),
+        let input = [
+            "100".to_string(),
             "".to_string(),
             "200".to_string(),
             "--".to_string(),
-            "50".to_string()];
+            "50".to_string(),
+        ];
         let result: Vec<Option<u64>> = input.iter().map(|x| x.parse::<u64>().ok()).collect();
 
         assert_eq!(result, vec![Some(100), None, Some(200), None, Some(50)]);
@@ -529,10 +595,12 @@ mod tests {
     /// Test that float metric parsing handles invalid impression share values
     #[test]
     fn test_float_metric_parsing_invalid_values() {
-        let input = ["--".to_string(),
+        let input = [
+            "--".to_string(),
             "".to_string(),
             "N/A".to_string(),
-            " ".to_string()];
+            " ".to_string(),
+        ];
         let result: Vec<Option<f64>> = input.iter().map(|x| x.parse::<f64>().ok()).collect();
 
         assert_eq!(result, vec![None, None, None, None]);
@@ -541,11 +609,13 @@ mod tests {
     /// Test that float metric parsing handles mixed valid and invalid values
     #[test]
     fn test_float_metric_parsing_mixed_values() {
-        let input = ["0.85".to_string(),
+        let input = [
+            "0.85".to_string(),
             "--".to_string(),
             "0.95".to_string(),
             "".to_string(),
-            "0.75".to_string()];
+            "0.75".to_string(),
+        ];
         let result: Vec<Option<f64>> = input.iter().map(|x| x.parse::<f64>().ok()).collect();
 
         assert_eq!(result, vec![Some(0.85), None, Some(0.95), None, Some(0.75)]);
@@ -578,25 +648,18 @@ mod tests {
     fn test_realistic_impression_share_values() {
         // These are typical values returned by Google Ads API for impression share metrics
         let input = [
-            "0.8567".to_string(),      // Valid percentage (85.67%)
-            "--".to_string(),          // No data available
-            "0.9215".to_string(),      // Valid percentage (92.15%)
-            "".to_string(),            // Empty (no data)
-            "0.0000".to_string(),      // Zero value
-            "N/A".to_string(),         // Not applicable
+            "0.8567".to_string(), // Valid percentage (85.67%)
+            "--".to_string(),     // No data available
+            "0.9215".to_string(), // Valid percentage (92.15%)
+            "".to_string(),       // Empty (no data)
+            "0.0000".to_string(), // Zero value
+            "N/A".to_string(),    // Not applicable
         ];
         let result: Vec<Option<f64>> = input.iter().map(|x| x.parse::<f64>().ok()).collect();
 
         assert_eq!(
             result,
-            vec![
-                Some(0.8567),
-                None,
-                Some(0.9215),
-                None,
-                Some(0.0000),
-                None
-            ]
+            vec![Some(0.8567), None, Some(0.9215), None, Some(0.0000), None]
         );
     }
 
@@ -619,14 +682,10 @@ mod tests {
         ];
 
         // Simulate parsing like the code does
-        let int_values: Vec<Option<u64>> = columns[0]
-            .iter()
-            .map(|x| x.parse::<u64>().ok())
-            .collect();
-        let float_values: Vec<Option<f64>> = columns[1]
-            .iter()
-            .map(|x| x.parse::<f64>().ok())
-            .collect();
+        let int_values: Vec<Option<u64>> =
+            columns[0].iter().map(|x| x.parse::<u64>().ok()).collect();
+        let float_values: Vec<Option<f64>> =
+            columns[1].iter().map(|x| x.parse::<f64>().ok()).collect();
 
         // Both should have 4 rows (same as input)
         assert_eq!(int_values.len(), 4);
@@ -781,12 +840,18 @@ mod tests {
             "".to_string(),
         ];
 
-        let parsed_search: Vec<Option<f64>> =
-            search_impression_share.iter().map(|x| x.parse().ok()).collect();
-        let parsed_absolute_top: Vec<Option<f64>> =
-            absolute_top_impression_share.iter().map(|x| x.parse().ok()).collect();
-        let parsed_top: Vec<Option<f64>> =
-            search_top_impression_share.iter().map(|x| x.parse().ok()).collect();
+        let parsed_search: Vec<Option<f64>> = search_impression_share
+            .iter()
+            .map(|x| x.parse().ok())
+            .collect();
+        let parsed_absolute_top: Vec<Option<f64>> = absolute_top_impression_share
+            .iter()
+            .map(|x| x.parse().ok())
+            .collect();
+        let parsed_top: Vec<Option<f64>> = search_top_impression_share
+            .iter()
+            .map(|x| x.parse().ok())
+            .collect();
 
         // All should have 6 rows
         assert_eq!(parsed_search.len(), 6);
@@ -809,8 +874,10 @@ mod tests {
 
         // Create DataFrame and verify structure
         let search_series = Series::new("metrics.search_impression_share", parsed_search);
-        let absolute_top_series =
-            Series::new("metrics.search_absolute_top_impression_share", parsed_absolute_top);
+        let absolute_top_series = Series::new(
+            "metrics.search_absolute_top_impression_share",
+            parsed_absolute_top,
+        );
         let top_series = Series::new("metrics.search_top_impression_share", parsed_top);
 
         let df = DataFrame::new(vec![search_series, absolute_top_series, top_series]).unwrap();

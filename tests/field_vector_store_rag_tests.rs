@@ -92,14 +92,42 @@ fn create_test_field_cache() -> FieldMetadataCache {
 
     // Impression share metrics
     let impression_share_fields = vec![
-        ("metrics.absolute_top_impression_percentage", "DOUBLE", "METRIC"),
-        ("metrics.search_absolute_top_impression_share", "DOUBLE", "METRIC"),
-        ("metrics.search_budget_lost_absolute_top_impression_share", "DOUBLE", "METRIC"),
-        ("metrics.search_budget_lost_impression_share", "DOUBLE", "METRIC"),
-        ("metrics.search_budget_lost_top_impression_share", "DOUBLE", "METRIC"),
-        ("metrics.search_exact_match_impression_share", "DOUBLE", "METRIC"),
+        (
+            "metrics.absolute_top_impression_percentage",
+            "DOUBLE",
+            "METRIC",
+        ),
+        (
+            "metrics.search_absolute_top_impression_share",
+            "DOUBLE",
+            "METRIC",
+        ),
+        (
+            "metrics.search_budget_lost_absolute_top_impression_share",
+            "DOUBLE",
+            "METRIC",
+        ),
+        (
+            "metrics.search_budget_lost_impression_share",
+            "DOUBLE",
+            "METRIC",
+        ),
+        (
+            "metrics.search_budget_lost_top_impression_share",
+            "DOUBLE",
+            "METRIC",
+        ),
+        (
+            "metrics.search_exact_match_impression_share",
+            "DOUBLE",
+            "METRIC",
+        ),
         ("metrics.search_impression_share", "DOUBLE", "METRIC"),
-        ("metrics.search_rank_lost_impression_share", "DOUBLE", "METRIC"),
+        (
+            "metrics.search_rank_lost_impression_share",
+            "DOUBLE",
+            "METRIC",
+        ),
         ("metrics.search_top_impression_share", "DOUBLE", "METRIC"),
     ];
 
@@ -180,7 +208,10 @@ async fn get_test_field_vector_store()
     // Create synthetic field cache for testing
     let field_cache = create_test_field_cache();
 
-    println!("Created test field cache with {} fields", field_cache.fields.len());
+    println!(
+        "Created test field cache with {} fields",
+        field_cache.fields.len()
+    );
 
     // Use shared embedding model to avoid parallel initialization issues
     let embedding_model = get_shared_embedding_model().clone();

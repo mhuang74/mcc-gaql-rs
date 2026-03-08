@@ -3,6 +3,9 @@
 //
 // Library module exposing public APIs for testing and potential reuse
 
+// Increase recursion limit to prevent lance crate compilation overflow
+#![recursion_limit = "512"]
+
 pub mod args;
 pub mod config;
 pub mod field_metadata;

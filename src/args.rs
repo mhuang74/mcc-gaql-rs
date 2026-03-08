@@ -105,6 +105,10 @@ pub struct Cli {
     #[clap(long)]
     pub show_config: bool,
 
+    /// Use remote OAuth flow (paste authorization code from another device)
+    #[clap(long)]
+    pub remote_auth: bool,
+
     /// Refresh field metadata cache from Google Ads API
     #[clap(long)]
     pub refresh_field_cache: bool,
