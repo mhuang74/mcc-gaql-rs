@@ -1,3 +1,4 @@
+use std::fs;
 use std::time::Duration;
 
 use anyhow::{Result, bail};
@@ -14,6 +15,7 @@ use yup_oauth2::{
     AccessToken, ApplicationSecret, InstalledFlowAuthenticator, InstalledFlowReturnMethod,
     authenticator::{Authenticator, DefaultHyperClient, HyperClientBuilder},
 };
+use std::io::{self, Write};
 
 use googleads_rs::google::ads::googleads::v23::services::google_ads_field_service_client::GoogleAdsFieldServiceClient;
 use googleads_rs::google::ads::googleads::v23::services::google_ads_service_client::GoogleAdsServiceClient;
@@ -187,13 +189,8 @@ fn get_dev_token(config_token: Option<&str>) -> Result<String> {
     )
 }
 
-/// Get access to Google Ads API via OAuth2 flow and return API Credentials
-pub async fn get_api_access(
-    mcc_customer_id: &str,
-    token_cache_filename: &str,
-    user_email: Option<&str>,
-    dev_token: Option<&str>,
-) -> Result<GoogleAdsAPIAccess> {
+/// Get client secret from embedded or file
+async fn get_client_secret() -> Result<ApplicationSecret> {
     // Try embedded secret first (if compiled with credentials), then fall back to file
     #[cfg(not(feature = "external_client_secret"))]
     let app_secret: ApplicationSecret = if let Some(embedded_json) = EMBEDDED_CLIENT_SECRET {
@@ -220,14 +217,36 @@ pub async fn get_api_access(
             .expect("clientsecret.json")
     };
 
+    Ok(app_secret)
+}
+
+/// Get access to Google Ads API via OAuth2 flow and return API Credentials
+pub async fn get_api_access(
+    mcc_customer_id: &str,
+    token_cache_filename: &str,
+    user_email: Option<&str>,
+    dev_token: Option<&str>,
+    use_remote_auth: bool,
+) -> Result<GoogleAdsAPIAccess> {
+    let app_secret = get_client_secret().await?;
+
     let token_cache_path =
         crate::config::config_file_path(token_cache_filename).expect("token cache path");
 
     let auth: Authenticator<<DefaultHyperClient as HyperClientBuilder>::Connector> =
-        InstalledFlowAuthenticator::builder(app_secret, InstalledFlowReturnMethod::HTTPRedirect)
-            .persist_tokens_to_disk(token_cache_path.as_path())
-            .build()
-            .await?;
+        if use_remote_auth {
+            log::info!("Using remote OAuth flow (interactive)");
+            InstalledFlowAuthenticator::builder(app_secret, InstalledFlowReturnMethod::Interactive)
+                .persist_tokens_to_disk(token_cache_path.as_path())
+                .build()
+                .await?
+        } else {
+            log::debug!("Using standard OAuth flow (HTTP redirect)");
+            InstalledFlowAuthenticator::builder(app_secret, InstalledFlowReturnMethod::HTTPRedirect)
+                .persist_tokens_to_disk(token_cache_path.as_path())
+                .build()
+                .await?
+        };
 
     // Get developer token using priority order: config > runtime env > compile-time
     let dev_token_value = get_dev_token(dev_token)?;
@@ -253,9 +272,50 @@ pub async fn get_api_access(
         user_email: user_email.map(|s| s.to_string()),
     };
 
+    // Get initial token and verify user identity
     access.renew_token().await?;
 
+    // Verify and confirm authentication if using remote auth
+    if use_remote_auth {
+        verify_and_confirm_auth(&access, &token_cache_path).await?;
+    }
+
     Ok(access)
+}
+
+/// Verify authentication and prompt user for confirmation before saving tokens
+async fn verify_and_confirm_auth(
+    access: &GoogleAdsAPIAccess,
+    token_cache_path: &std::path::Path,
+) -> Result<()> {
+    // Get user info from the token
+    let user_email = access
+        .user_email
+        .as_ref()
+        .map(|e| e.as_str())
+        .unwrap_or("(unknown)");
+
+    println!("\nAuthenticated as: {}", user_email);
+    println!("Token will be saved to: {}", token_cache_path.display());
+
+    // Prompt for confirmation
+    print!("\nSave this authentication? [Y/n] ");
+    io::stdout().flush()?;
+
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+
+    let confirmed = input.trim().to_lowercase();
+    if confirmed == "n" || confirmed == "no" {
+        // Remove the token cache file if user declined
+        if token_cache_path.exists() {
+            fs::remove_file(token_cache_path).ok();
+        }
+        bail!("Authentication cancelled by user. No tokens were saved.");
+    }
+
+    println!("Authentication saved successfully.\n");
+    Ok(())
 }
 
 /// Run query via GoogleAdsServiceClient to get performance data

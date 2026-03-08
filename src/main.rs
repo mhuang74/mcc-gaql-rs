@@ -100,6 +100,7 @@ async fn main() -> Result<()> {
                         &resolved_config.token_cache_filename,
                         resolved_config.user_email.as_deref(),
                         resolved_config.dev_token.as_deref(),
+                        resolved_config.remote_auth,
                     )
                     .await
                     .context("Authentication required for field metadata operations")?,
@@ -410,6 +411,7 @@ async fn main() -> Result<()> {
         &resolved_config.token_cache_filename,
         user_email,
         resolved_config.dev_token.as_deref(),
+        resolved_config.remote_auth,
     )
     .await
     .context(format!(
@@ -440,6 +442,7 @@ async fn main() -> Result<()> {
                 &resolved_config.token_cache_filename,
                 user_email,
                 resolved_config.dev_token.as_deref(),
+                resolved_config.remote_auth,
             )
             .await
             .context(format!(
