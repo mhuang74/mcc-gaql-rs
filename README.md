@@ -477,6 +477,29 @@ export MCC_GAQL_KEEP_GOING="true"
 | `MCC_GAQL_LLM_MODEL` | Model name (e.g., `google/gemini-flash-2.0`, `gpt-4o-mini`, `hf:MiniMaxAI/MiniMax-M2.1`) | Yes |
 | `MCC_GAQL_LLM_TEMPERATURE` | Temperature for LLM generation (default: 0.1) | No |
 
+#### Multiple Models for Concurrent Processing
+
+You can specify multiple comma-separated models in `MCC_GAQL_LLM_MODEL` to enable concurrent processing during **field metadata enrichment**. When multiple models are configured, the tool uses a model pool to parallelize LLM calls, significantly speeding up the enrichment process.
+
+**How it works:**
+- Each model gets one concurrent "slot" (rate-limiting per model)
+- Batches of fields are distributed across all available models
+- If a model is busy, work is automatically routed to the next available model
+- The first model in the list is considered the "preferred" model for single-model operations
+
+**Example with multiple models:**
+```bash
+# Use multiple models concurrently for faster metadata enrichment
+export MCC_GAQL_LLM_API_KEY="your_openrouter_api_key"
+export MCC_GAQL_LLM_BASE_URL="https://openrouter.ai/api/v1"
+export MCC_GAQL_LLM_MODEL="google/gemini-flash-2.0,openai/gpt-4o-mini,anthropic/claude-3.5-haiku"
+
+# Now when you refresh the field cache, enrichment happens in parallel across all 3 models
+mcc-gaql --profile myprofile --refresh-field-cache
+```
+
+> **Note:** Multiple models are only used for field metadata enrichment operations. Natural language query generation always uses the first (preferred) model.
+
 #### Provider Examples
 
 **OpenRouter** (default):
