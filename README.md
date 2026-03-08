@@ -1,6 +1,9 @@
 # mcc-gaql-rs
 
 [![CI](https://github.com/mhuang74/mcc-gaql-rs/actions/workflows/rust.yml/badge.svg)](https://github.com/mhuang74/mcc-gaql-rs/actions/workflows/rust.yml)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Rust](https://img.shields.io/badge/rust-1.90+-orange.svg)](https://www.rust-lang.org)
+[![GitHub release](https://img.shields.io/github/v/release/mhuang74/mcc-gaql-rs)](https://github.com/mhuang74/mcc-gaql-rs/releases)
 
 Command line tool to execute Google Ads GAQL queries across MCC child accounts. Inspired by [gaql-cli](https://github.com/getyourguide/gaql-cli).
 
