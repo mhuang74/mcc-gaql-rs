@@ -296,11 +296,7 @@ async fn verify_and_confirm_auth(
     token_cache_path: &std::path::Path,
 ) -> Result<()> {
     // Get user info from the token
-    let user_email = access
-        .user_email
-        .as_ref()
-        .map(|e| e.as_str())
-        .unwrap_or("(unknown)");
+    let user_email = access.user_email.as_deref().unwrap_or("(unknown)");
 
     println!("\nAuthenticated as: {}", user_email);
     println!("Token will be saved to: {}", token_cache_path.display());

@@ -313,7 +313,11 @@ impl ScrapedDocs {
         fs::write(path, &contents)
             .await
             .context("Failed to write scraped docs cache")?;
-        log::info!("Saved scraped docs cache to {:?} ({} fields)", path, self.docs.len());
+        log::info!(
+            "Saved scraped docs cache to {:?} ({} fields)",
+            path,
+            self.docs.len()
+        );
         Ok(())
     }
 }
@@ -430,8 +434,8 @@ fn extract_enum_values_from_section(heading: &scraper::ElementRef) -> Vec<String
 
 /// Helper to get the default scraped docs cache path
 pub fn get_scraped_docs_cache_path() -> Result<std::path::PathBuf> {
-    let cache_dir = dirs::cache_dir()
-        .ok_or_else(|| anyhow::anyhow!("Could not determine cache directory"))?;
+    let cache_dir =
+        dirs::cache_dir().ok_or_else(|| anyhow::anyhow!("Could not determine cache directory"))?;
     Ok(cache_dir.join("mcc-gaql").join("scraped_docs.json"))
 }
 

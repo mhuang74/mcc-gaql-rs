@@ -37,7 +37,10 @@ async fn test_live_scrape_campaign_resource() {
 
     // If we got docs, verify they look reasonable
     if !docs.docs.is_empty() {
-        println!("Scraped {} field docs from campaign resource", docs.docs.len());
+        println!(
+            "Scraped {} field docs from campaign resource",
+            docs.docs.len()
+        );
 
         // Print a sample of what we found
         for (field_name, field_doc) in docs.docs.iter().take(5) {
@@ -62,9 +65,7 @@ async fn test_live_scrape_multiple_resources() {
     ];
 
     let result = ScrapedDocs::scrape_all(
-        &resources,
-        "v19",
-        500, // Rate limit
+        &resources, "v19", 500, // Rate limit
     )
     .await;
 
@@ -88,22 +89,23 @@ async fn test_live_scrape_multiple_resources() {
 #[tokio::test]
 #[ignore]
 async fn test_live_skips_metrics_and_segments() {
-    let resources = vec![
-        "metrics".to_string(),
-        "segments".to_string(),
-    ];
+    let resources = vec!["metrics".to_string(), "segments".to_string()];
 
     let result = ScrapedDocs::scrape_all(
-        &resources,
-        "v19",
-        0, // No delay needed since no HTTP calls should be made
+        &resources, "v19", 0, // No delay needed since no HTTP calls should be made
     )
     .await;
 
     let docs = result.expect("Scraping metrics/segments should succeed (by skipping them)");
 
-    assert_eq!(docs.resources_scraped, 0, "metrics/segments should be skipped");
-    assert_eq!(docs.resources_skipped, 0, "Skipped prefixes don't count as 'skipped'");
+    assert_eq!(
+        docs.resources_scraped, 0,
+        "metrics/segments should be skipped"
+    );
+    assert_eq!(
+        docs.resources_skipped, 0,
+        "Skipped prefixes don't count as 'skipped'"
+    );
     assert!(docs.docs.is_empty(), "No docs should be extracted");
 }
 
@@ -127,7 +129,10 @@ async fn test_live_load_or_scrape_creates_cache() {
     let docs = result.expect("load_or_scrape should succeed");
 
     // Cache file should now exist
-    assert!(cache_path.exists(), "Cache file should be created after scraping");
+    assert!(
+        cache_path.exists(),
+        "Cache file should be created after scraping"
+    );
 
     println!(
         "Created cache with {} field docs at {:?}",
@@ -136,14 +141,8 @@ async fn test_live_load_or_scrape_creates_cache() {
     );
 
     // Second call should use the cache (no network needed)
-    let cached_result = ScrapedDocs::load_or_scrape(
-        &["campaign".to_string()],
-        "v19",
-        &cache_path,
-        30,
-        500,
-    )
-    .await;
+    let cached_result =
+        ScrapedDocs::load_or_scrape(&["campaign".to_string()], "v19", &cache_path, 30, 500).await;
 
     let cached_docs = cached_result.expect("Loading from cache should succeed");
     assert_eq!(
@@ -167,7 +166,10 @@ async fn test_live_handles_nonexistent_resource_gracefully() {
     let docs = result.expect("Scraping nonexistent resource should not error");
 
     assert_eq!(docs.resources_scraped, 0);
-    assert_eq!(docs.resources_skipped, 1, "Nonexistent resource should be counted as skipped");
+    assert_eq!(
+        docs.resources_skipped, 1,
+        "Nonexistent resource should be counted as skipped"
+    );
     assert!(docs.docs.is_empty());
 }
 
@@ -182,12 +184,7 @@ async fn test_live_comprehensive_scrape() {
         "keyword_view".to_string(),
     ];
 
-    let result = ScrapedDocs::scrape_all(
-        &resources,
-        "v19",
-        500,
-    )
-    .await;
+    let result = ScrapedDocs::scrape_all(&resources, "v19", 500).await;
 
     let docs = result.expect("Comprehensive scrape should succeed");
 
@@ -198,10 +195,14 @@ async fn test_live_comprehensive_scrape() {
     println!("Total field docs: {}", docs.docs.len());
 
     // Group docs by resource prefix
-    let mut by_resource: std::collections::HashMap<String, Vec<&str>> = std::collections::HashMap::new();
+    let mut by_resource: std::collections::HashMap<String, Vec<&str>> =
+        std::collections::HashMap::new();
     for field_name in docs.docs.keys() {
         let resource = field_name.split('.').next().unwrap_or("unknown");
-        by_resource.entry(resource.to_string()).or_default().push(field_name);
+        by_resource
+            .entry(resource.to_string())
+            .or_default()
+            .push(field_name);
     }
 
     println!("\nFields per resource:");
@@ -225,10 +226,13 @@ async fn test_live_comprehensive_scrape() {
     }
 
     // Check for enum values in status fields
-    if let Some(status_doc) = docs.docs.get("campaign.status") {
-        if !status_doc.enum_values.is_empty() {
-            println!("\ncampaign.status enum values: {:?}", status_doc.enum_values);
-        }
+    if let Some(status_doc) = docs.docs.get("campaign.status")
+        && !status_doc.enum_values.is_empty()
+    {
+        println!(
+            "\ncampaign.status enum values: {:?}",
+            status_doc.enum_values
+        );
     }
 
     // At minimum, we should have scraped something

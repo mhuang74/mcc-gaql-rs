@@ -168,7 +168,9 @@ fn test_parse_field_docs_extracts_description() {
     let html = campaign_html();
     let docs = ScrapedDocs::parse_field_docs("campaign", &html);
 
-    let name_doc = docs.get("campaign.name").expect("campaign.name should be found");
+    let name_doc = docs
+        .get("campaign.name")
+        .expect("campaign.name should be found");
     assert!(
         name_doc.description.contains("name of the campaign"),
         "Expected description to mention 'name of the campaign', got: {:?}",
@@ -181,7 +183,9 @@ fn test_parse_field_docs_extracts_enum_values() {
     let html = campaign_html();
     let docs = ScrapedDocs::parse_field_docs("campaign", &html);
 
-    let status_doc = docs.get("campaign.status").expect("campaign.status should be found");
+    let status_doc = docs
+        .get("campaign.status")
+        .expect("campaign.status should be found");
     assert!(
         status_doc.enum_values.contains(&"ENABLED".to_string()),
         "Expected ENABLED in enum_values, got: {:?}",
@@ -203,13 +207,22 @@ fn test_parse_field_docs_handles_multiple_fields() {
     let docs = ScrapedDocs::parse_field_docs("campaign", &html);
 
     // Should find all four fields from the fixture
-    assert!(docs.contains_key("campaign.name"), "Should contain campaign.name");
-    assert!(docs.contains_key("campaign.status"), "Should contain campaign.status");
+    assert!(
+        docs.contains_key("campaign.name"),
+        "Should contain campaign.name"
+    );
+    assert!(
+        docs.contains_key("campaign.status"),
+        "Should contain campaign.status"
+    );
     assert!(
         docs.contains_key("campaign.advertising_channel_type"),
         "Should contain campaign.advertising_channel_type"
     );
-    assert!(docs.contains_key("campaign.id"), "Should contain campaign.id");
+    assert!(
+        docs.contains_key("campaign.id"),
+        "Should contain campaign.id"
+    );
 }
 
 #[test]
@@ -335,7 +348,9 @@ async fn test_load_from_disk_fails_gracefully_on_missing_file() {
 async fn test_load_from_disk_fails_gracefully_on_corrupt_json() {
     let dir = TempDir::new().unwrap();
     let path = dir.path().join("corrupt.json");
-    tokio::fs::write(&path, b"{ not valid json }").await.unwrap();
+    tokio::fs::write(&path, b"{ not valid json }")
+        .await
+        .unwrap();
     let result = ScrapedDocs::load_from_disk(&path).await;
     assert!(result.is_err(), "Corrupt JSON should return an error");
 }
@@ -371,8 +386,8 @@ async fn test_load_or_scrape_returns_cached_when_fresh() {
         &["campaign".to_string()],
         "v23",
         &path,
-        30,  // 30-day TTL
-        0,   // no delay
+        30, // 30-day TTL
+        0,  // no delay
     )
     .await
     .unwrap();
@@ -402,20 +417,13 @@ async fn test_load_or_scrape_rescapes_when_stale() {
 
     // Start a mock server that returns valid HTML
     let mut responses = HashMap::new();
-    responses.insert(
-        "/v23/campaign".to_string(),
-        (200, campaign_html()),
-    );
+    responses.insert("/v23/campaign".to_string(), (200, campaign_html()));
     let base_url = start_mock_server(responses, 5).await;
 
-    let result = ScrapedDocs::scrape_all_with_base_url(
-        &["campaign".to_string()],
-        "v23",
-        0,
-        &base_url,
-    )
-    .await
-    .unwrap();
+    let result =
+        ScrapedDocs::scrape_all_with_base_url(&["campaign".to_string()], "v23", 0, &base_url)
+            .await
+            .unwrap();
 
     // The fresh scrape should have found content
     assert!(
@@ -445,7 +453,10 @@ async fn test_scrape_all_with_mock_server_extracts_fields() {
     .unwrap();
 
     assert_eq!(result.api_version, "v23");
-    assert_eq!(result.resources_scraped, 1, "One resource should be scraped");
+    assert_eq!(
+        result.resources_scraped, 1,
+        "One resource should be scraped"
+    );
     assert_eq!(result.resources_skipped, 0);
     assert!(
         !result.docs.is_empty(),
@@ -469,14 +480,10 @@ async fn test_scrape_all_extracts_enum_values_via_mock() {
 
     let base_url = start_mock_server(responses, 5).await;
 
-    let result = ScrapedDocs::scrape_all_with_base_url(
-        &["campaign".to_string()],
-        "v23",
-        0,
-        &base_url,
-    )
-    .await
-    .unwrap();
+    let result =
+        ScrapedDocs::scrape_all_with_base_url(&["campaign".to_string()], "v23", 0, &base_url)
+            .await
+            .unwrap();
 
     let status_enums = result
         .get_enum_values("campaign.status")
@@ -493,18 +500,23 @@ async fn test_scrape_all_handles_404_gracefully() {
 
     let base_url = start_mock_server(responses, 5).await;
 
-    let result = ScrapedDocs::scrape_all_with_base_url(
-        &["campaign".to_string()],
-        "v23",
-        0,
-        &base_url,
-    )
-    .await
-    .unwrap();
+    let result =
+        ScrapedDocs::scrape_all_with_base_url(&["campaign".to_string()], "v23", 0, &base_url)
+            .await
+            .unwrap();
 
-    assert_eq!(result.resources_scraped, 0, "404 page should not count as scraped");
-    assert_eq!(result.resources_skipped, 1, "404 page should be counted as skipped");
-    assert!(result.docs.is_empty(), "No docs should be extracted from a 404");
+    assert_eq!(
+        result.resources_scraped, 0,
+        "404 page should not count as scraped"
+    );
+    assert_eq!(
+        result.resources_skipped, 1,
+        "404 page should be counted as skipped"
+    );
+    assert!(
+        result.docs.is_empty(),
+        "No docs should be extracted from a 404"
+    );
 }
 
 #[tokio::test]
@@ -514,16 +526,15 @@ async fn test_scrape_all_handles_too_small_page_gracefully() {
 
     let base_url = start_mock_server(responses, 5).await;
 
-    let result = ScrapedDocs::scrape_all_with_base_url(
-        &["campaign".to_string()],
-        "v23",
-        0,
-        &base_url,
-    )
-    .await
-    .unwrap();
+    let result =
+        ScrapedDocs::scrape_all_with_base_url(&["campaign".to_string()], "v23", 0, &base_url)
+            .await
+            .unwrap();
 
-    assert_eq!(result.resources_scraped, 0, "Tiny page should not count as scraped");
+    assert_eq!(
+        result.resources_scraped, 0,
+        "Tiny page should not count as scraped"
+    );
     assert_eq!(result.resources_skipped, 1);
     assert!(result.docs.is_empty());
 }
@@ -535,14 +546,10 @@ async fn test_scrape_all_handles_large_unrelated_page_gracefully() {
 
     let base_url = start_mock_server(responses, 5).await;
 
-    let result = ScrapedDocs::scrape_all_with_base_url(
-        &["campaign".to_string()],
-        "v23",
-        0,
-        &base_url,
-    )
-    .await
-    .unwrap();
+    let result =
+        ScrapedDocs::scrape_all_with_base_url(&["campaign".to_string()], "v23", 0, &base_url)
+            .await
+            .unwrap();
 
     // Large but no "google-ads" marker → scraper skips the page
     assert_eq!(result.resources_scraped, 0);
@@ -569,7 +576,10 @@ async fn test_scrape_all_skips_metrics_prefix() {
 
     assert_eq!(result.resources_scraped, 0);
     // Metrics/segments are skipped before making any HTTP call → skipped count stays 0
-    assert_eq!(result.resources_skipped, 0, "Skipped resources should not count as 'skipped' when they bypass HTTP entirely");
+    assert_eq!(
+        result.resources_skipped, 0,
+        "Skipped resources should not count as 'skipped' when they bypass HTTP entirely"
+    );
     assert!(result.docs.is_empty());
 }
 
@@ -591,7 +601,10 @@ async fn test_scrape_all_processes_multiple_resources() {
     .await
     .unwrap();
 
-    assert_eq!(result.resources_scraped, 2, "Both resources should be scraped");
+    assert_eq!(
+        result.resources_scraped, 2,
+        "Both resources should be scraped"
+    );
     assert!(result.docs.contains_key("campaign.name"));
     assert!(result.docs.contains_key("ad_group.name"));
     assert!(result.docs.contains_key("ad_group.status"));
@@ -616,7 +629,10 @@ async fn test_scrape_all_partial_failure_continues() {
     .unwrap();
 
     assert_eq!(result.resources_scraped, 1, "campaign should be scraped");
-    assert_eq!(result.resources_skipped, 1, "ad_group should be skipped (404)");
+    assert_eq!(
+        result.resources_skipped, 1,
+        "ad_group should be skipped (404)"
+    );
     assert!(result.docs.contains_key("campaign.name"));
     assert!(!result.docs.contains_key("ad_group.name"));
 }

@@ -16,6 +16,11 @@ pub mod lancedb_utils;
 pub mod metadata_enricher;
 pub mod metadata_scraper;
 #[cfg(feature = "llm")]
+pub mod model_pool;
+#[cfg(feature = "llm")]
 pub mod prompt2gaql;
 pub mod setup;
 pub mod util;
+
+#[cfg(feature = "llm")]
+pub use model_pool::{ModelLease, ModelPool};
