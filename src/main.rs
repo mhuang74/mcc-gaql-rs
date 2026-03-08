@@ -2,6 +2,9 @@
 // Author: Michael S. Huang (mhuang74@gmail.com)
 //
 
+// Increase recursion limit to prevent lance crate compilation overflow
+#![recursion_limit = "512"]
+
 use std::{
     fs::{self, File},
     io::{BufWriter, Write},
