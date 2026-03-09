@@ -9,7 +9,6 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0"
-async-std = "1.11"
 bincode = "1.3"
 cacache = "10.0"
 chrono = "0.4.42"
@@ -24,7 +23,7 @@ googleads-rs = { version = "0.13.0", git = "https://github.com/mhuang74/googlead
 # googleads-rs = { version = "0.12" }
 itertools = "0.10"
 log = "0.4"
-polars = { version = "0.42", features = ["lazy", "serde-lazy"] }
+polars = { version = "0.42", default-features = false, features = ["lazy", "fmt", "csv"] }
 serde = { version = "1.0", features = ["derive"] }
 thiserror = "2.0"
 thousands = "0.2"
@@ -39,7 +38,7 @@ scraper = "0.22"
 rig-core = { version = "0.32.0", optional = true }
 rig-fastembed = { version = "0.3", optional = true }
 rig-lancedb = { version = "0.4", optional = true }
-lancedb = { version = "0.23", optional = true }
+lancedb = { version = "0.23", optional = true, default-features = false }
 arrow-array = { version = "56.2.0", optional = true }
 arrow-schema = { version = "56.2.0", optional = true }
 

@@ -23,7 +23,6 @@ use googleads_rs::google::ads::googleads::v23::services::{
     SearchGoogleAdsStreamRequest, SearchGoogleAdsStreamResponse,
 };
 
-use async_std::io::WriteExt;
 
 pub const SUB_ACCOUNTS_QUERY: &str = "
 SELECT
@@ -467,7 +466,7 @@ pub async fn fields_query(api_context: GoogleAdsAPIAccess, query: &str) {
         .unwrap()
         .into_inner();
 
-    let mut stdout = async_std::io::stdout();
+    let mut stdout = tokio::io::stdout();
     for row in response.results {
         let val = format!(
             "{}\t{:?}\t{}\t{}\t{:?}\n",
