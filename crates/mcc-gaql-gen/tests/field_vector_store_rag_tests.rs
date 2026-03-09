@@ -1,7 +1,7 @@
-#![cfg(feature = "llm")]
 
-use mcc_gaql::field_metadata::{FieldMetadata, FieldMetadataCache};
-use mcc_gaql::prompt2gaql::{FieldDocument, FieldDocumentFlat, build_or_load_field_vector_store};
+
+use mcc_gaql_common::field_metadata::{FieldMetadata, FieldMetadataCache};
+use mcc_gaql_gen::rag::{FieldDocument, FieldDocumentFlat, build_or_load_field_vector_store};
 use rig::vector_store::{VectorSearchRequest, VectorStoreIndex};
 use rig_fastembed::{Client as FastembedClient, FastembedModel};
 use rig_lancedb::LanceDbVectorIndex;

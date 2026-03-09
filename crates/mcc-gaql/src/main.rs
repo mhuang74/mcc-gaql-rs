@@ -16,12 +16,13 @@ use tonic::{codegen::InterceptedService, transport::Channel};
 use mcc_gaql_common::config::get_queries_from_file;
 use mcc_gaql_common::paths::config_file_path;
 
-mod args;
-mod config;
-mod field_metadata;
-mod googleads;
-mod setup;
-mod util;
+use mcc_gaql::args;
+use mcc_gaql::config;
+use mcc_gaql::field_metadata;
+use mcc_gaql::googleads;
+#[allow(unused_imports)]
+use mcc_gaql::setup;
+use mcc_gaql::util;
 
 use args::OutputFormat;
 use config::ResolvedConfig;

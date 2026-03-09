@@ -1,6 +1,3 @@
-// Increase recursion limit to prevent lance crate compilation overflow
-#![recursion_limit = "512"]
-
 use std::env;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -8,12 +5,12 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 
-mod enricher;
-mod model_pool;
-mod r2;
-mod rag;
-mod scraper;
-mod vector_store;
+use mcc_gaql_gen::enricher as enricher;
+use mcc_gaql_gen::model_pool as model_pool;
+use mcc_gaql_gen::r2 as r2;
+use mcc_gaql_gen::rag as rag;
+use mcc_gaql_gen::scraper as scraper;
+use mcc_gaql_gen::vector_store as vector_store;
 
 use mcc_gaql_common::config::{get_queries_from_file, QueryEntry};
 use mcc_gaql_common::field_metadata::FieldMetadataCache;

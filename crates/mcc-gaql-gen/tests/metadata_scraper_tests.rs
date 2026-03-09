@@ -11,7 +11,7 @@
 // tokio::net::TcpListener so no extra test dependencies are needed.
 
 use chrono::{Duration, Utc};
-use mcc_gaql::metadata_scraper::{ScrapedDocs, ScrapedFieldDoc};
+use mcc_gaql_gen::scraper::{ScrapedDocs, ScrapedFieldDoc};
 use std::collections::HashMap;
 use tempfile::TempDir;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};

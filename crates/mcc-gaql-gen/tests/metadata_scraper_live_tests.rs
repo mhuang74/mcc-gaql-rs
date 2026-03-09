@@ -10,7 +10,7 @@
 //   - Tests use rate limiting (500ms delay) to be respectful to the server
 //
 
-use mcc_gaql::metadata_scraper::ScrapedDocs;
+use mcc_gaql_gen::scraper::ScrapedDocs;
 use tempfile::TempDir;
 
 /// Test scraping a single well-known resource (campaign) from the live Google Ads docs

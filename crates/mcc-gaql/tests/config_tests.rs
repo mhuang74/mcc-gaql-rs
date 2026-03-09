@@ -1,6 +1,8 @@
 use clap::Parser;
 use mcc_gaql::args::Cli;
-use mcc_gaql::config::{MyConfig, ResolvedConfig};
+use mcc_gaql::config::ResolvedConfig;
+use mcc_gaql_common::config::MyConfig;
+use mcc_gaql_common::paths::config_file_path;
 
 #[test]
 fn test_mcc_priority_cli_overrides_config() {
@@ -139,7 +141,7 @@ fn test_validate_succeeds_with_existing_token_cache() {
 
     // Get the proper token cache path using config_file_path
     let token_cache_path =
-        mcc_gaql::config::config_file_path("tokencache_test_temp.json").expect("token cache path");
+        config_file_path("tokencache_test_temp.json").expect("token cache path");
 
     // Ensure config directory exists
     if let Some(parent) = token_cache_path.parent() {
