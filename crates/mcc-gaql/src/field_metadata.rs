@@ -1,0 +1,219 @@
+use anyhow::{Context, Result, anyhow};
+use chrono::{Duration, Utc};
+use std::collections::HashMap;
+use std::path::Path;
+
+use googleads_rs::google::ads::googleads::v23::services::SearchGoogleAdsFieldsRequest;
+use googleads_rs::google::ads::googleads::v23::services::google_ads_field_service_client::GoogleAdsFieldServiceClient;
+
+use crate::googleads::GoogleAdsAPIAccess;
+
+// Re-export the common types so callers can use crate::field_metadata::FieldMetadata etc.
+pub use mcc_gaql_common::field_metadata::{FieldMetadata, FieldMetadataCache, ResourceMetadata};
+
+/// Load cache from file or fetch from API if stale/missing
+pub async fn load_or_fetch(
+    api_context: Option<&GoogleAdsAPIAccess>,
+    cache_path: &Path,
+    max_age_days: i64,
+) -> Result<FieldMetadataCache> {
+    // Try to load from cache
+    if cache_path.exists() {
+        match FieldMetadataCache::load_from_disk(cache_path).await {
+            Ok(cache) => {
+                let age = Utc::now() - cache.last_updated;
+                if age < Duration::days(max_age_days) {
+                    log::info!(
+                        "Loaded field metadata cache from {:?} (age: {} days)",
+                        cache_path,
+                        age.num_days()
+                    );
+                    return Ok(cache);
+                } else {
+                    log::info!(
+                        "Field metadata cache is stale (age: {} days), fetching fresh data",
+                        age.num_days()
+                    );
+                }
+            }
+            Err(e) => {
+                log::warn!("Failed to load cache from {:?}: {}", cache_path, e);
+            }
+        }
+    }
+
+    // Cache missing or stale, fetch from API
+    if let Some(api) = api_context {
+        let cache = fetch_from_api(api).await?;
+        cache.save_to_disk(cache_path).await?;
+        Ok(cache)
+    } else {
+        Err(anyhow!(
+            "No cached field metadata found and no API context provided"
+        ))
+    }
+}
+
+/// Fetch field metadata from Google Ads Fields Service API
+pub async fn fetch_from_api(api_context: &GoogleAdsAPIAccess) -> Result<FieldMetadataCache> {
+    log::info!("Fetching field metadata from Google Ads Fields Service API");
+
+    let mut client = GoogleAdsFieldServiceClient::with_interceptor(
+        api_context.channel.clone(),
+        api_context.clone(),
+    );
+
+    // Query all fields including extended metadata
+    let query = "select name, category, data_type, selectable, filterable, sortable, \
+                 selectable_with, enum_values, attribute_resources order by name";
+    let response = client
+        .search_google_ads_fields(SearchGoogleAdsFieldsRequest {
+            query: query.to_owned(),
+            page_token: String::new(),
+            page_size: 10000,
+        })
+        .await
+        .context("Failed to query Fields Service API")?
+        .into_inner();
+
+    let mut fields = HashMap::new();
+    let mut resources: HashMap<String, Vec<String>> = HashMap::new();
+
+    for row in response.results {
+        // Convert category enum to string representation
+        let category = match row.category {
+            1 => "RESOURCE",
+            2 => "ATTRIBUTE",
+            3 => "SEGMENT",
+            4 => "METRIC",
+            _ => {
+                if row.name.starts_with("metrics.") {
+                    "METRIC"
+                } else if row.name.starts_with("segments.") {
+                    "SEGMENT"
+                } else {
+                    "UNKNOWN"
+                }
+            }
+        }
+        .to_string();
+
+        // Convert data_type enum to string representation
+        let data_type = match row.data_type {
+            1 => "BOOLEAN",
+            2 => "DATE",
+            3 => "DOUBLE",
+            4 => "ENUM",
+            5 => "FLOAT",
+            6 => "INT32",
+            7 => "INT64",
+            8 => "MESSAGE",
+            9 => "RESOURCE_NAME",
+            10 => "STRING",
+            11 => "UINT64",
+            _ => "UNKNOWN",
+        }
+        .to_string();
+
+        let metrics_compatible = category == "ATTRIBUTE" || category == "SEGMENT";
+
+        let field_meta = FieldMetadata {
+            name: row.name.clone(),
+            category,
+            data_type,
+            selectable: row.selectable,
+            filterable: row.filterable,
+            sortable: row.sortable,
+            metrics_compatible,
+            resource_name: if row.resource_name.is_empty() {
+                None
+            } else {
+                Some(row.resource_name.clone())
+            },
+            selectable_with: row.selectable_with.clone(),
+            enum_values: row.enum_values.clone(),
+            attribute_resources: row.attribute_resources.clone(),
+            description: None,
+            usage_notes: None,
+        };
+
+        // Organize by resource
+        if let Some(resource) = field_meta.get_resource() {
+            resources
+                .entry(resource)
+                .or_default()
+                .push(row.name.clone());
+        }
+
+        fields.insert(row.name, field_meta);
+    }
+
+    log::info!(
+        "Fetched {} fields from {} resources",
+        fields.len(),
+        resources.keys().len()
+    );
+
+    // Build resource metadata from fetched fields
+    let resource_metadata = build_resource_metadata_from_fields(&fields, &resources);
+
+    Ok(FieldMetadataCache {
+        last_updated: Utc::now(),
+        api_version: "v23".to_string(),
+        fields,
+        resources: Some(resources),
+        resource_metadata: Some(resource_metadata),
+    })
+}
+
+/// Build ResourceMetadata entries from the fetched fields
+fn build_resource_metadata_from_fields(
+    fields: &HashMap<String, FieldMetadata>,
+    resources: &HashMap<String, Vec<String>>,
+) -> HashMap<String, ResourceMetadata> {
+    let mut resource_metadata = HashMap::new();
+
+    for (resource_name, field_names) in resources {
+        let resource_fields: Vec<&FieldMetadata> =
+            field_names.iter().filter_map(|n| fields.get(n)).collect();
+
+        // Collect key attributes (selectable + filterable)
+        let mut key_attributes: Vec<String> = resource_fields
+            .iter()
+            .filter(|f| f.is_attribute() && f.selectable && f.filterable)
+            .take(10)
+            .map(|f| f.name.clone())
+            .collect();
+        key_attributes.sort();
+
+        // Collect key metrics (selectable)
+        let mut key_metrics: Vec<String> = resource_fields
+            .iter()
+            .filter(|f| f.is_metric() && f.selectable)
+            .take(10)
+            .map(|f| f.name.clone())
+            .collect();
+        key_metrics.sort();
+
+        // Get selectable_with from the RESOURCE-category field if present
+        let selectable_with = fields
+            .get(resource_name.as_str())
+            .map(|f| f.selectable_with.clone())
+            .unwrap_or_default();
+
+        resource_metadata.insert(
+            resource_name.clone(),
+            ResourceMetadata {
+                name: resource_name.clone(),
+                selectable_with,
+                key_attributes,
+                key_metrics,
+                field_count: resource_fields.len(),
+                description: None,
+            },
+        );
+    }
+
+    resource_metadata
+}
+
