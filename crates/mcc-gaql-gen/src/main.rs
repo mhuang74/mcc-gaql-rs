@@ -326,11 +326,27 @@ async fn cmd_generate(
 
     // Load query cookbook
     let example_queries: Vec<QueryEntry> = if let Some(queries_file) = queries {
+        // Explicit --queries flag provided
         let queries_path = config_file_path(&queries_file)
             .with_context(|| format!("Could not find queries file: {}", queries_file))?;
         println!("Loading query cookbook from {:?}...", queries_path);
         let map = get_queries_from_file(&queries_path).await?;
         map.into_values().collect()
+    } else if let Some(default_path) = config_file_path("query_cookbook.toml") {
+        // Try to auto-discover query_cookbook.toml in config directory
+        if default_path.exists() {
+            println!("Loading query cookbook from {:?}...", default_path);
+            match get_queries_from_file(&default_path).await {
+                Ok(map) => map.into_values().collect(),
+                Err(e) => {
+                    log::warn!("Failed to load query cookbook: {}", e);
+                    Vec::new()
+                }
+            }
+        } else {
+            println!("No query cookbook found. Using enhanced field metadata only.");
+            Vec::new()
+        }
     } else {
         println!("No query cookbook specified. Using enhanced field metadata only.");
         Vec::new()
