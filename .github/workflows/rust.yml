@@ -16,6 +16,22 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      gen: ${{ steps.filter.outputs.gen }}
+    steps:
+    - uses: actions/checkout@v3
+    - uses: dorny/paths-filter@v2
+      id: filter
+      with:
+        filters: |
+          gen:
+            - 'crates/mcc-gaql-gen/**'
+            - 'Cargo.lock'
+            - 'Cargo.toml'
+
   build-core:
     name: Build Core (mcc-gaql + mcc-gaql-common)
     runs-on: ubuntu-latest
@@ -39,14 +55,13 @@ jobs:
 
   build-gen:
     name: Build GAQL Generator (mcc-gaql-gen)
+    needs: changes
     runs-on: ubuntu-latest
-    # Only run when mcc-gaql-gen files change, or when manually triggered with force_gen_build
+    # Run on push to main, manual trigger, or when gen-related files change
     if: |
       github.event_name == 'push' ||
-      github.event.inputs.force_gen_build == 'true' ||
-      contains(github.event.pull_request.changed_files, 'crates/mcc-gaql-gen/') ||
-      contains(github.event.pull_request.changed_files, 'Cargo.lock') ||
-      contains(github.event.pull_request.changed_files, 'Cargo.toml')
+      github.event_name == 'workflow_dispatch' ||
+      needs.changes.outputs.gen == 'true'
     steps:
     - uses: actions/checkout@v3
     - name: Install Rust toolchain
