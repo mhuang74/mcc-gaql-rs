@@ -10,17 +10,46 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
-
+  build-core:
+    name: Build Core (mcc-gaql + mcc-gaql-common)
     runs-on: ubuntu-latest
-
     steps:
     - uses: actions/checkout@v3
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
+    - name: Rust Cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: "mcc-gaql-rs-core"
+        cache-on-failure: true
     - name: Install deps
       run: sudo apt-get -y install protobuf-compiler
-    - name: Build
-      run: cargo build --verbose
-    - name: Run tests
-      run: cargo test --verbose -- --test-threads=1
+    - name: Build mcc-gaql-common
+      run: cargo build --verbose -p mcc-gaql-common
+    - name: Build mcc-gaql
+      run: cargo build --verbose -p mcc-gaql
+    - name: Run tests for core crates
+      run: cargo test --verbose -p mcc-gaql-common -p mcc-gaql -- --test-threads=1
+
+  build-gen:
+    name: Build GAQL Generator (mcc-gaql-gen)
+    runs-on: ubuntu-latest
+    # Only run when mcc-gaql-gen files change
+    if: |
+      github.event_name == 'push' ||
+      contains(github.event.pull_request.changed_files, 'crates/mcc-gaql-gen/') ||
+      contains(github.event.pull_request.changed_files, 'Cargo.lock') ||
+      contains(github.event.pull_request.changed_files, 'Cargo.toml')
+    steps:
+    - uses: actions/checkout@v3
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+    - name: Rust Cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: "mcc-gaql-rs-gen"
+        cache-on-failure: true
+    - name: Build mcc-gaql-gen
+      run: cargo build --verbose -p mcc-gaql-gen
+    - name: Run tests for mcc-gaql-gen
+      run: cargo test --verbose -p mcc-gaql-gen -- --test-threads=1
