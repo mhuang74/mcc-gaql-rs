@@ -5,6 +5,12 @@ on:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
+  workflow_dispatch:
+    inputs:
+      force_gen_build:
+        description: 'Force build of mcc-gaql-gen'
+        type: boolean
+        default: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -34,9 +40,10 @@ jobs:
   build-gen:
     name: Build GAQL Generator (mcc-gaql-gen)
     runs-on: ubuntu-latest
-    # Only run when mcc-gaql-gen files change
+    # Only run when mcc-gaql-gen files change, or when manually triggered with force_gen_build
     if: |
       github.event_name == 'push' ||
+      github.event.inputs.force_gen_build == 'true' ||
       contains(github.event.pull_request.changed_files, 'crates/mcc-gaql-gen/') ||
       contains(github.event.pull_request.changed_files, 'Cargo.lock') ||
       contains(github.event.pull_request.changed_files, 'Cargo.toml')
