@@ -1,20 +1,14 @@
 //
-// Author: Michael S. Huang (mhuang74@gmail.com)
-//
-// Field metadata module for Google Ads API schema awareness
-// Provides caching and querying of field metadata from Fields Service API
+// Shared field metadata types for mcc-gaql workspace.
+// This module contains only types and file I/O; no API calls.
+// API-fetching logic lives in mcc-gaql's field_metadata module.
 
 use anyhow::{Context, Result, anyhow};
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use tokio::fs;
-
-use googleads_rs::google::ads::googleads::v23::services::SearchGoogleAdsFieldsRequest;
-use googleads_rs::google::ads::googleads::v23::services::google_ads_field_service_client::GoogleAdsFieldServiceClient;
-
-use crate::googleads::GoogleAdsAPIAccess;
 
 /// Represents metadata for a single Google Ads field
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -69,7 +63,7 @@ impl FieldMetadata {
         if let Some(_idx) = self.name.find('.') {
             self.name
                 .split('.')
-                .next() // Get the first substring delimited by '.'
+                .next()
                 .map(|s| s.to_string())
         } else {
             None
@@ -148,7 +142,7 @@ impl FieldMetadata {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResourceMetadata {
     pub name: String,
-    /// Fields that this resource can be queried together with (from Fields Service selectable_with on RESOURCE fields)
+    /// Fields that this resource can be queried together with
     #[serde(default)]
     pub selectable_with: Vec<String>,
     /// Key attributes for this resource (most useful for typical queries)
@@ -189,214 +183,6 @@ impl FieldMetadataCache {
         }
     }
 
-    /// Load cache from file or fetch from API if stale/missing
-    pub async fn load_or_fetch(
-        api_context: Option<&GoogleAdsAPIAccess>,
-        cache_path: &Path,
-        max_age_days: i64,
-    ) -> Result<Self> {
-        // Try to load from cache
-        if cache_path.exists() {
-            match Self::load_from_disk(cache_path).await {
-                Ok(cache) => {
-                    let age = Utc::now() - cache.last_updated;
-                    if age < Duration::days(max_age_days) {
-                        log::info!(
-                            "Loaded field metadata cache from {:?} (age: {} days)",
-                            cache_path,
-                            age.num_days()
-                        );
-                        return Ok(cache);
-                    } else {
-                        log::info!(
-                            "Field metadata cache is stale (age: {} days), fetching fresh data",
-                            age.num_days()
-                        );
-                    }
-                }
-                Err(e) => {
-                    log::warn!("Failed to load cache from {:?}: {}", cache_path, e);
-                }
-            }
-        }
-
-        // Cache missing or stale, fetch from API
-        if let Some(api) = api_context {
-            let cache = Self::fetch_from_api(api).await?;
-            cache.save_to_disk(cache_path).await?;
-            Ok(cache)
-        } else {
-            Err(anyhow!(
-                "No cached field metadata found and no API context provided"
-            ))
-        }
-    }
-
-    /// Fetch field metadata from Google Ads Fields Service API
-    pub async fn fetch_from_api(api_context: &GoogleAdsAPIAccess) -> Result<Self> {
-        log::info!("Fetching field metadata from Google Ads Fields Service API");
-
-        let mut client = GoogleAdsFieldServiceClient::with_interceptor(
-            api_context.channel.clone(),
-            api_context.clone(),
-        );
-
-        // Query all fields including extended metadata: selectable_with, enum_values, attribute_resources
-        let query = "select name, category, data_type, selectable, filterable, sortable, \
-                     selectable_with, enum_values, attribute_resources order by name";
-        let response = client
-            .search_google_ads_fields(SearchGoogleAdsFieldsRequest {
-                query: query.to_owned(),
-                page_token: String::new(),
-                page_size: 10000,
-            })
-            .await
-            .context("Failed to query Fields Service API")?
-            .into_inner();
-
-        let mut fields = HashMap::new();
-        let mut resources: HashMap<String, Vec<String>> = HashMap::new();
-
-        for row in response.results {
-            // Convert category enum to string representation
-            let category = match row.category {
-                1 => "RESOURCE",
-                2 => "ATTRIBUTE",
-                3 => "SEGMENT",
-                4 => "METRIC",
-                _ => {
-                    // Fallback: use row.name to determine category
-                    if row.name.starts_with("metrics.") {
-                        "METRIC"
-                    } else if row.name.starts_with("segments.") {
-                        "SEGMENT"
-                    } else {
-                        "UNKNOWN"
-                    }
-                }
-            }
-            .to_string();
-
-            // Convert data_type enum to string representation
-            let data_type = match row.data_type {
-                1 => "BOOLEAN",
-                2 => "DATE",
-                3 => "DOUBLE",
-                4 => "ENUM",
-                5 => "FLOAT",
-                6 => "INT32",
-                7 => "INT64",
-                8 => "MESSAGE",
-                9 => "RESOURCE_NAME",
-                10 => "STRING",
-                11 => "UINT64",
-                _ => "UNKNOWN",
-            }
-            .to_string();
-
-            // Determine metrics compatibility based on category and field properties
-            let metrics_compatible = category == "ATTRIBUTE" || category == "SEGMENT";
-
-            let field_meta = FieldMetadata {
-                name: row.name.clone(),
-                category,
-                data_type,
-                selectable: row.selectable,
-                filterable: row.filterable,
-                sortable: row.sortable,
-                metrics_compatible,
-                resource_name: if row.resource_name.is_empty() {
-                    None
-                } else {
-                    Some(row.resource_name.clone())
-                },
-                selectable_with: row.selectable_with.clone(),
-                enum_values: row.enum_values.clone(),
-                attribute_resources: row.attribute_resources.clone(),
-                description: None,
-                usage_notes: None,
-            };
-
-            // Organize by resource
-            if let Some(resource) = field_meta.get_resource() {
-                resources
-                    .entry(resource)
-                    .or_default()
-                    .push(row.name.clone());
-            }
-
-            fields.insert(row.name, field_meta);
-        }
-
-        log::info!(
-            "Fetched {} fields from {} resources",
-            fields.len(),
-            resources.keys().len()
-        );
-
-        // Build resource metadata from fetched fields
-        let resource_metadata = Self::build_resource_metadata_from_fields(&fields, &resources);
-
-        Ok(Self {
-            last_updated: Utc::now(),
-            api_version: "v23".to_string(),
-            fields,
-            resources: Some(resources),
-            resource_metadata: Some(resource_metadata),
-        })
-    }
-
-    /// Build ResourceMetadata entries from the fetched fields
-    fn build_resource_metadata_from_fields(
-        fields: &HashMap<String, FieldMetadata>,
-        resources: &HashMap<String, Vec<String>>,
-    ) -> HashMap<String, ResourceMetadata> {
-        let mut resource_metadata = HashMap::new();
-
-        for (resource_name, field_names) in resources {
-            let resource_fields: Vec<&FieldMetadata> =
-                field_names.iter().filter_map(|n| fields.get(n)).collect();
-
-            // Collect key attributes (selectable + filterable)
-            let mut key_attributes: Vec<String> = resource_fields
-                .iter()
-                .filter(|f| f.is_attribute() && f.selectable && f.filterable)
-                .take(10)
-                .map(|f| f.name.clone())
-                .collect();
-            key_attributes.sort();
-
-            // Collect key metrics (selectable)
-            let mut key_metrics: Vec<String> = resource_fields
-                .iter()
-                .filter(|f| f.is_metric() && f.selectable)
-                .take(10)
-                .map(|f| f.name.clone())
-                .collect();
-            key_metrics.sort();
-
-            // Get selectable_with from the RESOURCE-category field if present
-            let selectable_with = fields
-                .get(resource_name.as_str())
-                .map(|f| f.selectable_with.clone())
-                .unwrap_or_default();
-
-            resource_metadata.insert(
-                resource_name.clone(),
-                ResourceMetadata {
-                    name: resource_name.clone(),
-                    selectable_with,
-                    key_attributes,
-                    key_metrics,
-                    field_count: resource_fields.len(),
-                    description: None,
-                },
-            );
-        }
-
-        resource_metadata
-    }
-
     /// Load cache from disk
     pub async fn load_from_disk(path: &Path) -> Result<Self> {
         let contents = fs::read_to_string(path)
@@ -425,6 +211,27 @@ impl FieldMetadataCache {
 
         log::info!("Saved field metadata cache to {:?}", path);
         Ok(())
+    }
+
+    /// Load from disk (no API fallback - use FieldMetadataCache::load_or_fetch in mcc-gaql for API access)
+    pub async fn load_from_disk_or_error(path: &Path, max_age_days: i64) -> Result<Self> {
+        if !path.exists() {
+            return Err(anyhow!(
+                "Field metadata cache not found at {:?}. Run 'mcc-gaql --refresh-field-cache' to create it.",
+                path
+            ));
+        }
+
+        let cache = Self::load_from_disk(path).await?;
+        let age = Utc::now() - cache.last_updated;
+        if age >= Duration::days(max_age_days) {
+            log::warn!(
+                "Field metadata cache is stale (age: {} days). Consider refreshing with 'mcc-gaql --refresh-field-cache'.",
+                age.num_days()
+            );
+        }
+
+        Ok(cache)
     }
 
     /// Get all metrics fields
@@ -533,58 +340,6 @@ impl FieldMetadataCache {
             .values()
             .filter(|f| f.description.is_some())
             .count()
-    }
-
-    /// Validate if a set of fields can be selected together
-    pub fn validate_field_selection(&self, field_names: &[String]) -> ValidationResult {
-        let mut errors = Vec::new();
-        let mut warnings = Vec::new();
-        let mut missing_fields = Vec::new();
-
-        // Check if all fields exist
-        for name in field_names {
-            if !self.fields.contains_key(name) {
-                missing_fields.push(name.clone());
-            }
-        }
-
-        if !missing_fields.is_empty() {
-            errors.push(ValidationError::UnknownFields(missing_fields));
-        }
-
-        // Get all fields
-        let fields: Vec<&FieldMetadata> = field_names
-            .iter()
-            .filter_map(|name| self.fields.get(name))
-            .collect();
-
-        // Check if all fields are selectable
-        let non_selectable: Vec<String> = fields
-            .iter()
-            .filter(|f| !f.selectable)
-            .map(|f| f.name.clone())
-            .collect();
-
-        if !non_selectable.is_empty() {
-            errors.push(ValidationError::NonSelectableFields(non_selectable));
-        }
-
-        // Check if metrics are used with proper grouping
-        let has_metrics = fields.iter().any(|f| f.is_metric());
-        let has_segments = fields.iter().any(|f| f.is_segment());
-        let has_resources = fields
-            .iter()
-            .any(|f| f.is_resource() || (!f.is_metric() && !f.is_segment()));
-
-        if has_metrics && !has_segments && !has_resources {
-            warnings.push(ValidationWarning::MetricsWithoutGrouping);
-        }
-
-        ValidationResult {
-            is_valid: errors.is_empty(),
-            errors,
-            warnings,
-        }
     }
 
     /// Export schema summary as formatted text
@@ -747,6 +502,58 @@ impl FieldMetadataCache {
 
         output
     }
+
+    /// Validate if a set of fields can be selected together
+    pub fn validate_field_selection(&self, field_names: &[String]) -> ValidationResult {
+        let mut errors = Vec::new();
+        let mut warnings = Vec::new();
+        let mut missing_fields = Vec::new();
+
+        // Check if all fields exist
+        for name in field_names {
+            if !self.fields.contains_key(name) {
+                missing_fields.push(name.clone());
+            }
+        }
+
+        if !missing_fields.is_empty() {
+            errors.push(ValidationError::UnknownFields(missing_fields));
+        }
+
+        // Get all fields
+        let fields: Vec<&FieldMetadata> = field_names
+            .iter()
+            .filter_map(|name| self.fields.get(name))
+            .collect();
+
+        // Check if all fields are selectable
+        let non_selectable: Vec<String> = fields
+            .iter()
+            .filter(|f| !f.selectable)
+            .map(|f| f.name.clone())
+            .collect();
+
+        if !non_selectable.is_empty() {
+            errors.push(ValidationError::NonSelectableFields(non_selectable));
+        }
+
+        // Check if metrics are used with proper grouping
+        let has_metrics = fields.iter().any(|f| f.is_metric());
+        let has_segments = fields.iter().any(|f| f.is_segment());
+        let has_resources = fields
+            .iter()
+            .any(|f| f.is_resource() || (!f.is_metric() && !f.is_segment()));
+
+        if has_metrics && !has_segments && !has_resources {
+            warnings.push(ValidationWarning::MetricsWithoutGrouping);
+        }
+
+        ValidationResult {
+            is_valid: errors.is_empty(),
+            errors,
+            warnings,
+        }
+    }
 }
 
 impl Default for FieldMetadataCache {
@@ -761,32 +568,6 @@ pub struct ValidationResult {
     pub is_valid: bool,
     pub errors: Vec<ValidationError>,
     pub warnings: Vec<ValidationWarning>,
-}
-
-impl ValidationResult {
-    pub fn format_message(&self) -> String {
-        let mut output = String::new();
-
-        if !self.errors.is_empty() {
-            output.push_str("Validation Errors:\n");
-            for error in &self.errors {
-                output.push_str(&format!("  - {}\n", error));
-            }
-        }
-
-        if !self.warnings.is_empty() {
-            output.push_str("Validation Warnings:\n");
-            for warning in &self.warnings {
-                output.push_str(&format!("  - {}\n", warning));
-            }
-        }
-
-        if self.is_valid && self.warnings.is_empty() {
-            output.push_str("✓ All fields are valid\n");
-        }
-
-        output
-    }
 }
 
 /// Validation errors
@@ -826,24 +607,6 @@ impl std::fmt::Display for ValidationWarning {
             }
         }
     }
-}
-
-/// Helper to get default cache path
-pub fn get_default_cache_path() -> Result<PathBuf> {
-    let cache_dir =
-        dirs::cache_dir().ok_or_else(|| anyhow!("Could not determine cache directory"))?;
-
-    Ok(cache_dir.join("mcc-gaql").join("field_metadata.json"))
-}
-
-/// Helper to get the enriched cache path (separate from raw structural cache)
-pub fn get_enriched_cache_path() -> Result<PathBuf> {
-    let cache_dir =
-        dirs::cache_dir().ok_or_else(|| anyhow!("Could not determine cache directory"))?;
-
-    Ok(cache_dir
-        .join("mcc-gaql")
-        .join("field_metadata_enriched.json"))
 }
 
 #[cfg(test)]
@@ -893,116 +656,5 @@ mod tests {
 
         assert!(field.is_metric());
         assert!(!field.is_attribute());
-        assert_eq!(field.get_resource(), Some("metrics".to_string()));
-    }
-
-    #[test]
-    fn test_build_embedding_text_with_description() {
-        let field = FieldMetadata {
-            name: "campaign.status".to_string(),
-            category: "ATTRIBUTE".to_string(),
-            data_type: "ENUM".to_string(),
-            selectable: true,
-            filterable: true,
-            sortable: true,
-            metrics_compatible: true,
-            resource_name: None,
-            selectable_with: vec![],
-            enum_values: vec![
-                "ENABLED".to_string(),
-                "PAUSED".to_string(),
-                "REMOVED".to_string(),
-            ],
-            attribute_resources: vec!["campaign".to_string()],
-            description: Some("Current serving status of the campaign.".to_string()),
-            usage_notes: Some("Filter with = to focus on active campaigns.".to_string()),
-        };
-
-        let text = field.build_embedding_text();
-        assert!(text.contains("campaign.status"));
-        assert!(text.contains("ENUM"));
-        assert!(text.contains("Current serving status"));
-        assert!(text.contains("ENABLED"));
-        assert!(text.contains("campaign"));
-    }
-
-    #[test]
-    fn test_build_embedding_text_without_description() {
-        let field = FieldMetadata {
-            name: "campaign.name".to_string(),
-            category: "ATTRIBUTE".to_string(),
-            data_type: "STRING".to_string(),
-            selectable: true,
-            filterable: true,
-            sortable: true,
-            metrics_compatible: true,
-            resource_name: None,
-            selectable_with: vec![],
-            enum_values: vec![],
-            attribute_resources: vec![],
-            description: None,
-            usage_notes: None,
-        };
-
-        let text = field.build_embedding_text();
-        assert!(text.contains("campaign.name"));
-        assert!(text.contains("ATTRIBUTE"));
-        assert!(text.contains("STRING"));
-    }
-
-    #[test]
-    fn test_cache_validation() {
-        let mut cache = FieldMetadataCache::new();
-
-        // Add test fields
-        cache.fields.insert(
-            "campaign.name".to_string(),
-            FieldMetadata {
-                name: "campaign.name".to_string(),
-                category: "ATTRIBUTE".to_string(),
-                data_type: "STRING".to_string(),
-                selectable: true,
-                filterable: true,
-                sortable: true,
-                metrics_compatible: true,
-                resource_name: None,
-                selectable_with: vec![],
-                enum_values: vec![],
-                attribute_resources: vec![],
-                description: None,
-                usage_notes: None,
-            },
-        );
-
-        cache.fields.insert(
-            "metrics.impressions".to_string(),
-            FieldMetadata {
-                name: "metrics.impressions".to_string(),
-                category: "METRIC".to_string(),
-                data_type: "INT64".to_string(),
-                selectable: true,
-                filterable: false,
-                sortable: true,
-                metrics_compatible: false,
-                resource_name: None,
-                selectable_with: vec![],
-                enum_values: vec![],
-                attribute_resources: vec![],
-                description: None,
-                usage_notes: None,
-            },
-        );
-
-        // Valid selection
-        let result = cache.validate_field_selection(&[
-            "campaign.name".to_string(),
-            "metrics.impressions".to_string(),
-        ]);
-        assert!(result.is_valid);
-
-        // Invalid: unknown field
-        let result = cache
-            .validate_field_selection(&["campaign.name".to_string(), "unknown.field".to_string()]);
-        assert!(!result.is_valid);
     }
 }

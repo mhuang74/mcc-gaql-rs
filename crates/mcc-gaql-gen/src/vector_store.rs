@@ -8,8 +8,8 @@ use rig::embeddings::Embedding;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::prompt2gaql::FieldDocument;
-use crate::util::QueryEntry;
+use mcc_gaql_common::config::QueryEntry;
+use crate::rag::FieldDocument;
 
 /// Embedding dimension for BGESmallENV15 model
 const EMBEDDING_DIM: i32 = 384;
@@ -167,7 +167,6 @@ pub fn queries_to_record_batch(
 
     let schema = query_cookbook_schema();
 
-    // Build column arrays - use document IDs directly
     let ids: StringArray = StringArray::from_iter_values(queries.iter().map(|q| q.id.as_str()));
 
     let descriptions: StringArray =
@@ -176,7 +175,6 @@ pub fn queries_to_record_batch(
     let query_texts: StringArray =
         StringArray::from_iter_values(queries.iter().map(|q| q.query.as_str()));
 
-    // Convert embeddings to FixedSizeListArray - embeddings are already in correct order
     let embedding_values: Vec<f64> = embeddings.iter().flat_map(|e| e.vec.clone()).collect();
 
     let embedding_array = FixedSizeListArray::try_new(
@@ -209,7 +207,6 @@ pub fn fields_to_record_batch(
 
     let schema = field_metadata_schema();
 
-    // Build column arrays - use document IDs directly
     let ids: StringArray = StringArray::from_iter_values(fields.iter().map(|f| f.id.as_str()));
 
     let descriptions: StringArray =
@@ -235,7 +232,6 @@ pub fn fields_to_record_batch(
     let resource_names: StringArray =
         StringArray::from_iter(fields.iter().map(|f| f.field.resource_name.as_deref()));
 
-    // Convert embeddings
     let embedding_values: Vec<f64> = embeddings.iter().flat_map(|e| e.vec.clone()).collect();
 
     let embedding_array = FixedSizeListArray::try_new(
@@ -279,7 +275,6 @@ pub async fn create_table(
     table_name: &str,
     record_batch: RecordBatch,
 ) -> Result<Table> {
-    // Create table using Box<dyn RecordBatchReader>
     use arrow_array::RecordBatchReader;
     use std::sync::Arc as StdArc;
 
@@ -322,23 +317,6 @@ pub async fn create_table(
         .await
         .map_err(|e| anyhow::anyhow!("Failed to create table {}: {}", table_name, e))?;
 
-    // Create vector index with cosine similarity metric
-    // Only create index if we have enough rows (IVF_PQ typically needs 256+ rows)
-    // if num_rows >= 256 {
-    //     log::debug!("Creating vector index with cosine similarity for table '{}'", table_name);
-    //     table
-    //         .create_index(&["vector"], lancedb::index::Index::IvfPq(
-    //             lancedb::index::vector::IvfPqIndexBuilder::default()
-    //                 .distance_type(lancedb::DistanceType::Cosine)
-    //         ))
-    //         .execute()
-    //         .await
-    //         .map_err(|e| anyhow::anyhow!("Failed to create vector index for {}: {}", table_name, e))?;
-    //     log::debug!("Vector index created successfully for table '{}'", table_name);
-    // } else {
-    //     log::debug!("Skipping index creation for table '{}' (only {} rows, need 256+)", table_name, num_rows);
-    // }
-
     Ok(table)
 }
 
@@ -365,11 +343,10 @@ pub async fn build_or_load_query_vector_store(
     if let Ok(Some(cached_hash)) = load_hash(cache_type) {
         if cached_hash == current_hash {
             log::info!(
-                "✓ Query cookbook cache is valid (hash: {}), loading from LanceDB...",
+                "Query cookbook cache is valid (hash: {}), loading from LanceDB...",
                 current_hash
             );
 
-            // Try to open existing table
             match get_lancedb_connection().await {
                 Ok(db) => match open_table(&db, table_name).await {
                     Ok(table) => {
@@ -386,7 +363,7 @@ pub async fn build_or_load_query_vector_store(
             }
         } else {
             log::info!(
-                "✗ Query cookbook cache is stale (hash mismatch: {} vs {}), rebuilding...",
+                "Query cookbook cache is stale (hash mismatch: {} vs {}), rebuilding...",
                 cached_hash,
                 current_hash
             );
@@ -398,14 +375,11 @@ pub async fn build_or_load_query_vector_store(
     // Cache miss or invalid - rebuild embeddings
     let start = std::time::Instant::now();
 
-    // Convert to RecordBatch
     let record_batch = queries_to_record_batch(&queries, &embeddings)?;
 
-    // Save to LanceDB
     let db = get_lancedb_connection().await?;
     let table = create_table(&db, table_name, record_batch).await?;
 
-    // Save hash
     save_hash(cache_type, current_hash)?;
 
     log::info!(
@@ -429,11 +403,10 @@ pub async fn build_or_load_field_vector_store(
     if let Ok(Some(cached_hash)) = load_hash(cache_type) {
         if cached_hash == current_hash {
             log::info!(
-                "✓ Field metadata cache is valid (hash: {}), loading from LanceDB...",
+                "Field metadata cache is valid (hash: {}), loading from LanceDB...",
                 current_hash
             );
 
-            // Try to open existing table
             match get_lancedb_connection().await {
                 Ok(db) => match open_table(&db, table_name).await {
                     Ok(table) => {
@@ -450,7 +423,7 @@ pub async fn build_or_load_field_vector_store(
             }
         } else {
             log::info!(
-                "✗ Field metadata cache is stale (hash mismatch: {} vs {}), rebuilding...",
+                "Field metadata cache is stale (hash mismatch: {} vs {}), rebuilding...",
                 cached_hash,
                 current_hash
             );
@@ -462,14 +435,11 @@ pub async fn build_or_load_field_vector_store(
     // Cache miss or invalid - rebuild embeddings
     let start = std::time::Instant::now();
 
-    // Convert to RecordBatch
     let record_batch = fields_to_record_batch(&field_docs, &embeddings)?;
 
-    // Save to LanceDB
     let db = get_lancedb_connection().await?;
     let table = create_table(&db, table_name, record_batch).await?;
 
-    // Save hash
     save_hash(cache_type, current_hash)?;
 
     log::info!(
@@ -484,8 +454,8 @@ pub async fn build_or_load_field_vector_store(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::field_metadata::FieldMetadata;
-    use crate::prompt2gaql::FieldDocument;
+    use mcc_gaql_common::field_metadata::FieldMetadata;
+    use crate::rag::FieldDocument;
 
     #[test]
     fn test_query_cookbook_schema() {
@@ -579,11 +549,9 @@ mod tests {
         let cache_type = "test_cache";
         let test_hash: u64 = 12345678;
 
-        // Save hash
         let save_result = save_hash(cache_type, test_hash);
         assert!(save_result.is_ok());
 
-        // Load hash
         let load_result = load_hash(cache_type);
         assert!(load_result.is_ok());
         assert_eq!(load_result.unwrap(), Some(test_hash));

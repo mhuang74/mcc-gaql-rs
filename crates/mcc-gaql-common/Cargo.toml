@@ -1,0 +1,17 @@
+[package]
+name = "mcc-gaql-common"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+description = "Shared types and utilities for mcc-gaql workspace crates."
+
+[dependencies]
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+dirs = { workspace = true }
+toml = { workspace = true }
+chrono = { workspace = true, features = ["serde"] }
+log = { workspace = true }
+tokio = { workspace = true }

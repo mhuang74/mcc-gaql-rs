@@ -1,4 +1,4 @@
-#![cfg(feature = "llm")]
+
 
 /// Minimal RAG test to verify the rig + rig-lancedb stack works correctly
 /// Uses the actual field metadata structure and queries from the production system

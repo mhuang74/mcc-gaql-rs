@@ -11,7 +11,7 @@ use rig::agent::Agent;
 use rig::providers::openai::completion::CompletionModel;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
-use crate::prompt2gaql::LlmConfig;
+use crate::rag::LlmConfig;
 
 /// Pool of LLM models with per-model concurrency control.
 ///
@@ -143,6 +143,7 @@ impl ModelLease {
     }
 
     /// Returns the model index (0 == preferred model).
+    #[allow(dead_code)]
     pub fn model_index(&self) -> usize {
         self.model_index
     }
@@ -172,7 +173,7 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::prompt2gaql::LlmConfig;
+    use crate::rag::LlmConfig;
 
     /// Build a `ModelPool` with the given model names for testing purposes.
     fn make_pool(model_names: &[&str]) -> ModelPool {
@@ -224,7 +225,6 @@ mod tests {
         let lease1 = pool.acquire().await;
         let lease2 = pool.acquire().await;
 
-        // Each lease should hold a different model
         let mut indices = [
             lease0.model_index(),
             lease1.model_index(),
@@ -240,11 +240,9 @@ mod tests {
 
         let pool = Arc::new(make_pool(&["model-a"]));
 
-        // Acquire the only permit.
         let lease = pool.acquire().await;
         assert_eq!(lease.model_index(), 0);
 
-        // A second acquire should time out because the single slot is held.
         let pool_clone = Arc::clone(&pool);
         let result = timeout(Duration::from_millis(50), async move {
             pool_clone.acquire().await
@@ -256,10 +254,8 @@ mod tests {
             "acquire should have timed out while all models are busy"
         );
 
-        // Drop the lease to release the permit.
         drop(lease);
 
-        // Now we should be able to acquire again.
         let lease2 = pool.acquire().await;
         assert_eq!(lease2.model_index(), 0);
     }
@@ -282,7 +278,6 @@ mod tests {
         assert!(result.is_err(), "acquire_preferred should have timed out");
         drop(lease);
 
-        // After release, acquiring preferred should succeed.
         let lease2 = pool.acquire_preferred().await;
         assert_eq!(lease2.model_index(), 0);
     }

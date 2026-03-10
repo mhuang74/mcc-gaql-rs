@@ -4,73 +4,11 @@ use figment::{
 };
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::PathBuf;
 
-const CRATE_NAME: &str = env!("CARGO_PKG_NAME");
-pub const TOML_CONFIG_FILENAME: &str = "config.toml";
-pub const ENV_VAR_PREFIX: &str = "MCC_GAQL_";
+use mcc_gaql_common::config::{MyConfig, TOML_CONFIG_FILENAME, ENV_VAR_PREFIX, validate_and_normalize_customer_id};
+use mcc_gaql_common::paths::config_file_path;
 
-/// Validate and normalize Google Ads customer ID format
-/// Accepts: "1234567890" or "123-456-7890"
-/// Returns: "1234567890" (normalized, no hyphens)
-pub fn validate_and_normalize_customer_id(customer_id: &str) -> anyhow::Result<String> {
-    // Remove hyphens if present
-    let normalized = customer_id.replace('-', "");
-
-    // Validate format: exactly 10 digits
-    if !normalized.chars().all(|c| c.is_ascii_digit()) {
-        return Err(anyhow::anyhow!(
-            "Invalid customer ID format: '{}'. \
-             Customer ID must contain only digits (and optional hyphens). \
-             Example: '1234567890' or '123-456-7890'",
-            customer_id
-        ));
-    }
-
-    if normalized.len() != 10 {
-        return Err(anyhow::anyhow!(
-            "Invalid customer ID length: '{}'. \
-             Customer ID must be exactly 10 digits. \
-             Found {} digits.",
-            customer_id,
-            normalized.len()
-        ));
-    }
-
-    Ok(normalized)
-}
-
-#[derive(Deserialize, Serialize, Debug)]
-pub struct MyConfig {
-    /// MCC Account ID (optional for solo accounts - if omitted, customer_id will be used as MCC)
-    pub mcc_id: Option<String>,
-    /// Optional user email for OAuth2 (not required if valid token cache exists)
-    /// Note: The old field name 'user' is deprecated. Please use 'user_email' in config files.
-    pub user_email: Option<String>,
-    /// Optional default customer ID to query (can be overridden by --customer-id)
-    /// For solo accounts: if mcc_id is not specified, this will be used as the implied MCC
-    pub customer_id: Option<String>,
-    /// Optional default output format: table, csv, json (can be overridden by --format)
-    pub format: Option<String>,
-    /// Optional default keep-going behavior on errors (can be overridden by --keep-going)
-    pub keep_going: Option<bool>,
-    /// Token Cache filename (optional - auto-generated from user if not specified)
-    pub token_cache_filename: Option<String>,
-    /// Optional file containing child customer_ids to query
-    pub customerids_filename: Option<String>,
-    /// Optional TOML file with stored queries
-    pub queries_filename: Option<String>,
-    /// Optional Google Ads Developer Token
-    /// If not specified, will check env var MCC_GAQL_DEV_TOKEN or use fallback
-    /// Get your token at: https://developers.google.com/google-ads/api/docs/get-started/dev-token
-    pub dev_token: Option<String>,
-    /// Optional field metadata cache file path
-    /// Default: ~/.cache/mcc-gaql/field_metadata.json
-    pub field_metadata_cache: Option<String>,
-    /// Optional field metadata cache TTL in days
-    /// Default: 7 days
-    pub field_metadata_ttl_days: Option<i64>,
-}
+const CRATE_NAME: &str = "mcc-gaql";
 
 /// Resolved runtime configuration combining CLI args and config file
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -152,15 +90,12 @@ impl ResolvedConfig {
         // Resolve token cache filename with priority:
         // 1. Explicit token cache filename from config (highest priority)
         // 2. Auto-generated from user email
-        // 3. ERROR if neither is available (don't use default that may lack permissions)
+        // 3. ERROR if neither is available
         let token_cache_filename = if let Some(explicit_cache) = explicit_token_cache {
-            // Explicit token cache from config - use it
             explicit_cache
         } else if let Some(email) = user_email.as_ref() {
-            // Auto-generate from user email
             crate::googleads::generate_token_cache_filename(email)
         } else {
-            // Neither user email nor explicit token cache provided
             return Err(anyhow::anyhow!(
                 "User email or explicit token cache filename required for authentication.\n\
                  Please provide one of:\n  \
@@ -205,7 +140,7 @@ impl ResolvedConfig {
             .as_ref()
             .and_then(|c| c.field_metadata_cache.clone())
             .or_else(|| {
-                crate::field_metadata::get_default_cache_path()
+                mcc_gaql_common::paths::field_metadata_cache_path()
                     .ok()
                     .map(|p| p.display().to_string())
             })
@@ -216,7 +151,7 @@ impl ResolvedConfig {
             .and_then(|c| c.field_metadata_ttl_days)
             .unwrap_or(30);
 
-        // Resolve remote_auth: CLI flag only (no config file support needed)
+        // Resolve remote_auth: CLI flag only
         let remote_auth = args.remote_auth;
 
         Ok(Self {
@@ -238,9 +173,7 @@ impl ResolvedConfig {
     /// Validate that resolved config supports the requested operation mode
     pub fn validate_for_operation(&self, args: &crate::args::Cli) -> anyhow::Result<()> {
         // Validate that either user context is specified OR a valid token cache file exists
-        // If user email is not provided, check if token cache file exists
         if self.user_email.is_none() {
-            // Check if token cache file exists
             let token_cache_path = config_file_path(&self.token_cache_filename);
             let token_cache_exists = token_cache_path
                 .as_ref()
@@ -267,15 +200,6 @@ impl ResolvedConfig {
                     token_cache_path.unwrap().display()
                 );
             }
-        }
-
-        // Validate natural language mode requirements
-        if args.natural_language && self.queries_filename.is_none() {
-            return Err(anyhow::anyhow!(
-                "Natural language mode requires a query cookbook.\n\
-                 Please specify a config profile with queries_filename:\n  \
-                 --profile <PROFILE_NAME>"
-            ));
         }
 
         // Validate stored query requirements
@@ -311,10 +235,8 @@ impl ResolvedConfig {
 pub fn load(profile: &str) -> anyhow::Result<MyConfig> {
     log::info!("Config profile: {profile}");
 
-    // load config file to get mcc_customer_id
     let mut figment: Figment = Figment::new();
 
-    // load from file if present
     if let Some(config_file_path) = config_file_path(TOML_CONFIG_FILENAME) {
         if !config_file_path.exists() {
             return Err(anyhow::anyhow!(
@@ -342,7 +264,6 @@ pub fn load(profile: &str) -> anyhow::Result<MyConfig> {
 
     // Extract the profile with better error context
     figment.select(profile).extract().map_err(|e| {
-        // Try to provide helpful context about what went wrong
         let config_path = config_file_path(TOML_CONFIG_FILENAME)
             .map(|p| p.display().to_string())
             .unwrap_or_else(|| "unknown".to_string());
@@ -367,7 +288,6 @@ pub fn load(profile: &str) -> anyhow::Result<MyConfig> {
 
 /// Display profile configuration details
 fn display_profile_config(profile: &str) -> anyhow::Result<()> {
-    // Try to load the profile
     match load(profile) {
         Ok(config) => {
             println!("Profile Configuration:");
@@ -456,12 +376,10 @@ pub fn display_config(profile_name: Option<&str>) -> anyhow::Result<()> {
 
     // Show profile information
     if let Some(profile) = profile_name {
-        // Show specific profile
         println!("Profile: {}", profile);
         println!();
         display_profile_config(profile)?;
     } else {
-        // Show all profiles
         match list_profiles() {
             Ok(profiles) if !profiles.is_empty() => {
                 println!("Profiles: {} found", profiles.len());
@@ -495,7 +413,6 @@ pub fn display_config(profile_name: Option<&str>) -> anyhow::Result<()> {
     println!("Environment Variable Overrides:");
     println!("  Prefix: {}", ENV_VAR_PREFIX);
 
-    // Check for common environment variables
     let env_vars = [
         "EMBED_CLIENT_SECRET",
         "DEV_TOKEN",
@@ -534,96 +451,9 @@ pub fn list_profiles() -> anyhow::Result<Vec<String>> {
     Ok(toml_table.keys().map(|k| k.to_string()).collect())
 }
 
-/// get the platform-correct config file path
-pub fn config_file_path(filename: &str) -> Option<PathBuf> {
-    dirs::config_dir().map(move |mut path| {
-        path.push(CRATE_NAME);
-        path.push(filename);
-        path
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_validate_customer_id_valid() {
-        assert_eq!(
-            validate_and_normalize_customer_id("1234567890").unwrap(),
-            "1234567890"
-        );
-    }
-
-    #[test]
-    fn test_validate_customer_id_with_hyphens() {
-        assert_eq!(
-            validate_and_normalize_customer_id("123-456-7890").unwrap(),
-            "1234567890"
-        );
-    }
-
-    #[test]
-    fn test_validate_customer_id_with_multiple_hyphens() {
-        assert_eq!(
-            validate_and_normalize_customer_id("1-2-3-4-5-6-7-8-9-0").unwrap(),
-            "1234567890"
-        );
-    }
-
-    #[test]
-    fn test_validate_customer_id_invalid_chars() {
-        let result = validate_and_normalize_customer_id("123abc7890");
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Invalid customer ID format")
-        );
-    }
-
-    #[test]
-    fn test_validate_customer_id_invalid_chars_with_spaces() {
-        let result = validate_and_normalize_customer_id("123 456 7890");
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Invalid customer ID format")
-        );
-    }
-
-    #[test]
-    fn test_validate_customer_id_too_short() {
-        let result = validate_and_normalize_customer_id("123456789");
-        assert!(result.is_err());
-        let error_msg = result.unwrap_err().to_string();
-        assert!(error_msg.contains("Invalid customer ID length"));
-        assert!(error_msg.contains("Found 9 digits"));
-    }
-
-    #[test]
-    fn test_validate_customer_id_too_long() {
-        let result = validate_and_normalize_customer_id("12345678901");
-        assert!(result.is_err());
-        let error_msg = result.unwrap_err().to_string();
-        assert!(error_msg.contains("Invalid customer ID length"));
-        assert!(error_msg.contains("Found 11 digits"));
-    }
-
-    #[test]
-    fn test_validate_customer_id_empty() {
-        let result = validate_and_normalize_customer_id("");
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Invalid customer ID length")
-        );
-    }
 
     #[test]
     fn test_myconfig_serialization_all_fields() {
@@ -641,68 +471,17 @@ mod tests {
             field_metadata_ttl_days: None,
         };
 
-        // Serialize to TOML string
         let toml_str = toml::to_string(&config).expect("Failed to serialize");
-
-        // Deserialize back
         let deserialized: MyConfig = toml::from_str(&toml_str).expect("Failed to deserialize");
 
-        // Verify round-trip
         assert_eq!(config.mcc_id, deserialized.mcc_id);
         assert_eq!(config.user_email, deserialized.user_email);
         assert_eq!(config.customer_id, deserialized.customer_id);
         assert_eq!(config.format, deserialized.format);
         assert_eq!(config.keep_going, deserialized.keep_going);
-        assert_eq!(
-            config.token_cache_filename,
-            deserialized.token_cache_filename
-        );
-        assert_eq!(
-            config.customerids_filename,
-            deserialized.customerids_filename
-        );
+        assert_eq!(config.token_cache_filename, deserialized.token_cache_filename);
+        assert_eq!(config.customerids_filename, deserialized.customerids_filename);
         assert_eq!(config.queries_filename, deserialized.queries_filename);
-    }
-
-    #[test]
-    fn test_myconfig_serialization_minimal() {
-        let config = MyConfig {
-            mcc_id: Some("1234567890".to_string()),
-            user_email: Some("user@example.com".to_string()),
-            customer_id: None,
-            format: None,
-            keep_going: None,
-            token_cache_filename: None,
-            customerids_filename: None,
-            queries_filename: None,
-            dev_token: None,
-            field_metadata_cache: None,
-            field_metadata_ttl_days: None,
-        };
-
-        // Serialize to TOML string
-        let toml_str = toml::to_string(&config).expect("Failed to serialize");
-
-        // Verify optional fields are omitted (not present as keys)
-        assert!(!toml_str.contains("customer_id"));
-        assert!(!toml_str.contains("format"));
-        assert!(!toml_str.contains("keep_going"));
-        assert!(!toml_str.contains("token_cache_filename"));
-        assert!(!toml_str.contains("customerids_filename"));
-        assert!(!toml_str.contains("queries_filename"));
-
-        // Deserialize back
-        let deserialized: MyConfig = toml::from_str(&toml_str).expect("Failed to deserialize");
-
-        // Verify round-trip
-        assert_eq!(config.mcc_id, deserialized.mcc_id);
-        assert_eq!(config.user_email, deserialized.user_email);
-        assert_eq!(config.customer_id, None);
-        assert_eq!(config.format, None);
-        assert_eq!(config.keep_going, None);
-        assert_eq!(config.token_cache_filename, None);
-        assert_eq!(config.customerids_filename, None);
-        assert_eq!(config.queries_filename, None);
     }
 
     #[test]
@@ -722,93 +501,33 @@ mod tests {
             remote_auth: false,
         };
 
-        // Serialize to TOML string
         let toml_str = toml::to_string(&config).expect("Failed to serialize");
-
-        // Deserialize back
         let deserialized: ResolvedConfig =
             toml::from_str(&toml_str).expect("Failed to deserialize");
 
-        // Verify round-trip
         assert_eq!(config.mcc_customer_id, deserialized.mcc_customer_id);
         assert_eq!(config.user_email, deserialized.user_email);
         assert_eq!(config.customer_id, deserialized.customer_id);
         assert_eq!(config.format, deserialized.format);
         assert_eq!(config.keep_going, deserialized.keep_going);
-        assert_eq!(
-            config.token_cache_filename,
-            deserialized.token_cache_filename
-        );
+        assert_eq!(config.token_cache_filename, deserialized.token_cache_filename);
         assert_eq!(config.queries_filename, deserialized.queries_filename);
-        assert_eq!(
-            config.customerids_filename,
-            deserialized.customerids_filename
-        );
-    }
-
-    #[test]
-    fn test_myconfig_with_user_email_field() {
-        let toml_str = r#"
-            mcc_id = "1234567890"
-            user_email = "user@example.com"
-        "#;
-
-        let config: MyConfig = toml::from_str(toml_str).expect("Failed to deserialize");
-
-        assert_eq!(config.mcc_id, Some("1234567890".to_string()));
-        assert_eq!(config.user_email, Some("user@example.com".to_string()));
-        assert_eq!(config.customer_id, None);
-        assert_eq!(config.format, None);
-        assert_eq!(config.keep_going, None);
-        assert_eq!(config.token_cache_filename, None);
-        assert_eq!(config.customerids_filename, None);
-        assert_eq!(config.queries_filename, None);
-    }
-
-    #[test]
-    fn test_myconfig_backwards_compatibility() {
-        // Test that configs without optional fields can still be loaded
-        let toml_str = r#"
-            mcc_id = "1234567890"
-            token_cache_filename = "tokencache.json"
-        "#;
-
-        let config: MyConfig = toml::from_str(toml_str).expect("Failed to deserialize");
-
-        assert_eq!(config.mcc_id, Some("1234567890".to_string()));
-        assert_eq!(config.user_email, None);
-        assert_eq!(config.customer_id, None);
-        assert_eq!(config.format, None);
-        assert_eq!(config.keep_going, None);
-        assert_eq!(
-            config.token_cache_filename,
-            Some("tokencache.json".to_string())
-        );
+        assert_eq!(config.customerids_filename, deserialized.customerids_filename);
     }
 
     #[test]
     fn test_validate_for_operation_with_customer_id_from_config() {
-        // Regression test: validation should check self.customer_id (resolved config)
-        // not args.customer_id (CLI args only)
-        //
-        // Bug scenario: customer_id is set in config file but not via CLI args.
-        // The validation was incorrectly checking args.customer_id instead of
-        // self.customer_id, causing it to fail even though a valid customer_id
-        // was configured.
-
         use crate::args::Cli;
 
-        // Create args with GAQL query but NO customer_id CLI argument
         let args = Cli {
             gaql_query: Some("SELECT campaign.name FROM campaign".to_string()),
             stored_query: None,
-            natural_language: false,
             output: None,
             format: None,
             profile: None,
             user_email: None,
             mcc_id: Some("1234567890".to_string()),
-            customer_id: None, // Not specified via CLI
+            customer_id: None,
             list_child_accounts: false,
             field_service: false,
             all_linked_child_accounts: false,
@@ -818,19 +537,16 @@ mod tests {
             setup: false,
             show_config: false,
             refresh_field_cache: false,
-            clear_vector_cache: false,
             show_fields: None,
             export_field_metadata: false,
-            refresh_metadata: false,
             show_resources: false,
             remote_auth: false,
         };
 
-        // Create resolved config with customer_id from config file
         let resolved_config = ResolvedConfig {
             mcc_customer_id: "1234567890".to_string(),
             user_email: Some("test@example.com".to_string()),
-            customer_id: Some("9876543210".to_string()), // From config file
+            customer_id: Some("9876543210".to_string()),
             format: "table".to_string(),
             keep_going: false,
             token_cache_filename: "test_token.json".to_string(),
@@ -842,15 +558,11 @@ mod tests {
             remote_auth: false,
         };
 
-        // Validation should succeed because resolved config has customer_id
-        // (even though args.customer_id is None)
         let result = resolved_config.validate_for_operation(&args);
 
-        // This should NOT return an error about missing target accounts
         assert!(
             result.is_ok(),
-            "Validation should succeed when customer_id is in resolved config, \
-             even if not in CLI args. Got error: {:?}",
+            "Validation should succeed when customer_id is in resolved config. Got error: {:?}",
             result.err()
         );
     }

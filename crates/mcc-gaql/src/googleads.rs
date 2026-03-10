@@ -23,7 +23,7 @@ use googleads_rs::google::ads::googleads::v23::services::{
     SearchGoogleAdsStreamRequest, SearchGoogleAdsStreamResponse,
 };
 
-use async_std::io::WriteExt;
+use mcc_gaql_common::paths::config_file_path;
 
 pub const SUB_ACCOUNTS_QUERY: &str = "
 SELECT
@@ -60,16 +60,12 @@ const ENDPOINT: &str = "https://googleads.googleapis.com:443";
 // 1. Config: Pass via dev_token parameter (from config file)
 // 2. Runtime: Check MCC_GAQL_DEV_TOKEN env var at runtime
 // 3. Compile-time: Set MCC_GAQL_DEV_TOKEN env var during build
-//
-// Get your own dev token at: https://developers.google.com/google-ads/api/docs/get-started/dev-token
 const EMBEDDED_DEV_TOKEN: Option<&str> = option_env!("MCC_GAQL_DEV_TOKEN");
 
 const FILENAME_CLIENT_SECRET: &str = "clientsecret.json";
 static GOOGLE_ADS_API_SCOPE: &str = "https://www.googleapis.com/auth/adwords";
 
 // Embed the client secret at compile time if the file exists
-// Place clientsecret.json in the project root directory before building
-// If not present at compile time, the code will fall back to loading from config directory at runtime
 #[cfg(not(feature = "external_client_secret"))]
 const EMBEDDED_CLIENT_SECRET: Option<&str> = option_env!("MCC_GAQL_EMBED_CLIENT_SECRET");
 
@@ -160,8 +156,6 @@ pub fn generate_token_cache_filename(user_email: &str) -> String {
 /// 1. Provided parameter (from config file)
 /// 2. Runtime environment variable MCC_GAQL_DEV_TOKEN
 /// 3. Compile-time embedded token
-///
-/// Returns error if no token is available from any source
 fn get_dev_token(config_token: Option<&str>) -> Result<String> {
     if let Some(token) = config_token {
         log::debug!("Using developer token from config");
@@ -190,7 +184,6 @@ fn get_dev_token(config_token: Option<&str>) -> Result<String> {
 
 /// Get client secret from embedded or file
 async fn get_client_secret() -> Result<ApplicationSecret> {
-    // Try embedded secret first (if compiled with credentials), then fall back to file
     #[cfg(not(feature = "external_client_secret"))]
     let app_secret: ApplicationSecret = if let Some(embedded_json) = EMBEDDED_CLIENT_SECRET {
         log::debug!("Using embedded client secret");
@@ -198,18 +191,17 @@ async fn get_client_secret() -> Result<ApplicationSecret> {
             .context("Failed to parse embedded client secret")?
     } else {
         log::debug!("No embedded client secret found, loading from file");
-        let client_secret_path = crate::config::config_file_path(FILENAME_CLIENT_SECRET)
+        let client_secret_path = config_file_path(FILENAME_CLIENT_SECRET)
             .context("Failed to determine client secret path")?;
         yup_oauth2::read_application_secret(client_secret_path.as_path())
             .await
             .context("clientsecret.json file not found and no embedded secret available")?
     };
 
-    // For builds with external_client_secret feature, always load from file
     #[cfg(feature = "external_client_secret")]
     let app_secret: ApplicationSecret = {
         log::debug!("Loading client secret from file (external_client_secret feature enabled)");
-        let client_secret_path = crate::config::config_file_path(FILENAME_CLIENT_SECRET)
+        let client_secret_path = config_file_path(FILENAME_CLIENT_SECRET)
             .context("Failed to determine client secret path")?;
         yup_oauth2::read_application_secret(client_secret_path.as_path())
             .await
@@ -232,13 +224,11 @@ pub struct ApiAccessConfig {
 pub async fn get_api_access(config: &ApiAccessConfig) -> Result<GoogleAdsAPIAccess> {
     let app_secret = get_client_secret().await?;
 
-    let token_cache_path = crate::config::config_file_path(&config.token_cache_filename)
+    let token_cache_path = config_file_path(&config.token_cache_filename)
         .context("Failed to determine token cache path")?;
 
-    // Check if cache exists before attempting auth to avoid redundant prompts
     let cache_existed_prior = token_cache_path.exists();
 
-    // Determine the flow method based on the flag
     let auth_method = if config.use_remote_auth {
         log::info!("Using remote OAuth flow (interactive)");
         InstalledFlowReturnMethod::Interactive
@@ -247,14 +237,12 @@ pub async fn get_api_access(config: &ApiAccessConfig) -> Result<GoogleAdsAPIAcce
         InstalledFlowReturnMethod::HTTPRedirect
     };
 
-    // Build the authenticator once
     let auth: Authenticator<<DefaultHyperClient as HyperClientBuilder>::Connector> =
         InstalledFlowAuthenticator::builder(app_secret, auth_method)
             .persist_tokens_to_disk(token_cache_path.as_path())
             .build()
             .await?;
 
-    // Get developer token using priority order: config > runtime env > compile-time
     let dev_token_value = get_dev_token(config.dev_token.as_deref())?;
     let header_value_dev_token = MetadataValue::try_from(&dev_token_value)?;
     let header_value_login_customer = MetadataValue::try_from(&config.mcc_customer_id)?;
@@ -278,11 +266,8 @@ pub async fn get_api_access(config: &ApiAccessConfig) -> Result<GoogleAdsAPIAcce
         user_email: config.user_email.clone(),
     };
 
-    // Get initial token and verify user identity
     access.renew_token().await?;
 
-    // Only verify/confirm if we are using remote auth AND the cache didn't exist before.
-    // This avoids re-prompting if the token was already cached.
     if config.use_remote_auth && !cache_existed_prior {
         verify_and_confirm_auth(&access, &token_cache_path).await?;
     }
@@ -295,13 +280,11 @@ async fn verify_and_confirm_auth(
     access: &GoogleAdsAPIAccess,
     token_cache_path: &std::path::Path,
 ) -> Result<()> {
-    // Get user info from the token
     let user_email = access.user_email.as_deref().unwrap_or("(unknown)");
 
     println!("\nAuthenticated as: {}", user_email);
     println!("Token will be saved to: {}", token_cache_path.display());
 
-    // Prompt for confirmation using async I/O
     print!("\nSave this authentication? [Y/n] ");
     tokio::io::stdout().flush().await?;
 
@@ -311,7 +294,6 @@ async fn verify_and_confirm_auth(
 
     let confirmed = input.trim().to_lowercase();
     if confirmed == "n" || confirmed == "no" {
-        // Remove the token cache file if user declined
         if token_cache_path.exists() {
             tokio::fs::remove_file(token_cache_path)
                 .await
@@ -349,7 +331,6 @@ pub async fn gaql_query_with_client(
             while let Some(item) = stream.next().await {
                 match item {
                     Ok(stream_response) => {
-                        // aggregate api consumption
                         api_consumption += stream_response.query_resource_consumption;
 
                         let field_mask = stream_response.field_mask.unwrap();
@@ -359,7 +340,6 @@ pub async fn gaql_query_with_client(
                         for r in stream_response.results {
                             let row: GoogleAdsRow = r;
 
-                            // go through all columns specified in query, pull out string value, and insert into columns
                             for i in 0..headers.as_ref().unwrap().len() {
                                 let path = &headers.as_ref().unwrap()[i];
                                 let string_val: String =
@@ -395,9 +375,6 @@ pub async fn gaql_query_with_client(
 
             let mut series_vec: Vec<Series> = Vec::new();
 
-            // convert columnar values (String) into Polars Series with right datatype
-            //  - metric columns could be Integer or Float
-            //  - other columns are String
             if let Some(headers_vec) = headers {
                 for (i, header) in headers_vec.iter().enumerate() {
                     if header.starts_with("metrics") {
@@ -467,7 +444,7 @@ pub async fn fields_query(api_context: GoogleAdsAPIAccess, query: &str) {
         .unwrap()
         .into_inner();
 
-    let mut stdout = async_std::io::stdout();
+    let mut stdout = tokio::io::stdout();
     for row in response.results {
         let val = format!(
             "{}\t{:?}\t{}\t{}\t{:?}\n",
@@ -541,16 +518,13 @@ pub async fn get_child_account_ids(
 mod tests {
     use super::*;
 
-    /// Test that metric parsing handles valid numeric values correctly
     #[test]
     fn test_integer_metric_parsing_valid_values() {
         let input = ["100".to_string(), "200".to_string(), "0".to_string()];
         let result: Vec<Option<u64>> = input.iter().map(|x| x.parse::<u64>().ok()).collect();
-
         assert_eq!(result, vec![Some(100), Some(200), Some(0)]);
     }
 
-    /// Test that metric parsing handles invalid values (empty, "--", "N/A") as None
     #[test]
     fn test_integer_metric_parsing_invalid_values() {
         let input = [
@@ -560,357 +534,21 @@ mod tests {
             " ".to_string(),
         ];
         let result: Vec<Option<u64>> = input.iter().map(|x| x.parse::<u64>().ok()).collect();
-
         assert_eq!(result, vec![None, None, None, None]);
     }
 
-    /// Test that metric parsing handles a mix of valid and invalid values
-    #[test]
-    fn test_integer_metric_parsing_mixed_values() {
-        let input = [
-            "100".to_string(),
-            "".to_string(),
-            "200".to_string(),
-            "--".to_string(),
-            "50".to_string(),
-        ];
-        let result: Vec<Option<u64>> = input.iter().map(|x| x.parse::<u64>().ok()).collect();
-
-        assert_eq!(result, vec![Some(100), None, Some(200), None, Some(50)]);
-    }
-
-    /// Test that float metric parsing handles valid values correctly
     #[test]
     fn test_float_metric_parsing_valid_values() {
         let input = ["1.5".to_string(), "0.0".to_string(), "99.99".to_string()];
         let result: Vec<Option<f64>> = input.iter().map(|x| x.parse::<f64>().ok()).collect();
-
         assert_eq!(result, vec![Some(1.5), Some(0.0), Some(99.99)]);
     }
 
-    /// Test that float metric parsing handles invalid impression share values
-    #[test]
-    fn test_float_metric_parsing_invalid_values() {
-        let input = [
-            "--".to_string(),
-            "".to_string(),
-            "N/A".to_string(),
-            " ".to_string(),
-        ];
-        let result: Vec<Option<f64>> = input.iter().map(|x| x.parse::<f64>().ok()).collect();
-
-        assert_eq!(result, vec![None, None, None, None]);
-    }
-
-    /// Test that float metric parsing handles mixed valid and invalid values
-    #[test]
-    fn test_float_metric_parsing_mixed_values() {
-        let input = [
-            "0.85".to_string(),
-            "--".to_string(),
-            "0.95".to_string(),
-            "".to_string(),
-            "0.75".to_string(),
-        ];
-        let result: Vec<Option<f64>> = input.iter().map(|x| x.parse::<f64>().ok()).collect();
-
-        assert_eq!(result, vec![Some(0.85), None, Some(0.95), None, Some(0.75)]);
-    }
-
-    /// Test creating a Polars Series from optional integer values (simulates the fixed code path)
     #[test]
     fn test_series_from_optional_integer_values() {
         let values: Vec<Option<u64>> = vec![Some(100), None, Some(200), None, Some(50)];
         let series = Series::new("metrics.clicks", values);
-
         assert_eq!(series.len(), 5);
-        assert_eq!(series.name(), "metrics.clicks");
         assert_eq!(series.null_count(), 2);
-    }
-
-    /// Test creating a Polars Series from optional float values (simulates the fixed code path)
-    #[test]
-    fn test_series_from_optional_float_values() {
-        let values: Vec<Option<f64>> = vec![Some(0.85), None, Some(0.95), None, Some(0.75)];
-        let series = Series::new("metrics.search_impression_share", values);
-
-        assert_eq!(series.len(), 5);
-        assert_eq!(series.name(), "metrics.search_impression_share");
-        assert_eq!(series.null_count(), 2);
-    }
-
-    /// Test parsing realistic impression share values from Google Ads API
-    #[test]
-    fn test_realistic_impression_share_values() {
-        // These are typical values returned by Google Ads API for impression share metrics
-        let input = [
-            "0.8567".to_string(), // Valid percentage (85.67%)
-            "--".to_string(),     // No data available
-            "0.9215".to_string(), // Valid percentage (92.15%)
-            "".to_string(),       // Empty (no data)
-            "0.0000".to_string(), // Zero value
-            "N/A".to_string(),    // Not applicable
-        ];
-        let result: Vec<Option<f64>> = input.iter().map(|x| x.parse::<f64>().ok()).collect();
-
-        assert_eq!(
-            result,
-            vec![Some(0.8567), None, Some(0.9215), None, Some(0.0000), None]
-        );
-    }
-
-    /// Test that row count is preserved when parsing fails (the key fix)
-    #[test]
-    fn test_row_count_preserved_with_null_values() {
-        let columns: Vec<Vec<String>> = vec![
-            vec![
-                "100".to_string(),
-                "200".to_string(),
-                "".to_string(),
-                "400".to_string(),
-            ],
-            vec![
-                "0.85".to_string(),
-                "--".to_string(),
-                "0.75".to_string(),
-                "".to_string(),
-            ],
-        ];
-
-        // Simulate parsing like the code does
-        let int_values: Vec<Option<u64>> =
-            columns[0].iter().map(|x| x.parse::<u64>().ok()).collect();
-        let float_values: Vec<Option<f64>> =
-            columns[1].iter().map(|x| x.parse::<f64>().ok()).collect();
-
-        // Both should have 4 rows (same as input)
-        assert_eq!(int_values.len(), 4);
-        assert_eq!(float_values.len(), 4);
-
-        // Verify the specific values
-        assert_eq!(int_values, vec![Some(100), Some(200), None, Some(400)]);
-        assert_eq!(float_values, vec![Some(0.85), None, Some(0.75), None]);
-
-        // Create series and verify DataFrame can be constructed
-        let int_series = Series::new("metrics.clicks", int_values);
-        let float_series = Series::new("metrics.search_impression_share", float_values);
-
-        assert_eq!(int_series.len(), 4);
-        assert_eq!(float_series.len(), 4);
-        assert_eq!(int_series.null_count(), 1);
-        assert_eq!(float_series.null_count(), 2);
-    }
-
-    /// Comprehensive test for all Google Ads placeholder values that can be returned for metrics
-    #[test]
-    fn test_all_google_ads_placeholder_values_integer() {
-        // Google Ads API can return various placeholder values when data is not available
-        let placeholder_values = [
-            ("", "empty string"),
-            ("--", "double dash"),
-            ("-", "single dash"),
-            ("n/a", "lowercase n/a"),
-            ("N/A", "uppercase N/A"),
-            ("N/a", "mixed case N/a"),
-            ("na", "na without slashes"),
-            ("NA", "NA without slashes"),
-            ("null", "null string"),
-            ("NULL", "NULL string"),
-            ("none", "none string"),
-            ("NONE", "NONE string"),
-        ];
-
-        for (value, description) in &placeholder_values {
-            let result: Option<u64> = value.parse().ok();
-            assert!(
-                result.is_none(),
-                "Expected None for {} ('{}'), got {:?}",
-                description,
-                value,
-                result
-            );
-        }
-    }
-
-    /// Comprehensive test for all Google Ads placeholder values for float metrics
-    #[test]
-    fn test_all_google_ads_placeholder_values_float() {
-        // Google Ads API can return various placeholder values when data is not available
-        let placeholder_values = [
-            ("", "empty string"),
-            ("--", "double dash"),
-            ("-", "single dash"),
-            ("n/a", "lowercase n/a"),
-            ("N/A", "uppercase N/A"),
-            ("N/a", "mixed case N/a"),
-            ("na", "na without slashes"),
-            ("NA", "NA without slashes"),
-            ("null", "null string"),
-            ("NULL", "NULL string"),
-            ("none", "none string"),
-            ("NONE", "NONE string"),
-        ];
-
-        for (value, description) in &placeholder_values {
-            let result: Option<f64> = value.parse().ok();
-            assert!(
-                result.is_none(),
-                "Expected None for {} ('{}'), got {:?}",
-                description,
-                value,
-                result
-            );
-        }
-    }
-
-    /// Test that valid metrics still parse correctly alongside all placeholder values
-    #[test]
-    fn test_mixed_valid_and_all_placeholder_values() {
-        let input = [
-            "1000".to_string(),
-            "".to_string(),
-            "2000".to_string(),
-            "--".to_string(),
-            "3000".to_string(),
-            "-".to_string(),
-            "4000".to_string(),
-            "n/a".to_string(),
-            "5000".to_string(),
-            "N/A".to_string(),
-        ];
-
-        let result: Vec<Option<u64>> = input.iter().map(|x| x.parse().ok()).collect();
-
-        // Should have 10 values with 5 valid and 5 None
-        assert_eq!(result.len(), 10);
-        assert_eq!(
-            result,
-            vec![
-                Some(1000),
-                None,
-                Some(2000),
-                None,
-                Some(3000),
-                None,
-                Some(4000),
-                None,
-                Some(5000),
-                None,
-            ]
-        );
-
-        // Verify we can create a Series with these values
-        let series = Series::new("metrics.clicks", result);
-        assert_eq!(series.len(), 10);
-        assert_eq!(series.null_count(), 5);
-    }
-
-    /// Test all common impression share metrics with placeholder values
-    #[test]
-    fn test_impression_share_metrics_with_placeholders() {
-        // Simulate a realistic scenario with multiple impression share columns
-        let search_impression_share = [
-            "0.8567".to_string(),
-            "--".to_string(),
-            "0.9215".to_string(),
-            "".to_string(),
-            "0.7500".to_string(),
-            "n/a".to_string(),
-        ];
-
-        let absolute_top_impression_share = [
-            "0.6523".to_string(),
-            "--".to_string(),
-            "".to_string(),
-            "-".to_string(),
-            "0.4521".to_string(),
-            "N/A".to_string(),
-        ];
-
-        let search_top_impression_share = [
-            "0.7534".to_string(),
-            "n/a".to_string(),
-            "0.8923".to_string(),
-            "--".to_string(),
-            "-".to_string(),
-            "".to_string(),
-        ];
-
-        let parsed_search: Vec<Option<f64>> = search_impression_share
-            .iter()
-            .map(|x| x.parse().ok())
-            .collect();
-        let parsed_absolute_top: Vec<Option<f64>> = absolute_top_impression_share
-            .iter()
-            .map(|x| x.parse().ok())
-            .collect();
-        let parsed_top: Vec<Option<f64>> = search_top_impression_share
-            .iter()
-            .map(|x| x.parse().ok())
-            .collect();
-
-        // All should have 6 rows
-        assert_eq!(parsed_search.len(), 6);
-        assert_eq!(parsed_absolute_top.len(), 6);
-        assert_eq!(parsed_top.len(), 6);
-
-        // Verify specific null positions
-        assert!(parsed_search[1].is_none());
-        assert!(parsed_search[3].is_none());
-        assert!(parsed_search[5].is_none());
-
-        assert!(parsed_absolute_top[1].is_none());
-        assert!(parsed_absolute_top[3].is_none());
-        assert!(parsed_absolute_top[5].is_none());
-
-        assert!(parsed_top[1].is_none());
-        assert!(parsed_top[3].is_none());
-        assert!(parsed_top[4].is_none());
-        assert!(parsed_top[5].is_none());
-
-        // Create DataFrame and verify structure
-        let search_series = Series::new("metrics.search_impression_share", parsed_search);
-        let absolute_top_series = Series::new(
-            "metrics.search_absolute_top_impression_share",
-            parsed_absolute_top,
-        );
-        let top_series = Series::new("metrics.search_top_impression_share", parsed_top);
-
-        let df = DataFrame::new(vec![search_series, absolute_top_series, top_series]).unwrap();
-
-        assert_eq!(df.height(), 6);
-        assert_eq!(df.width(), 3);
-    }
-
-    /// Test edge cases with whitespace and special characters
-    #[test]
-    fn test_whitespace_and_special_characters() {
-        let edge_cases = [
-            ("  ", "whitespace only"),
-            ("\t", "tab character"),
-            ("\n", "newline character"),
-            (" 100 ", "number with spaces"),
-            ("0.85 ", "float with trailing space"),
-        ];
-
-        for (value, description) in &edge_cases {
-            let int_result: Option<u64> = value.parse().ok();
-            let float_result: Option<f64> = value.parse().ok();
-
-            assert!(
-                int_result.is_none(),
-                "Expected None for integer {} ('{:?}'), got {:?}",
-                description,
-                value,
-                int_result
-            );
-            assert!(
-                float_result.is_none(),
-                "Expected None for float {} ('{:?}'), got {:?}",
-                description,
-                value,
-                float_result
-            );
-        }
     }
 }

@@ -1,6 +1,4 @@
 //
-// Author: Michael S. Huang (mhuang74@gmail.com)
-//
 // Metadata scraper: fetches Google Ads API field reference pages to extract
 // plain-text field descriptions and enum value documentation.
 //
@@ -124,8 +122,6 @@ impl ScrapedDocs {
         delay_ms: u64,
         base_url: &str,
     ) -> Result<Self> {
-        // Build an HTTP client with a descriptive user-agent and timeout.
-        // In tests this hits the mock server; in production it hits the Google Ads docs.
         let client = reqwest::Client::builder()
             .user_agent("mcc-gaql metadata scraper (educational/documentation use)")
             .timeout(std::time::Duration::from_secs(15))
@@ -220,7 +216,6 @@ impl ScrapedDocs {
             .with_context(|| format!("Failed to read response body for {}", url))?;
 
         // Check if we got a meaningful page or just a JS shell
-        // A JS-rendered page will have very little text content
         if html.len() < 5000 || !html.contains("google-ads") {
             log::debug!(
                 "Page for {} appears to be JS-rendered or empty ({} bytes)",

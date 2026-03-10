@@ -47,10 +47,6 @@ pub struct Cli {
     #[clap(short = 'q', long)]
     pub stored_query: Option<String>,
 
-    /// Use natural language prompt instead of GAQL; prompt is converted to GAQL via LLM
-    #[clap(short = 'n', long)]
-    pub natural_language: bool,
-
     /// GAQL output filename
     #[clap(short, long)]
     pub output: Option<String>,
@@ -75,7 +71,6 @@ pub struct Cli {
 
     /// Apply query to a single account.
     /// If no --mcc-id is specified, this will be used as the MCC (for solo accounts).
-    /// To query across many accounts, specify a customerids_filename in config file, or query across all child accounts via --all-linked-child-accounts.
     #[clap(short, long)]
     pub customer_id: Option<String>,
 
@@ -119,10 +114,6 @@ pub struct Cli {
     #[clap(long)]
     pub refresh_field_cache: bool,
 
-    /// Clear the vector cache (LanceDB embeddings) and exit
-    #[clap(long)]
-    pub clear_vector_cache: bool,
-
     /// Show available fields for a specific resource (e.g., campaign, ad_group)
     #[clap(long)]
     pub show_fields: Option<String>,
@@ -130,11 +121,6 @@ pub struct Cli {
     /// Export field metadata summary to stdout
     #[clap(long)]
     pub export_field_metadata: bool,
-
-    /// Run full metadata pipeline: harvest from Fields Service + scrape API docs + LLM enrichment + rebuild vector store.
-    /// Requires LLM environment variables (MCC_GAQL_LLM_API_KEY, MCC_GAQL_LLM_BASE_URL, MCC_GAQL_LLM_MODEL).
-    #[clap(long)]
-    pub refresh_metadata: bool,
 
     /// Show resource hierarchy: all available resources with field counts, key attributes, and compatibility info
     #[clap(long)]
@@ -150,10 +136,8 @@ pub fn parse() -> Cli {
         && !cli.setup
         && !cli.show_config
         && !cli.refresh_field_cache
-        && !cli.clear_vector_cache
         && cli.show_fields.is_none()
         && !cli.export_field_metadata
-        && !cli.refresh_metadata
         && !cli.show_resources
     {
         let mut buffer = String::new();
@@ -177,22 +161,6 @@ impl Cli {
                 "Use --customer-id to query a specific account.\n\
                     Use --mcc-id with --all-linked-child-accounts to query all child accounts under mcc.\n\
                     Please don't use --customer-id and --all-linked-child-accounts together."
-            ));
-        }
-
-        // Validate that stored query and natural language aren't both specified
-        if self.stored_query.is_some() && self.natural_language {
-            return Err(anyhow::anyhow!(
-                "Cannot use both --stored-query and --natural-language.\n\
-                Choose one query method."
-            ));
-        }
-
-        // Validate that natural language requires a query text
-        if self.natural_language && self.gaql_query.is_none() {
-            return Err(anyhow::anyhow!(
-                "Natural language mode requires a query string.\n\
-                Usage: mcc-gaql --natural-language \"show me all campaigns\""
             ));
         }
 

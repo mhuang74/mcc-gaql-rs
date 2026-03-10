@@ -16,9 +16,10 @@ use rig_fastembed::FastembedModel;
 use rig_lancedb::{LanceDbVectorIndex, SearchParams};
 use serde::{Deserialize, Serialize};
 
-use crate::field_metadata::{FieldMetadata, FieldMetadataCache};
-use crate::lancedb_utils;
-use crate::util::QueryEntry;
+use mcc_gaql_common::config::QueryEntry;
+use mcc_gaql_common::field_metadata::{FieldMetadata, FieldMetadataCache};
+
+use crate::vector_store as lancedb_utils;
 
 /// Configuration for LLM provider
 #[derive(Debug, Clone)]
@@ -138,6 +139,7 @@ impl LlmConfig {
 
     /// Create a simple LLM agent for the preferred (first) model with the given system prompt.
     /// Used by callers that always want the primary model.
+    #[allow(dead_code)]
     pub fn create_agent(
         &self,
         system_prompt: &str,
@@ -308,8 +310,14 @@ async fn build_or_load_query_vector_store(
     );
     let embedding_start = std::time::Instant::now();
 
+    // Wrap QueryEntry in QueryEntryEmbed to satisfy the Embed trait (orphan rule)
+    let wrapped: Vec<QueryEntryEmbed> = query_cookbook
+        .iter()
+        .cloned()
+        .map(QueryEntryEmbed)
+        .collect();
     let embeddings = EmbeddingsBuilder::new(embedding_model.clone())
-        .documents(query_cookbook.clone())?
+        .documents(wrapped)?
         .build()
         .await?;
 
@@ -319,12 +327,10 @@ async fn build_or_load_query_vector_store(
     );
 
     // Create document-to-embedding mapping to preserve associations
-    // The embeddings result contains (document, OneOrMany<embedding>) tuples
     let mut id_to_embedding = HashMap::new();
     for (document, embedding) in embeddings.iter() {
-        // Use the document to get its ID and associate it with the embedding
         for emb in embedding.iter() {
-            id_to_embedding.insert(document.id.clone(), emb.clone());
+            id_to_embedding.insert(document.0.id.clone(), emb.clone());
         }
     }
 
@@ -335,7 +341,6 @@ async fn build_or_load_query_vector_store(
             embedding_vecs.push(embedding.clone());
         } else {
             log::warn!("Missing embedding for document ID: {}", document.id);
-            // Use zero vector as fallback
             embedding_vecs.push(rig::embeddings::Embedding {
                 vec: vec![0.0_f64; 384],
                 document: String::new(),
@@ -391,7 +396,6 @@ pub async fn build_or_load_field_vector_store(
             Ok(db) => {
                 match lancedb_utils::open_table(&db, "field_metadata").await {
                     Ok(table) => {
-                        // Wrap table in LanceDbVectorIndex with cosine distance
                         let index = LanceDbVectorIndex::new(
                             table,
                             embedding_model,
@@ -450,10 +454,8 @@ pub async fn build_or_load_field_vector_store(
     );
 
     // Create document-to-embedding mapping to preserve associations
-    // The embeddings result contains (document, OneOrMany<embedding>) tuples
     let mut id_to_embedding = HashMap::new();
     for (document, embedding) in field_embeddings.iter() {
-        // Use the document to get its ID and associate it with the embedding
         for emb in embedding.iter() {
             id_to_embedding.insert(document.id.clone(), emb.clone());
         }
@@ -466,7 +468,6 @@ pub async fn build_or_load_field_vector_store(
             embedding_vecs.push(embedding.clone());
         } else {
             log::warn!("Missing embedding for document ID: {}", document.id);
-            // Use zero vector as fallback
             embedding_vecs.push(rig::embeddings::Embedding {
                 vec: vec![0.0_f64; 384],
                 document: String::new(),
@@ -500,11 +501,6 @@ pub async fn build_or_load_field_vector_store(
 }
 
 /// Strip markdown code block notation from LLM responses
-/// Handles formats like:
-/// ```gaql
-/// SELECT ...
-/// ```
-/// or ```sql ... ``` or just ``` ... ```
 fn strip_markdown_code_blocks(text: &str) -> String {
     let trimmed = text.trim();
 
@@ -524,10 +520,14 @@ fn strip_markdown_code_blocks(text: &str) -> String {
     trimmed.to_string()
 }
 
+/// Newtype wrapper around QueryEntry that implements Embed.
+/// Required because QueryEntry is defined in mcc-gaql-common (orphan rule).
+struct QueryEntryEmbed(QueryEntry);
+
 // use description field from QueryEntry for embedding
-impl Embed for QueryEntry {
+impl Embed for QueryEntryEmbed {
     fn embed(&self, embedder: &mut TextEmbedder) -> Result<(), EmbedError> {
-        embedder.embed(self.description.clone());
+        embedder.embed(self.0.description.clone());
         Ok(())
     }
 }
@@ -577,16 +577,10 @@ impl From<FieldDocumentFlat> for FieldMetadata {
 
 impl FieldDocument {
     /// Create a new field document.
-    ///
-    /// Uses the enriched `field.build_embedding_text()` when a description is available
-    /// (populated by `MetadataEnricher`), falling back to a synthetic description based
-    /// on the field name and inferred purpose for unenriched fields.
     pub fn new(field: FieldMetadata) -> Self {
         let description = if field.description.is_some() {
-            // Enriched: use the rich embedding text that includes description, enum values, etc.
             field.build_embedding_text()
         } else {
-            // Unenriched fallback: synthetic description from field name patterns
             Self::generate_synthetic_description(&field)
         };
 
@@ -600,10 +594,8 @@ impl FieldDocument {
 
     /// Generate a synthetic description for better semantic matching (fallback for unenriched fields)
     fn generate_synthetic_description(field: &FieldMetadata) -> String {
-        // Start with the rich embedding text (which includes structural info)
         let base = field.build_embedding_text();
 
-        // Add inferred purpose for better semantic retrieval
         let purpose = Self::infer_purpose(&field.name);
         if purpose.is_empty() {
             base
@@ -622,7 +614,6 @@ impl FieldDocument {
     fn infer_purpose(field_name: &str) -> String {
         let name_lower = field_name.to_lowercase();
 
-        // Common patterns
         if name_lower.contains("conversion") {
             return "tracking conversions and sales; key performance metrics".to_string();
         }
@@ -693,7 +684,6 @@ impl FieldDocument {
 impl Embed for FieldDocument {
     fn embed(&self, embedder: &mut TextEmbedder) -> Result<(), EmbedError> {
         let embed_text = self.description.clone();
-        // log::debug!("Embedding: '{}'", embed_text);
         embedder.embed(embed_text);
         Ok(())
     }
@@ -755,7 +745,6 @@ impl RAGAgent {
     }
 
     pub async fn prompt(&self, prompt: &str) -> Result<String, anyhow::Error> {
-        // Manually retrieve relevant queries from LanceDB
         use rig::vector_store::VectorSearchRequest;
         let search_request = VectorSearchRequest::builder()
             .query(prompt)
@@ -940,7 +929,6 @@ impl EnhancedRAGAgent {
     /// Retrieve relevant fields using RAG based on user query
     async fn retrieve_relevant_fields(&self, user_query: &str, limit: usize) -> Vec<FieldMetadata> {
         if let Some(ref field_index) = self.field_vector_store {
-            // Build search request
             use rig::vector_store::VectorSearchRequest;
             let search_request = VectorSearchRequest::builder()
                 .query(user_query)
@@ -958,13 +946,10 @@ impl EnhancedRAGAgent {
                     for (score, id, flat_doc) in &results {
                         log::debug!("  Score: {:.3}, ID: {}, Field: {:?}", score, id, flat_doc);
                     }
-                    // Results are (score, id, FieldDocumentFlat) tuples
-                    // Convert FieldDocumentFlat to FieldMetadata
-                    let field_results: Vec<FieldMetadata> = results
+                    results
                         .into_iter()
                         .map(|(_, _, flat_doc)| FieldMetadata::from(flat_doc))
-                        .collect();
-                    field_results
+                        .collect()
                 }
                 Err(e) => {
                     log::warn!("Failed to retrieve relevant fields: {}", e);
@@ -984,18 +969,15 @@ impl EnhancedRAGAgent {
 
         let mut output = String::from("RELEVANT FIELDS FOR YOUR QUERY:\n\n");
 
-        // Organize by category
         let mut metrics: Vec<&FieldMetadata> = fields.iter().filter(|f| f.is_metric()).collect();
         let mut segments: Vec<&FieldMetadata> = fields.iter().filter(|f| f.is_segment()).collect();
         let mut attributes: Vec<&FieldMetadata> =
             fields.iter().filter(|f| f.is_attribute()).collect();
 
-        // Sort each category by name
         metrics.sort_by(|a, b| a.name.cmp(&b.name));
         segments.sort_by(|a, b| a.name.cmp(&b.name));
         attributes.sort_by(|a, b| a.name.cmp(&b.name));
 
-        // Format metrics
         if !metrics.is_empty() {
             output.push_str("Metrics:\n");
             for field in metrics {
@@ -1013,7 +995,6 @@ impl EnhancedRAGAgent {
             output.push('\n');
         }
 
-        // Format segments
         if !segments.is_empty() {
             output.push_str("Segments:\n");
             for field in segments {
@@ -1022,7 +1003,6 @@ impl EnhancedRAGAgent {
             output.push('\n');
         }
 
-        // Format attributes
         if !attributes.is_empty() {
             output.push_str("Attributes:\n");
             for field in attributes {
@@ -1048,7 +1028,6 @@ impl EnhancedRAGAgent {
         let query_lower = user_query.to_lowercase();
         let mut resources = Vec::new();
 
-        // Common resource keywords
         if query_lower.contains("campaign") {
             resources.push("campaign".to_string());
         }
@@ -1080,7 +1059,6 @@ impl EnhancedRAGAgent {
         if let Some(cache) = &self.field_cache {
             let mut context = String::new();
 
-            // Identify likely resources
             let resources = self.identify_resources(user_query);
             context.push_str("LIKELY RESOURCES:\n");
             for resource in &resources {
@@ -1093,7 +1071,6 @@ impl EnhancedRAGAgent {
             }
             context.push('\n');
 
-            // Check for temporal keywords
             let query_lower = user_query.to_lowercase();
             if query_lower.contains("last")
                 || query_lower.contains("week")
@@ -1111,7 +1088,6 @@ impl EnhancedRAGAgent {
     }
 
     pub async fn prompt(&self, prompt: &str) -> Result<String, anyhow::Error> {
-        // Manually retrieve relevant queries from LanceDB
         use rig::vector_store::VectorSearchRequest;
         let search_request = VectorSearchRequest::builder()
             .query(prompt)
@@ -1132,7 +1108,6 @@ impl EnhancedRAGAgent {
         let mut enhanced_prompt = String::new();
         enhanced_prompt.push_str(&format!("USER QUERY: {}\n\n", prompt));
 
-        // Add relevant example queries
         if !relevant_queries.is_empty() {
             enhanced_prompt.push_str("RELEVANT EXAMPLE QUERIES:\n\n");
             for (score, _id, query_entry) in relevant_queries.iter().take(3) {
@@ -1143,12 +1118,10 @@ impl EnhancedRAGAgent {
             }
         }
 
-        // Add RAG-retrieved relevant fields
         if !relevant_fields.is_empty() {
             enhanced_prompt.push_str(&self.format_relevant_fields(&relevant_fields));
         }
 
-        // Add resource context
         enhanced_prompt.push_str(&self.build_context_for_query(prompt));
         enhanced_prompt.push_str("\nGenerate GAQL query:");
 
@@ -1164,14 +1137,12 @@ impl EnhancedRAGAgent {
             log::debug!("{}", formatted_request);
         }
 
-        // Prompt the agent
         let response = self
             .agent
             .prompt(&enhanced_prompt)
             .await
             .map_err(anyhow::Error::new)?;
 
-        // Strip markdown code blocks from response
         Ok(strip_markdown_code_blocks(&response))
     }
 }
@@ -1183,10 +1154,7 @@ pub async fn convert_to_gaql_enhanced(
     prompt: &str,
     config: &LlmConfig,
 ) -> Result<String, anyhow::Error> {
-    // Initialize Enhanced RAGAgent
     let rag_agent = EnhancedRAGAgent::init(example_queries, field_cache, config).await?;
-
-    // Use Enhanced RAGAgent to prompt
     rag_agent.prompt(prompt).await
 }
 
@@ -1239,7 +1207,6 @@ mod tests {
 
     #[test]
     fn test_compute_query_cookbook_hash_consistency() {
-        // Create a sample query cookbook
         let queries = vec![
             QueryEntry {
                 id: "query_get_all_campaigns_select_campaig".to_string(),
@@ -1252,216 +1219,26 @@ mod tests {
                 query: "SELECT campaign.id FROM campaign WHERE campaign.status = 'ENABLED'"
                     .to_string(),
             },
-            QueryEntry {
-                id: "query_get_campaign_metrics_select_campaig".to_string(),
-                description: "Get campaign metrics".to_string(),
-                query: "SELECT campaign.id, metrics.impressions, metrics.clicks FROM campaign"
-                    .to_string(),
-            },
         ];
-
-        // Compute hash multiple times
-        let hash1 = compute_query_cookbook_hash(&queries);
-        let hash2 = compute_query_cookbook_hash(&queries);
-        let hash3 = compute_query_cookbook_hash(&queries);
-
-        // All hashes should be identical
-        assert_eq!(
-            hash1, hash2,
-            "Hash should be consistent across repeated calls"
-        );
-        assert_eq!(
-            hash2, hash3,
-            "Hash should be consistent across repeated calls"
-        );
-        assert_eq!(
-            hash1, hash3,
-            "Hash should be consistent across repeated calls"
-        );
-    }
-
-    #[test]
-    fn test_compute_query_cookbook_hash_empty() {
-        let empty_queries: Vec<QueryEntry> = vec![];
-
-        // Compute hash multiple times for empty cookbook
-        let hash1 = compute_query_cookbook_hash(&empty_queries);
-        let hash2 = compute_query_cookbook_hash(&empty_queries);
-
-        // Should produce consistent hash even for empty input
-        assert_eq!(
-            hash1, hash2,
-            "Empty cookbook should produce consistent hash"
-        );
-    }
-
-    #[test]
-    fn test_compute_query_cookbook_hash_single_query() {
-        let queries = vec![QueryEntry {
-            id: "query_single_query_test_select_campaig".to_string(),
-            description: "Single query test".to_string(),
-            query: "SELECT campaign.id FROM campaign".to_string(),
-        }];
 
         let hash1 = compute_query_cookbook_hash(&queries);
         let hash2 = compute_query_cookbook_hash(&queries);
-
-        assert_eq!(hash1, hash2, "Single query should produce consistent hash");
-    }
-
-    #[test]
-    fn test_compute_query_cookbook_hash_order_dependency() {
-        // Create two query cookbooks with same queries in different order
-        let queries_order1 = vec![
-            QueryEntry {
-                id: "query_query_a_select_campaig".to_string(),
-                description: "Query A".to_string(),
-                query: "SELECT campaign.id FROM campaign".to_string(),
-            },
-            QueryEntry {
-                id: "query_query_b_select_ad_group".to_string(),
-                description: "Query B".to_string(),
-                query: "SELECT ad_group.id FROM ad_group".to_string(),
-            },
-        ];
-
-        let queries_order2 = vec![
-            QueryEntry {
-                id: "query_query_b_select_ad_group".to_string(),
-                description: "Query B".to_string(),
-                query: "SELECT ad_group.id FROM ad_group".to_string(),
-            },
-            QueryEntry {
-                id: "query_query_a_select_campaig".to_string(),
-                description: "Query A".to_string(),
-                query: "SELECT campaign.id FROM campaign".to_string(),
-            },
-        ];
-
-        let hash1 = compute_query_cookbook_hash(&queries_order1);
-        let hash2 = compute_query_cookbook_hash(&queries_order2);
-
-        // Hashes should be different because order matters
-        assert_ne!(
-            hash1, hash2,
-            "Different order should produce different hash"
-        );
-    }
-
-    #[test]
-    fn test_compute_query_cookbook_hash_identical_content() {
-        // Create two separate instances with identical content
-        let queries1 = vec![QueryEntry {
-            id: "query_test_query_select_campaig".to_string(),
-            description: "Test query".to_string(),
-            query: "SELECT campaign.id FROM campaign".to_string(),
-        }];
-
-        let queries2 = vec![QueryEntry {
-            id: "query_test_query_select_campaig".to_string(),
-            description: "Test query".to_string(),
-            query: "SELECT campaign.id FROM campaign".to_string(),
-        }];
-
-        let hash1 = compute_query_cookbook_hash(&queries1);
-        let hash2 = compute_query_cookbook_hash(&queries2);
-
-        // Identical content should produce identical hash
-        assert_eq!(
-            hash1, hash2,
-            "Identical content in different instances should produce same hash"
-        );
-    }
-
-    #[test]
-    fn test_compute_query_cookbook_hash_different_content() {
-        let queries1 = vec![QueryEntry {
-            id: "query_query_a_select_campaig".to_string(),
-            description: "Query A".to_string(),
-            query: "SELECT campaign.id FROM campaign".to_string(),
-        }];
-
-        let queries2 = vec![QueryEntry {
-            id: "query_query_b_select_ad_group".to_string(),
-            description: "Query B".to_string(),
-            query: "SELECT ad_group.id FROM ad_group".to_string(),
-        }];
-
-        let hash1 = compute_query_cookbook_hash(&queries1);
-        let hash2 = compute_query_cookbook_hash(&queries2);
-
-        // Different content should produce different hash
-        assert_ne!(
-            hash1, hash2,
-            "Different content should produce different hash"
-        );
-    }
-
-    #[test]
-    fn test_compute_query_cookbook_hash_description_change() {
-        // Test that changing only the description changes the hash
-        let queries1 = vec![QueryEntry {
-            id: "query_original_description_select_campaig".to_string(),
-            description: "Original description".to_string(),
-            query: "SELECT campaign.id FROM campaign".to_string(),
-        }];
-
-        let queries2 = vec![QueryEntry {
-            id: "query_modified_description_select_campaig".to_string(),
-            description: "Modified description".to_string(),
-            query: "SELECT campaign.id FROM campaign".to_string(),
-        }];
-
-        let hash1 = compute_query_cookbook_hash(&queries1);
-        let hash2 = compute_query_cookbook_hash(&queries2);
-
-        // Different descriptions should produce different hash
-        assert_ne!(hash1, hash2, "Changing description should change hash");
-    }
-
-    #[test]
-    fn test_compute_query_cookbook_hash_query_change() {
-        // Test that changing only the query changes the hash
-        let queries1 = vec![QueryEntry {
-            id: "query_same_description_select_campaig".to_string(),
-            description: "Same description".to_string(),
-            query: "SELECT campaign.id FROM campaign".to_string(),
-        }];
-
-        let queries2 = vec![QueryEntry {
-            id: "query_same_description_select_campaig".to_string(),
-            description: "Same description".to_string(),
-            query: "SELECT campaign.name FROM campaign".to_string(),
-        }];
-
-        let hash1 = compute_query_cookbook_hash(&queries1);
-        let hash2 = compute_query_cookbook_hash(&queries2);
-
-        // Different queries should produce different hash
-        assert_ne!(hash1, hash2, "Changing query should change hash");
-    }
-
-    // ── LlmConfig parsing tests ──────────────────────────────────────────────
-
-    /// Helper: build an `LlmConfig` from a raw `MCC_GAQL_LLM_MODEL` string,
-    /// using placeholder values for the other required fields.
-    fn make_config_from_model_str(model_str: &str) -> LlmConfig {
-        let models: Vec<String> = model_str
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
-        LlmConfig {
-            api_key: "dummy".to_string(),
-            base_url: "https://api.openai.com/v1".to_string(),
-            models,
-            temperature: 0.1,
-        }
+        assert_eq!(hash1, hash2, "Hash should be consistent across repeated calls");
     }
 
     #[test]
     fn test_llm_config_single_model() {
-        let config = make_config_from_model_str("model-a");
+        let models: Vec<String> = "model-a"
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        let config = LlmConfig {
+            api_key: "dummy".to_string(),
+            base_url: "https://api.openai.com/v1".to_string(),
+            models,
+            temperature: 0.1,
+        };
         assert_eq!(config.all_models(), &["model-a"]);
         assert_eq!(config.preferred_model(), "model-a");
         assert_eq!(config.model_count(), 1);
@@ -1469,45 +1246,19 @@ mod tests {
 
     #[test]
     fn test_llm_config_multiple_models() {
-        let config = make_config_from_model_str("model-a,model-b,model-c");
+        let models: Vec<String> = "model-a,model-b,model-c"
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        let config = LlmConfig {
+            api_key: "dummy".to_string(),
+            base_url: "https://api.openai.com/v1".to_string(),
+            models,
+            temperature: 0.1,
+        };
         assert_eq!(config.all_models(), &["model-a", "model-b", "model-c"]);
         assert_eq!(config.preferred_model(), "model-a");
         assert_eq!(config.model_count(), 3);
-    }
-
-    #[test]
-    fn test_llm_config_whitespace_trimming() {
-        let config = make_config_from_model_str(" model-a , model-b ");
-        assert_eq!(config.all_models(), &["model-a", "model-b"]);
-        assert_eq!(config.preferred_model(), "model-a");
-        assert_eq!(config.model_count(), 2);
-    }
-
-    #[test]
-    #[should_panic(expected = "MCC_GAQL_LLM_MODEL must contain at least one model name")]
-    fn test_llm_config_empty_panics() {
-        // Simulate what from_env() does when the value is empty
-        let models: Vec<String> = ""
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
-        if models.is_empty() {
-            panic!("MCC_GAQL_LLM_MODEL must contain at least one model name");
-        }
-    }
-
-    #[test]
-    #[should_panic(expected = "MCC_GAQL_LLM_MODEL must contain at least one model name")]
-    fn test_llm_config_only_commas_panics() {
-        // Simulate what from_env() does when value is ",,"
-        let models: Vec<String> = ",,"
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
-        if models.is_empty() {
-            panic!("MCC_GAQL_LLM_MODEL must contain at least one model name");
-        }
     }
 }

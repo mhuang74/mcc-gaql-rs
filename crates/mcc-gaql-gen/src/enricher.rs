@@ -1,6 +1,4 @@
 //
-// Author: Michael S. Huang (mhuang74@gmail.com)
-//
 // Metadata enricher: uses an LLM to generate contextual descriptions for Google Ads
 // fields, merging structural data from the Fields Service with any scraped documentation.
 //
@@ -18,8 +16,9 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::field_metadata::{FieldMetadata, FieldMetadataCache, ResourceMetadata};
-use crate::metadata_scraper::ScrapedDocs;
+use mcc_gaql_common::field_metadata::{FieldMetadata, FieldMetadataCache, ResourceMetadata};
+
+use crate::scraper::ScrapedDocs;
 use crate::model_pool::{ModelLease, ModelPool};
 
 /// LLM-based enricher for Google Ads field metadata
@@ -39,6 +38,7 @@ impl MetadataEnricher {
     }
 
     /// Override the number of fields sent per LLM batch (default: 15).
+    #[allow(dead_code)]
     pub fn with_batch_size(mut self, batch_size: usize) -> Self {
         self.batch_size = batch_size;
         self
@@ -207,9 +207,6 @@ impl MetadataEnricher {
     }
 
     /// Enrich a batch of fields using the model referenced by `lease`.
-    ///
-    /// The caller is responsible for acquiring the lease from a [`ModelPool`]
-    /// and dropping it when this call returns.
     async fn enrich_batch_with_lease(
         lease: &ModelLease,
         resource: &str,
@@ -413,7 +410,6 @@ used to query. Return ONLY the sentence, no formatting.";
             ));
         }
 
-        // Include scraped resource description if available
         if let Some(scraped_desc) = scraped.get_description(resource_name) {
             user_prompt.push_str(&format!("Documentation: {}\n", scraped_desc));
         }
@@ -435,7 +431,6 @@ used to query. Return ONLY the sentence, no formatting.";
 fn strip_json_fences(s: &str) -> String {
     let s = s.trim();
 
-    // Remove ```json or ``` prefix
     let s = if s.starts_with("```json") {
         s.trim_start_matches("```json")
     } else if s.starts_with("```") {
@@ -444,7 +439,6 @@ fn strip_json_fences(s: &str) -> String {
         s
     };
 
-    // Remove trailing ```
     let s = if s.ends_with("```") {
         s.trim_end_matches("```")
     } else {
@@ -474,7 +468,7 @@ pub async fn run_enrichment_pipeline(
         "Stage 1/2: Scraping Google Ads API reference docs for {} resources...",
         resources.len()
     );
-    let scraped = crate::metadata_scraper::ScrapedDocs::load_or_scrape(
+    let scraped = crate::scraper::ScrapedDocs::load_or_scrape(
         &resources,
         &cache.api_version,
         scrape_cache_path,

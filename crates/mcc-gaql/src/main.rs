@@ -1,10 +1,3 @@
-//
-// Author: Michael S. Huang (mhuang74@gmail.com)
-//
-
-// Increase recursion limit to prevent lance crate compilation overflow
-#![recursion_limit = "512"]
-
 use std::{
     fs::{self, File},
     io::{BufWriter, Write},
@@ -15,37 +8,31 @@ use std::{
 use anyhow::{Context, Result};
 use futures::{StreamExt, stream::FuturesUnordered};
 
-use googleads::GoogleAdsAPIAccess;
 use googleads_rs::google::ads::googleads::v23::services::google_ads_service_client::GoogleAdsServiceClient;
 use polars::prelude::*;
 use thousands::Separable;
 use tonic::{codegen::InterceptedService, transport::Channel};
 
-use mcc_gaql::args::{self, OutputFormat};
-use mcc_gaql::config::{self, ResolvedConfig};
-use mcc_gaql::field_metadata::FieldMetadataCache;
+use mcc_gaql_common::config::get_queries_from_file;
+use mcc_gaql_common::paths::config_file_path;
+
+use mcc_gaql::args;
+use mcc_gaql::config;
+use mcc_gaql::field_metadata;
 use mcc_gaql::googleads;
-#[cfg(feature = "llm")]
-use mcc_gaql::lancedb_utils;
-#[cfg(feature = "llm")]
-use mcc_gaql::metadata_enricher;
-#[cfg(feature = "llm")]
-use mcc_gaql::metadata_scraper;
-#[cfg(feature = "llm")]
-use mcc_gaql::model_pool::ModelPool;
-#[cfg(feature = "llm")]
-use mcc_gaql::prompt2gaql;
+#[allow(unused_imports)]
 use mcc_gaql::setup;
 use mcc_gaql::util;
-#[cfg(feature = "llm")]
-use mcc_gaql::util::QueryEntry;
+
+use args::OutputFormat;
+use config::ResolvedConfig;
+use field_metadata::{fetch_from_api, load_or_fetch};
+use googleads::GoogleAdsAPIAccess;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     util::init_logger();
 
-    // Format validation happens at parse time via OutputFormat enum type system.
-    // Invalid formats will fail with clap error before any queries are executed.
     let mut args = args::parse();
 
     // Handle --setup flag to run configuration wizard
@@ -60,31 +47,15 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    // Handle --clear-vector-cache flag to clear LanceDB cache
-    #[cfg(feature = "llm")]
-    if args.clear_vector_cache {
-        lancedb_utils::clear_cache()?;
-        return Ok(());
-    }
-    #[cfg(not(feature = "llm"))]
-    if args.clear_vector_cache {
-        return Err(anyhow::anyhow!(
-            "LLM features not enabled. Rebuild with --features llm"
-        ));
-    }
-
     // Validate argument combinations
     args.validate()?;
 
     // Handle field metadata operations early (before loading full config)
-    // These operations need minimal config
     if args.export_field_metadata
         || args.show_fields.is_some()
         || args.refresh_field_cache
-        || args.refresh_metadata
         || args.show_resources
     {
-        // Load minimal config for field metadata operations
         let config = if let Some(profile) = &args.profile {
             Some(config::load(profile).context(format!("Loading config for profile: {profile}"))?)
         } else {
@@ -93,11 +64,10 @@ async fn main() -> Result<()> {
         let resolved_config = ResolvedConfig::from_args_and_config(&args, config)?;
         log::debug!("Handle Field Metadata command. Resolved configuration: {resolved_config:?}");
 
-        // Obtain API access for field metadata operations
+        // Obtain API access for field metadata operations that require it
         let api_context = if args.refresh_field_cache
             || args.export_field_metadata
             || args.show_fields.is_some()
-            || args.refresh_metadata
         {
             resolved_config.validate_for_operation(&args)?;
             Some(
@@ -119,7 +89,7 @@ async fn main() -> Result<()> {
 
         if args.refresh_field_cache {
             println!("Refreshing field metadata cache from Google Ads API...");
-            let cache = FieldMetadataCache::fetch_from_api(api_context.as_ref().unwrap()).await?;
+            let cache = fetch_from_api(api_context.as_ref().unwrap()).await?;
             cache.save_to_disk(&cache_path).await?;
             println!(
                 "Field metadata cache refreshed successfully at: {}",
@@ -135,7 +105,7 @@ async fn main() -> Result<()> {
 
         if args.export_field_metadata {
             println!("Loading field metadata cache...");
-            let cache = FieldMetadataCache::load_or_fetch(
+            let cache = load_or_fetch(
                 api_context.as_ref(),
                 &cache_path,
                 resolved_config.field_metadata_ttl_days,
@@ -147,7 +117,7 @@ async fn main() -> Result<()> {
 
         if let Some(resource) = args.show_fields {
             println!("Loading field metadata cache...");
-            let cache = FieldMetadataCache::load_or_fetch(
+            let cache = load_or_fetch(
                 api_context.as_ref(),
                 &cache_path,
                 resolved_config.field_metadata_ttl_days,
@@ -188,93 +158,14 @@ async fn main() -> Result<()> {
 
         if args.show_resources {
             println!("Loading field metadata cache...");
-            let cache = FieldMetadataCache::load_or_fetch(
-                api_context.as_ref(),
+            let cache = load_or_fetch(
+                None, // No API needed for show_resources
                 &cache_path,
                 resolved_config.field_metadata_ttl_days,
             )
             .await?;
             print!("{}", cache.show_resources());
             return Ok(());
-        }
-
-        #[cfg(feature = "llm")]
-        if args.refresh_metadata {
-            // Validate LLM API key is configured
-            if std::env::var("MCC_GAQL_LLM_API_KEY").is_err()
-                && std::env::var("OPENROUTER_API_KEY").is_err()
-            {
-                return Err(anyhow::anyhow!(
-                    "Either MCC_GAQL_LLM_API_KEY or OPENROUTER_API_KEY must be set for --refresh-metadata"
-                ));
-            }
-            let llm_config = std::sync::Arc::new(prompt2gaql::LlmConfig::from_env());
-            log::info!(
-                "LLM configured with {} model(s): {:?}",
-                llm_config.model_count(),
-                llm_config.all_models()
-            );
-            let model_pool =
-                std::sync::Arc::new(ModelPool::new(std::sync::Arc::clone(&llm_config)));
-
-            // Stage 0: Fetch fresh structural metadata from Fields Service API
-            println!(
-                "Stage 0/2: Fetching structural metadata from Google Ads Fields Service API..."
-            );
-            let mut cache =
-                FieldMetadataCache::fetch_from_api(api_context.as_ref().unwrap()).await?;
-            println!(
-                "  Fetched {} fields from {} resources",
-                cache.fields.len(),
-                cache.get_resources().len()
-            );
-
-            // Determine scrape cache path (same directory as field metadata cache)
-            let scrape_cache_path = cache_path
-                .parent()
-                .unwrap_or(std::path::Path::new("."))
-                .join("scraped_docs.json");
-            let enriched_cache_path = metadata_scraper::get_scraped_docs_cache_path()
-                .unwrap_or_else(|_| scrape_cache_path.clone());
-
-            // Stages 1 and 2: Scrape + LLM enrich
-            metadata_enricher::run_enrichment_pipeline(
-                &mut cache,
-                model_pool,
-                &scrape_cache_path,
-                30,  // scrape TTL: 30 days
-                500, // rate limit: 500ms between requests
-            )
-            .await?;
-
-            // Save enriched cache
-            let enriched_path = enriched_cache_path
-                .parent()
-                .unwrap_or(std::path::Path::new("."))
-                .join("field_metadata_enriched.json");
-            cache.save_to_disk(&enriched_path).await?;
-
-            // Also update the main metadata cache so --natural-language benefits immediately
-            cache.save_to_disk(&cache_path).await?;
-
-            // Clear LanceDB vector cache so it gets rebuilt with richer embeddings next run
-            println!("Clearing vector cache so it gets rebuilt with enriched embeddings...");
-            lancedb_utils::clear_cache()?;
-
-            println!(
-                "\nMetadata refresh complete. Enriched cache saved to: {}",
-                cache_path.display()
-            );
-            println!(
-                "Next --natural-language query will rebuild the vector store with richer embeddings."
-            );
-            return Ok(());
-        }
-        #[cfg(not(feature = "llm"))]
-        if args.refresh_metadata {
-            return Err(anyhow::anyhow!(
-                "LLM features not enabled. Rebuild with --features llm"
-            ));
         }
     }
 
@@ -303,19 +194,18 @@ async fn main() -> Result<()> {
         .format
         .parse::<OutputFormat>()
         .expect("Invalid format in resolved config");
-    let _keep_going = resolved_config.keep_going; // Reserved for future use
+    let _keep_going = resolved_config.keep_going;
     let customer_id = resolved_config.customer_id.as_deref();
 
     // load stored query
     if let Some(query_name) = args.stored_query {
-        // Safe to unwrap: validated by validate_for_operation()
         let query_filename = resolved_config
             .queries_filename
             .as_ref()
             .expect("queries_filename validated earlier");
-        let queries_path = mcc_gaql::config::config_file_path(query_filename).unwrap();
+        let queries_path = config_file_path(query_filename).unwrap();
 
-        args.gaql_query = match util::get_queries_from_file(&queries_path).await {
+        args.gaql_query = match get_queries_from_file(&queries_path).await {
             Ok(map) => {
                 let query_entry = map.get(&query_name).expect("Query not found");
                 log::debug!("Found query '{query_name}'.");
@@ -329,90 +219,6 @@ async fn main() -> Result<()> {
                 process::exit(1);
             }
         }
-    }
-
-    // convert natural language prompt into GAQL
-    #[cfg(feature = "llm")]
-    if args.natural_language {
-        // Validate LLM API key is configured (supports multiple providers)
-        if std::env::var("MCC_GAQL_LLM_API_KEY").is_err()
-            && std::env::var("OPENROUTER_API_KEY").is_err()
-        {
-            panic!("Either MCC_GAQL_LLM_API_KEY or OPENROUTER_API_KEY must be set");
-        }
-        // Safe to unwrap: validated by validate_for_operation()
-        let query_filename = resolved_config
-            .queries_filename
-            .as_ref()
-            .expect("queries_filename validated earlier");
-        let queries_path = mcc_gaql::config::config_file_path(query_filename).unwrap();
-
-        let example_queries: Vec<QueryEntry> =
-            match util::get_queries_from_file(&queries_path).await {
-                Ok(map) => {
-                    let mut queries: Vec<QueryEntry> = map.into_values().collect();
-                    queries.sort_by(|a, b| a.description.cmp(&b.description));
-                    queries
-                }
-                Err(e) => {
-                    let msg = format!("Unable to load query cookbook for RAG: {e}");
-                    log::error!("{msg}");
-                    println!("{msg}");
-                    process::exit(1);
-                }
-            };
-
-        // Load field metadata cache for enhanced query generation
-        let cache_path = std::path::PathBuf::from(&resolved_config.field_metadata_cache);
-        let field_cache = match FieldMetadataCache::load_or_fetch(
-            None, // No API context yet, use cached data
-            &cache_path,
-            resolved_config.field_metadata_ttl_days,
-        )
-        .await
-        {
-            Ok(cache) => {
-                log::info!(
-                    "Loaded field metadata cache with {} fields",
-                    cache.fields.len()
-                );
-                Some(cache)
-            }
-            Err(e) => {
-                log::warn!(
-                    "Could not load field metadata cache: {}. Proceeding without schema awareness.",
-                    e
-                );
-                log::warn!("Run 'mcc-gaql --refresh-field-cache' to create the cache.");
-                None
-            }
-        };
-
-        let prompt = args.gaql_query.as_ref().unwrap();
-        log::debug!("Construct GAQL from prompt: {:?}", prompt);
-
-        // Load LLM configuration once and pass to agents (dependency injection)
-        let llm_config = prompt2gaql::LlmConfig::from_env();
-
-        // Use enhanced conversion with field metadata if available
-        let query = if field_cache.is_some() {
-            log::info!("Using enhanced natural query with field metadata");
-            prompt2gaql::convert_to_gaql_enhanced(example_queries, field_cache, prompt, &llm_config)
-                .await?
-        } else {
-            log::info!("Using basic natural query without field metadata");
-            prompt2gaql::convert_to_gaql(example_queries, prompt, &llm_config).await?
-        };
-
-        log::info!("Generated GAQL Query:\n{}", query);
-
-        args.gaql_query = Some(query);
-    }
-    #[cfg(not(feature = "llm"))]
-    if args.natural_language {
-        return Err(anyhow::anyhow!(
-            "LLM features not enabled. Rebuild with --features llm"
-        ));
     }
 
     // for non-FieldService queries, reduce network traffic by excluding resource_name by default
@@ -446,7 +252,7 @@ async fn main() -> Result<()> {
 
             // remove cached token to force re-auth and try again
             let token_cache_path =
-                mcc_gaql::config::config_file_path(&resolved_config.token_cache_filename)
+                config_file_path(&resolved_config.token_cache_filename)
                     .context("Failed to determine token cache file path")?;
 
             fs::remove_file(&token_cache_path).context(format!(
@@ -476,15 +282,11 @@ async fn main() -> Result<()> {
 
     // Handle 3 types of Google Ads query: list child accounts, field service, and GAQL query
     if args.list_child_accounts {
-        // run Account listing query
-
         let (customer_id_for_query, query) = if let Some(cid) = customer_id {
-            // query accounts under specificied customer_id (nested MCC) account;
             let query: String = googleads::SUB_ACCOUNTS_QUERY.to_owned();
             log::debug!("Listing child accounts under {}", cid);
             (cid.to_string(), query)
         } else {
-            // query child accounts under MCC
             log::debug!("Listing ALL child accounts under MCC {}", mcc_customer_id);
             (
                 mcc_customer_id.to_string(),
@@ -506,53 +308,33 @@ async fn main() -> Result<()> {
             output_dataframe(&mut dataframe.unwrap(), output_format, args.output)?;
         }
     } else if args.field_service {
-        // handle field service query
-
         let query = &args
             .gaql_query
             .expect("Valid Field Service query required.");
         log::info!("Running Fields Metadata query: {query}");
         googleads::fields_query(api_context, query).await;
     } else if args.gaql_query.is_some() {
-        // handle GAQL query
-
         // figure out which customerids to query for
         let customer_ids: Option<Vec<String>> =
-            // if provided customer_id and querying all child accounts,
-            // then query all linked accounts under provided customerid
             if customer_id.is_some() & args.all_linked_child_accounts {
                 let cid = customer_id.expect("Valid customer_id required.");
                 log::debug!("Querying child accounts under MCC: {}", &cid);
-
-                // generate new list of child accounts
                 (googleads::get_child_account_ids(api_context.clone(), cid.to_string()).await).ok()
-            }
-            // if provided customer_id and not querying all child accounts,
-            // then just query one account
-            else if customer_id.is_some() & !args.all_linked_child_accounts {
+            } else if customer_id.is_some() & !args.all_linked_child_accounts {
                 let cid = customer_id.expect("Valid customer_id required.");
                 log::debug!("Querying account: {cid}");
-
                 Some(vec![cid.to_string()])
-            }
-            // if no customer_id and querying all child accounts,
-            // then query all linked accounts under profile mcc
-            else if customer_id.is_none() & args.all_linked_child_accounts {
+            } else if customer_id.is_none() & args.all_linked_child_accounts {
                 let cid = mcc_customer_id.to_string();
                 log::debug!("Querying all linked child accounts under MCC: {}", &cid);
-
-                // generate new list of child accounts
                 (googleads::get_child_account_ids(api_context.clone(), cid).await).ok()
-            }
-            // if no customer_id and NOT querying all child accounts,
-            // then look for customerids file and use it
-            else if customer_id.is_none() & !args.all_linked_child_accounts {
+            } else if customer_id.is_none() & !args.all_linked_child_accounts {
                 if let Some(customerids_filename) = resolved_config.customerids_filename.as_deref() {
                     let customerids_path =
-                        mcc_gaql::config::config_file_path(customerids_filename).unwrap();
+                        config_file_path(customerids_filename).unwrap();
                     log::debug!("Querying accounts listed in file: {}", customerids_path.display());
 
-                    (util::get_child_account_ids_from_file(customerids_path.as_path()).await).ok()
+                    (mcc_gaql_common::config::get_child_account_ids_from_file(customerids_path.as_path()).await).ok()
                 } else {
                     log::warn!("No customerids file specified. Use --customer-id or --all-linked-child-accounts");
                     None
@@ -566,7 +348,6 @@ async fn main() -> Result<()> {
         if let Some(customer_ids_vector) = customer_ids {
             let query: String = args.gaql_query.expect("Expected GAQL query");
 
-            // run queries asynchroughly across all customer_ids
             gaql_query_async(
                 api_context,
                 customer_ids_vector,
@@ -608,15 +389,12 @@ async fn gaql_query_async(
     let mut gaql_handles = FuturesUnordered::new();
 
     for customer_id in customer_ids_vector.iter() {
-        // log::debug!("Querying {customer_id}");
-
         let gaql_future = googleads::gaql_query_with_client(
             google_ads_client.clone(),
             customer_id.clone(),
             query.clone(),
         );
 
-        // execute gaql query in background thread
         gaql_handles.push(tokio::spawn(gaql_future));
     }
 
@@ -639,7 +417,6 @@ async fn gaql_query_async(
                             total_rows += df.height();
                             total_api_consumption += api_consumption;
 
-                            // get list of metrics columns
                             if metrics_cols.is_none() {
                                 let cols: Vec<String> = df
                                     .get_column_names()
@@ -649,7 +426,6 @@ async fn gaql_query_async(
                                     .collect();
 
                                 log::debug!("Metric cols: {:?}", cols);
-
                                 metrics_cols = Some(cols.clone());
                             }
 
@@ -665,9 +441,7 @@ async fn gaql_query_async(
                                 }
                             }
 
-                            // log::debug!("Future returned non-empty GAQL results");
                             if !&groupby.is_empty() {
-                                // execute groupby in dedicated non-yielding thread
                                 let my_groupby = groupby.clone();
                                 let my_sortby = sortby.clone();
                                 let my_metrics_cols = metrics_cols.clone().unwrap();
@@ -677,8 +451,6 @@ async fn gaql_query_async(
                             } else {
                                 dataframes.push(df);
                             }
-                        } else {
-                            // log::debug!("A future returned empty query results");
                         }
                     }
                     Err(e) => {
@@ -709,7 +481,6 @@ async fn gaql_query_async(
                 match future.await {
                     Ok(df) => {
                         if !df.is_empty() {
-                            // log::debug!("Future returned GROUPBY results");
                             dataframes.push(df);
                         }
                     }
@@ -733,7 +504,6 @@ async fn gaql_query_async(
         let start = Instant::now();
         let len = &dataframes.len();
 
-        // merge dataframes
         let mut df_iter = dataframes.into_iter();
         let mut dataframe: DataFrame = df_iter.next().unwrap();
 
@@ -749,7 +519,6 @@ async fn gaql_query_async(
             duration.as_millis().separate_with_commas()
         );
 
-        // apply 2nd pass gropuby/sortby
         if !groupby.is_empty() || !sortby.is_empty() {
             let start = Instant::now();
 
@@ -786,23 +555,18 @@ async fn gaql_query_async(
 }
 
 /// Apply groupby and aggregation to dataframe
-/// groupby_cols: columns to group by; cannot be a subset of agg_cols
-/// agg_cols: columns to aggregate
 async fn apply_groupby(
     df: DataFrame,
     groupby_cols: Vec<String>,
     agg_cols: Vec<String>,
     sortby_cols: Vec<String>,
 ) -> Result<DataFrame> {
-    // if no sortby columns provided, use groupby columns
     let sortby_cols_ref = if sortby_cols.is_empty() {
         &groupby_cols
     } else {
         &sortby_cols
     };
 
-    // apply groupby/aggregation as needed
-    // if both sortby and groupby are empty, just returns original dataframe
     let df_agg = if groupby_cols.is_empty() {
         df.lazy()
     } else {
@@ -847,7 +611,6 @@ fn convert_value_to_json(value: AnyValue) -> serde_json::Value {
         AnyValue::Float64(f) => serde_json::Number::from_f64(f)
             .map(serde_json::Value::Number)
             .unwrap_or_else(|| serde_json::Value::String(f.to_string())),
-        // For other types, convert to string
         _ => serde_json::Value::String(format!("{}", value)),
     }
 }
@@ -857,7 +620,6 @@ fn validate_dataframe(df: &DataFrame) -> Result<()> {
     if df.width() == 0 {
         return Err(anyhow::anyhow!("Cannot output DataFrame with zero columns"));
     }
-    // Empty rows is OK - just output headers for CSV/JSON or empty table
     Ok(())
 }
 
@@ -871,7 +633,6 @@ fn write_csv(df: &mut DataFrame, outfile: &str) -> Result<()> {
     Ok(())
 }
 
-/// Write DataFrame as CSV to stdout
 fn write_csv_to_stdout(df: &mut DataFrame) -> Result<()> {
     let mut buf = Vec::new();
     CsvWriter::new(&mut buf)
@@ -883,7 +644,6 @@ fn write_csv_to_stdout(df: &mut DataFrame) -> Result<()> {
     Ok(())
 }
 
-/// Stream DataFrame as JSON array to a writer (one record at a time)
 fn write_json_to_writer<W: Write>(df: &DataFrame, writer: &mut W) -> Result<()> {
     let columns: Vec<String> = df
         .get_column_names()
@@ -917,14 +677,12 @@ fn write_json_to_writer<W: Write>(df: &DataFrame, writer: &mut W) -> Result<()> 
     Ok(())
 }
 
-/// Write DataFrame as JSON to stdout (streaming)
 fn write_json_to_stdout(df: &DataFrame) -> Result<()> {
     let stdout = std::io::stdout();
     let mut handle = stdout.lock();
     write_json_to_writer(df, &mut handle).context("Failed to write JSON to stdout")
 }
 
-/// Write DataFrame as JSON to file (streaming)
 fn write_json(df: &DataFrame, outfile: &str) -> Result<()> {
     let f = File::create(outfile)
         .with_context(|| format!("Failed to create JSON output file: {}", outfile))?;
@@ -933,7 +691,6 @@ fn write_json(df: &DataFrame, outfile: &str) -> Result<()> {
         .with_context(|| format!("Failed to write JSON to file: {}", outfile))
 }
 
-/// Resolve output format, preferring explicit format flag over file extension inference
 fn resolve_output_format(
     explicit_format: OutputFormat,
     outfile: &Option<String>,
@@ -949,24 +706,16 @@ fn resolve_output_format(
     });
 
     match (explicit_format, inferred_format) {
-        // No file or no inference - use explicit format
         (format, None) => Ok(format),
-
-        // File extension matches explicit format - all good
         (format, Some(inferred)) if format == inferred => Ok(format),
-
-        // Mismatch between explicit format and file extension
         (OutputFormat::Table, Some(inferred)) => {
-            // Table is default, so file extension takes precedence
             log::info!(
                 "Inferring format {:?} from file extension (override with --format if needed)",
                 inferred
             );
             Ok(inferred)
         }
-
         (explicit, Some(inferred)) => {
-            // User explicitly specified format that differs from extension
             log::warn!(
                 "Format mismatch: --format={:?} but file extension suggests {:?}. Using explicit format {:?}",
                 explicit,
@@ -980,10 +729,9 @@ fn resolve_output_format(
 
 fn output_dataframe(
     df: &mut DataFrame,
-    format: OutputFormat, // Take ownership, it's Copy
+    format: OutputFormat,
     outfile: Option<String>,
 ) -> Result<()> {
-    // Validate before attempting output
     validate_dataframe(df).context("Invalid DataFrame for output")?;
 
     let resolved_format = resolve_output_format(format, &outfile)?;
@@ -994,7 +742,6 @@ fn output_dataframe(
                 OutputFormat::Csv => write_csv(df, &path)?,
                 OutputFormat::Json => write_json(df, &path)?,
                 OutputFormat::Table => {
-                    // Table format to file doesn't make much sense, but handle gracefully
                     log::warn!("Writing table format to file, consider using csv or json");
                     let mut f = File::create(path)?;
                     write!(f, "{}", df)?;
