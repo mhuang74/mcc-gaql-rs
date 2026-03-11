@@ -3,6 +3,8 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::vec;
 
+use log::info;
+
 use lancedb::DistanceType;
 use rig::{
     agent::Agent,
@@ -164,10 +166,29 @@ impl LlmConfig {
 }
 
 /// Create embedding client and model
-fn create_embedding_client() -> (rig_fastembed::Client, rig_fastembed::EmbeddingModel) {
+fn create_embedding_client() -> Result<(rig_fastembed::Client, rig_fastembed::EmbeddingModel), anyhow::Error> {
+    // Set HF_HOME to cache fastembed models in the proper location
+    let cache_dir = dirs::cache_dir()
+        .ok_or_else(|| anyhow::anyhow!("Failed to get cache directory"))?
+        .join("mcc-gaql")
+        .join("fastembed-models");
+
+    std::fs::create_dir_all(&cache_dir)?;
+
+    info!("Fastembed cache directory: {}", cache_dir.display());
+
+    // fastembed uses HF_HOME to determine where to cache models
+    // SAFETY: This is safe because we're only setting a known environment variable
+    // and the process is single-threaded at this point.
+    unsafe { std::env::set_var("HF_HOME", &cache_dir) };
+
+    info!("Loading fastembed model: {:?}", FastembedModel::BGESmallENV15);
+
     let fastembed_client = rig_fastembed::Client::new();
     let embedding_model = fastembed_client.embedding_model(&FastembedModel::BGESmallENV15);
-    (fastembed_client, embedding_model)
+
+    info!("Fastembed model loaded successfully");
+    Ok((fastembed_client, embedding_model))
 }
 
 /// Shared LLM resources for agent initialization
@@ -180,7 +201,7 @@ struct AgentResources {
 /// Initialize shared LLM resources used by both agent types
 fn init_llm_resources(config: &LlmConfig) -> Result<AgentResources, anyhow::Error> {
     let llm_client = config.create_llm_client()?;
-    let (embed_client, embedding_model) = create_embedding_client();
+    let (embed_client, embedding_model) = create_embedding_client()?;
 
     Ok(AgentResources {
         llm_client,

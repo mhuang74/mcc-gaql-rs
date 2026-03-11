@@ -14,6 +14,9 @@ use rig::vector_store::{VectorSearchRequest, VectorStoreIndex};
 use rig_fastembed::{Client as FastembedClient, FastembedModel};
 use rig_lancedb::{LanceDbVectorIndex, SearchParams};
 use serde::{Deserialize, Serialize};
+
+#[allow(unused_imports)]
+use dirs;
 use std::sync::Arc;
 
 // Document structure matching the real field metadata schema
@@ -255,6 +258,16 @@ async fn test_minimal_rag_loop_with_field_metadata() -> Result<()> {
     );
 
     // Step 2: Create embedding model using rig_fastembed
+    // Set HF_HOME to cache fastembed models in the proper location
+    let cache_dir = dirs::cache_dir()
+        .expect("Failed to get cache directory")
+        .join("mcc-gaql")
+        .join("fastembed-models");
+    std::fs::create_dir_all(&cache_dir).expect("Failed to create cache directory");
+    // SAFETY: This is safe because we're only setting a known environment variable
+    // and the process is single-threaded at this point.
+    unsafe { std::env::set_var("HF_HOME", &cache_dir) };
+
     let fastembed_client = FastembedClient::new();
     let embedding_model = fastembed_client.embedding_model(&FastembedModel::BGESmallENV15);
 
