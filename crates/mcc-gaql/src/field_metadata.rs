@@ -81,11 +81,14 @@ pub async fn fetch_from_api(api_context: &GoogleAdsAPIAccess) -> Result<FieldMet
 
     for row in response.results {
         // Convert category enum to string representation
+        // Google Ads API enum values:
+        // 0 = UNSPECIFIED, 1 = UNKNOWN, 2 = RESOURCE, 3 = ATTRIBUTE,
+        // 5 = SEGMENT, 6 = METRIC
         let category = match row.category {
-            1 => "RESOURCE",
-            2 => "ATTRIBUTE",
-            3 => "SEGMENT",
-            4 => "METRIC",
+            2 => "RESOURCE",
+            3 => "ATTRIBUTE",
+            5 => "SEGMENT",
+            6 => "METRIC",
             _ => {
                 if row.name.starts_with("metrics.") {
                     "METRIC"
@@ -99,18 +102,22 @@ pub async fn fetch_from_api(api_context: &GoogleAdsAPIAccess) -> Result<FieldMet
         .to_string();
 
         // Convert data_type enum to string representation
+        // Google Ads API v23 GoogleAdsFieldDataType enum:
+        // 0 = UNSPECIFIED, 1 = UNKNOWN, 2 = BOOLEAN, 3 = DATE,
+        // 4 = DOUBLE, 5 = ENUM, 6 = FLOAT, 7 = INT32, 8 = INT64,
+        // 9 = MESSAGE, 10 = RESOURCE_NAME, 11 = STRING, 12 = UINT64
         let data_type = match row.data_type {
-            1 => "BOOLEAN",
-            2 => "DATE",
-            3 => "DOUBLE",
-            4 => "ENUM",
-            5 => "FLOAT",
-            6 => "INT32",
-            7 => "INT64",
-            8 => "MESSAGE",
-            9 => "RESOURCE_NAME",
-            10 => "STRING",
-            11 => "UINT64",
+            2 => "BOOLEAN",
+            3 => "DATE",
+            4 => "DOUBLE",
+            5 => "ENUM",
+            6 => "FLOAT",
+            7 => "INT32",
+            8 => "INT64",
+            9 => "MESSAGE",
+            10 => "RESOURCE_NAME",
+            11 => "STRING",
+            12 => "UINT64",
             _ => "UNKNOWN",
         }
         .to_string();
