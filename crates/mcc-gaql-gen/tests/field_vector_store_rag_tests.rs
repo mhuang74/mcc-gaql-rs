@@ -8,10 +8,23 @@ use rig_lancedb::LanceDbVectorIndex;
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 
+#[allow(unused_imports)]
+use dirs;
+
 /// Shared embedding model to avoid parallel initialization issues
 fn get_shared_embedding_model() -> &'static rig_fastembed::EmbeddingModel {
     static MODEL: OnceLock<rig_fastembed::EmbeddingModel> = OnceLock::new();
     MODEL.get_or_init(|| {
+        // Set HF_HOME to cache fastembed models in the proper location
+        let cache_dir = dirs::cache_dir()
+            .expect("Failed to get cache directory")
+            .join("mcc-gaql")
+            .join("fastembed-models");
+        std::fs::create_dir_all(&cache_dir).expect("Failed to create cache directory");
+        // SAFETY: This is safe because we're only setting a known environment variable
+        // and the process is single-threaded at this point.
+        unsafe { std::env::set_var("HF_HOME", &cache_dir) };
+
         let fastembed_client = FastembedClient::new();
         fastembed_client.embedding_model(&FastembedModel::BGESmallENV15)
     })
