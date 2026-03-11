@@ -198,6 +198,7 @@ impl ScrapedDocs {
         base_url: &str,
     ) -> Result<HashMap<String, ScrapedFieldDoc>> {
         let url = format!("{}/{}/{}", base_url, api_version, resource);
+        log::info!("Scraping URL: {}", url);
 
         let response = client
             .get(&url)
