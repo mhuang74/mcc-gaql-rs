@@ -22,11 +22,17 @@ jobs:
       - name: Install protobuf
         run: brew install protobuf
 
-      - name: Build release binary
+      - name: Build mcc-gaql release binary
         env:
           MCC_GAQL_EMBED_CLIENT_SECRET: ${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}
           MCC_GAQL_DEV_TOKEN: ${{ secrets.GOOGLE_ADS_DEV_TOKEN }}
-        run: cargo build --release --target aarch64-apple-darwin
+        run: cargo build -p mcc-gaql --release --target aarch64-apple-darwin
+
+      - name: Build mcc-gaql-gen release binary
+        env:
+          MCC_GAQL_EMBED_CLIENT_SECRET: ${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}
+          MCC_GAQL_DEV_TOKEN: ${{ secrets.GOOGLE_ADS_DEV_TOKEN }}
+        run: cargo build -p mcc-gaql-gen --release --target aarch64-apple-darwin
 
       - name: Extract version from tag
         id: version
@@ -36,6 +42,7 @@ jobs:
         run: |
           mkdir -p release
           cp target/aarch64-apple-darwin/release/mcc-gaql release/
+          cp target/aarch64-apple-darwin/release/mcc-gaql-gen release/
           cp README.md release/
           cp LICENSE release/
           cd release

@@ -5,11 +5,73 @@
 [![Rust](https://img.shields.io/badge/rust-1.90+-orange.svg)](https://www.rust-lang.org)
 [![GitHub release](https://img.shields.io/github/v/release/mhuang74/mcc-gaql-rs)](https://github.com/mhuang74/mcc-gaql-rs/releases)
 
-Command line tool to execute Google Ads GAQL queries across MCC child accounts. Inspired by [gaql-cli](https://github.com/getyourguide/gaql-cli).
+Two Rust CLI tools for working with Google Ads GAQL queries across MCC child accounts. Inspired by [gaql-cli](https://github.com/getyourguide/gaql-cli).
+
+## About
+
+This project provides two separate tools:
+
+| Tool | Size | Purpose |
+|------|------|---------|
+| `mcc-gaql` | ~15-20 MB | Lightweight query tool for executing GAQL queries |
+| `mcc-gaql-gen` | ~400 MB | GAQL generation tool with LLM/RAG for natural language queries |
+
+**Why two tools?** The core query tool is fast, lightweight, and has minimal dependencies. The generation tool includes LLM/RAG functionality for natural language queries, which requires many heavy dependencies. Keeping them separate allows most users to install only what they need.
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         WORKSPACE ARCHITECTURE                          │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│   ┌──────────────────────┐         ┌──────────────────────────────┐    │
+│   │   mcc-gaql           │         │   mcc-gaql-gen               │    │
+│   │   (Query Tool)       │         │   (GAQL Generation Tool)     │    │
+│   │   ~15-20 MB          │         │   ~400 MB                    │    │
+│   │                      │         │                              │    │
+│   │   • Execute GAQL     │         │   • parse-protos: Field docs  │    │
+│   │   • OAuth2           │         │   • enrich: Merge proto docs │    │
+│   │   • CSV/JSON output  │         │   • generate: prompt→GAQL    │    │
+│   │   • No LLM deps      │         │   • upload/download: R2      │    │
+│   └──────────┬───────────┘         └───────────────┬──────────────┘    │
+│              │                                     │                    │
+│              └──────────────┬──────────────────────┘                    │
+│                             ▼                                           │
+│              ┌──────────────────────────────┐                           │
+│              │   mcc-gaql-common            │                           │
+│              │   (Shared Library)           │                           │
+│              │                              │                           │
+│              │   • Config types             │                           │
+│              │   • FieldMetadata types      │                           │
+│              │   • Path utilities           │                           │
+│              └──────────────────────────────┘                           │
+│                                                                         │
+│   ┌─────────────────────────────────────────────────────────────────┐  │
+│   │                      Cloudflare R2                               │  │
+│   │   (Public read, maintainer write)                                │  │
+│   │   • field_metadata_enriched.json                                 │  │
+│   │   • embeddings (pre-computed vectors)                            │  │
+│   └─────────────────────────────────────────────────────────────────┘  │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### Design Decision: Two Separate Binaries
+
+| Tool | Binary Name | Dependencies | Use Case |
+|------|-------------|-------------|----------|
+| Query Tool | `mcc-gaql` | ~500 crates, ~15-20 MB | Execute GAQL, export results |
+| Generation Tool | `mcc-gaql-gen` | ~2400 crates, ~400 MB | Natural language → GAQL, metadata management |
+
+**Benefits:**
+- Keep the query tool lightweight and fast to build
+- Allow users who only need query execution to avoid LLM dependencies
+- Make it clear that natural language queries are a specialized feature
 
 ## Installation
 
-### Download Pre-built Binary (macOS Apple Silicon)
+### Download Pre-built Binaries (macOS Apple Silicon)
 
 Download the latest release from [GitHub Releases](https://github.com/mhuang74/mcc-gaql-rs/releases):
 
@@ -18,10 +80,35 @@ Download the latest release from [GitHub Releases](https://github.com/mhuang74/m
 curl -L https://github.com/mhuang74/mcc-gaql-rs/releases/latest/download/mcc-gaql-<version>-macos-aarch64.tar.gz | tar xz
 
 # Move to PATH
-mv mcc-gaql /usr/local/bin/
+mv mcc-gaql mcc-gaql-gen /usr/local/bin/
 
 # Verify installation
 mcc-gaql --version
+mcc-gaql-gen --version
+```
+
+### Install Only mcc-gaql (Query Tool)
+
+If you only need the lightweight query tool:
+
+```bash
+# Download and extract
+curl -L https://github.com/mhuang74/mcc-gaql-rs/releases/latest/download/mcc-gaql-<version>-macos-aarch64.tar.gz | tar xz
+
+# Move only mcc-gaql to PATH
+mv mcc-gaql /usr/local/bin/
+```
+
+### Install Only mcc-gaql-gen (Generation Tool)
+
+If you only need the natural language query generation:
+
+```bash
+# Download and extract
+curl -L https://github.com/mhuang74/mcc-gaql-rs/releases/latest/download/mcc-gaql-<version>-macos-aarch64.tar.gz | tar xz
+
+# Move only mcc-gaql-gen to PATH
+mv mcc-gaql-gen /usr/local/bin/
 ```
 
 > **For developers**: See [DEVELOPER.md](DEVELOPER.md) for building from source and embedding credentials.
@@ -267,14 +354,21 @@ mcc-gaql --profile myprofile \
 mcc-gaql --profile myprofile --format json "SELECT ..."  # json, csv, or table
 ```
 
-## Natural Language Queries (Experimental)
+## Natural Language Queries (mcc-gaql-gen)
 
 ### Overview
 
-Instead of writing GAQL directly, describe what you want in plain English and the tool will generate and execute the query for you. See [LLM Configuration](#llm-configuration-for-natural-language-queries) for setup instructions.
+Use `mcc-gaql-gen` to convert natural language descriptions into GAQL queries. The `mcc-gaql` cli tool executes queries, while `mcc-gaql-gen` generates them. See [LLM Configuration](#llm-configuration-for-natural-language-queries) for setup instructions.
 
 ```bash
-mcc-gaql -n "campaign changes from last 14 days with current campaign status and bidding strategy" -o recent_changes.csv
+# Generate a GAQL query from natural language
+mcc-gaql-gen generate "campaign changes from last 14 days with current campaign status and bidding strategy" > recent_changes.gaql
+
+# Execute the generated query
+mcc-gaql --profile myprofile "$(cat recent_changes.gaql)" -o recent_changes.csv
+
+# Or pipe directly
+mcc-gaql-gen generate "campaign changes from last 14 days" | xargs mcc-gaql --profile myprofile -o recent_changes.csv
 ```
 
 ### How It Works
@@ -291,16 +385,100 @@ The natural language feature uses a **Retrieval-Augmented Generation (RAG)** app
 
 Natural language queries require an LLM provider to be configured. See [LLM Configuration](#llm-configuration-for-natural-language-queries) for detailed setup instructions.
 
-> **Warning**: This feature is **experimental**. The LLM may generate invalid GAQL queries that will result in errors when executed against the Google Ads API. If you're querying multiple accounts, consider using `--keep-going` to continue processing even if the generated query fails on some accounts. Always review generated queries when possible.
+> **Warning**: This feature is **experimental**. The LLM may generate invalid GAQL queries that will result in errors when executed against the Google Ads API. Always review generated queries when possible.
 
 ### Basic Usage
 
 ```bash
-# Simple natural language query
-mcc-gaql -n "show me all campaigns with status and bidding strategy" -o campaigns.csv
+# Generate a query
+mcc-gaql-gen generate "show me all campaigns with status and bidding strategy"
 
-# With specific date range and metrics
-mcc-gaql -n "campaign performance last 30 days including impressions, clicks, and cost" --format csv
+# Generate with local metadata
+mcc-gaql-gen generate "campaign performance last 30 days including impressions, clicks, and cost" --local
+```
+
+### mcc-gaql-gen Commands
+
+#### parse-protos
+
+Parse Google's official proto files to extract authoritative field documentation:
+
+```bash
+mcc-gaql-gen parse-protos [OPTIONS]
+
+OPTIONS:
+    --output <PATH>    Path to proto docs cache output (default: ~/.cache/mcc-gaql/proto_docs_v23.json)
+    --force             Force rebuild of cache even if it exists
+```
+
+**Output:** Creates `proto_docs_v23.json` with ~182 resource messages, ~360 enums, and ~3000 fields with their documentation.
+
+#### enrich
+
+Enrich field metadata with documentation:
+
+```bash
+mcc-gaql-gen enrich [OPTIONS]
+
+OPTIONS:
+    --use-proto         Use proto documentation as primary source (no LLM required)
+    --output <PATH>     Path to output enriched cache
+```
+
+Use `--use-proto` for fast enrichment using proto documentation only, without LLM API calls.
+
+#### generate
+
+Generate GAQL from natural language:
+
+```bash
+mcc-gaql-gen generate <PROMPT> [OPTIONS]
+
+ARGUMENTS:
+    <PROMPT>      Natural language query prompt
+
+OPTIONS:
+    --queries <PATH>    Path to query cookbook TOML file
+    --metadata <PATH>   Path to enriched field metadata JSON
+    --basic            Use basic RAG mode (query cookbook only)
+```
+
+```
+mcc-gaql-gen 0.15.0
+Generate GAQL from natural language using LLM/RAG
+
+USAGE:
+    mcc-gaql-gen [SUBCOMMAND]
+
+SUBCOMMANDS:
+    parse-protos    Parse proto files from googleads-rs to extract field documentation
+    enrich          Enrich field metadata with LLM descriptions or proto docs
+    generate        Generate GAQL from natural language prompt
+    upload          Upload metadata to Cloudflare R2
+    download        Download metadata from Cloudflare R2
+    clear-cache     Clear local caches
+    help            Print this message or the help of the given subcommand
+
+DEPRECATED SUBCOMMANDS:
+    scrape           Scraping web docs is deprecated; use parse-protos instead
+```
+
+#### parse-protos Command
+
+Parse Google's official proto files to extract authoritative field documentation:
+
+```bash
+# Parse all proto files (recommended first step)
+mcc-gaql-gen parse-protos
+
+# Force rebuild of cache
+mcc-gaql-gen parse-protos --force
+
+# Output:
+# Proto parsing complete:
+#   - 182 messages with ~3000 fields
+#   - 360 enums with ~1200 values
+# Cache saved to: ~/.cache/mcc-gaql/proto_docs_v23.json
 ```
 
 ### Tips for Better Results
@@ -309,20 +487,35 @@ mcc-gaql -n "campaign performance last 30 days including impressions, clicks, an
 - **List desired fields**: Name specific metrics or attributes you want included
 - **Specify date ranges**: Include date ranges explicitly (e.g., "last 30 days", "this month", "during last week")
 - **Include filtering criteria**: Add conditions like "where clicks > 100" or "only active campaigns"
-- **Use field metadata**: Run `--refresh-field-cache` periodically to keep the field metadata current
+- **Use high-quality field metadata**: Run the full metadata pipeline before generating queries
 
-### Example with Custom Model
+### Recommended Metadata Pipeline
 
-Override the default model for a specific query:
+For best natural language query results, prepare your metadata using this workflow:
 
 ```bash
-MCC_GAQL_LLM_MODEL="hf:MiniMaxAI/MiniMax-M2.1" mcc-gaql --profile themade -n "performance from last week, including impression, clicks, prominence metrics, revenue, conversion, and all video metrics, except for trueview metrics" --format csv
+# 1. Parse proto files (extract authoritative documentation)
+mcc-gaql-gen parse-protos
+
+# 2. Enrich field metadata cache with proto docs
+mcc-gaql-gen enrich --use-proto
+
+# 3. Generate queries with rich context
+mcc-gaql-gen generate "campaign performance last 30 days including impressions, clicks, and cost"
 ```
+
+This ensures the LLM has complete field documentation including:
+- Field descriptions from official proto files
+- Enum value meanings (e.g., `ENABLED: Campaign is serving ads`)
+- Field behavior annotations (IMMUTABLE, OUTPUT_ONLY, etc.)
+- Resource-level descriptions
 
 ## CLI Reference
 
+### mcc-gaql (Query Tool)
+
 ```
-mcc-gaql 0.13.0
+mcc-gaql 0.15.0
 Efficiently run Google Ads GAQL query across one or more child accounts linked to MCC.
 
 USAGE:
@@ -342,12 +535,9 @@ OPTIONS:
         --keep-going                   Keep going on errors
     -l, --list-child-accounts          List all child accounts under MCC
     -m, --mcc-id <MCC_ID>              MCC (Manager) Customer ID for login-customer-id header
-    -n, --natural-language             Use natural language prompt instead of GAQL
-        --clear-vector-cache           Clear the vector cache (LanceDB embeddings) and exit
     -o, --output <OUTPUT>              GAQL output filename
     -p, --profile <PROFILE>            Query using profile from config
     -q, --stored-query <STORED_QUERY>  Load named query from file
-        --refresh-field-cache          Refresh field metadata cache from Google Ads API
         --setup                        Set up configuration with interactive wizard
         --show-config                  Display current configuration and exit
         --show-fields <SHOW_FIELDS>    Show available fields for a specific resource
@@ -356,7 +546,20 @@ OPTIONS:
     -V, --version                      Print version information
 ```
 
-### Common Options
+### mcc-gaql-gen (Generation Tool)
+
+#### enrich Command
+
+```bash
+mcc-gaql-gen enrich [OPTIONS]
+
+OPTIONS:
+    --use-proto                Use proto documentation as primary source (no LLM calls)
+```
+
+Use `--use-proto` to populate metadata with official proto documentation without requiring LLM API calls. This is the fastest and most reliable enrichment method.
+
+### Common Options (mcc-gaql)
 
 | Option | Description |
 |--------|-------------|
@@ -372,15 +575,16 @@ OPTIONS:
 | `--groupby <field>` | Group results by field |
 | `--keep-going` | Continue processing on errors |
 | `-q <query_name>` | Use stored query from queries file |
-| `-n` | Natural language query (requires LLM) |
 | `-f, --field-service` | Query Google Ads field service |
 | `--show-fields <resource>` | Show available fields for a resource |
-| `--refresh-field-cache` | Refresh field metadata cache from API |
 | `--export-field-metadata` | Export field metadata summary to stdout |
-| `--clear-vector-cache` | Clear the vector cache (LanceDB embeddings) and exit |
 | `--setup` | Run interactive setup wizard |
 | `--show-config` | Show configuration |
 | `--version` | Show version |
+
+### mcc-gaql-gen (Generation Tool)
+
+See [Natural Language Queries (mcc-gaql-gen)](#natural-language-queries-mcc-gaql-gen) for usage.
 
 ## Configuration
 
@@ -468,7 +672,7 @@ export MCC_GAQL_KEEP_GOING="true"
 
 ### LLM Configuration for Natural Language Queries
 
-[Natural language queries](#natural-language-queries-experimental) require an LLM provider to convert natural language into GAQL. Configure using the following environment variables:
+[Natural language queries with mcc-gaql-gen](#natural-language-queries-mcc-gaql-gen) require an LLM provider to convert natural language into GAQL. Configure using the following environment variables:
 
 | Variable | Description | Required |
 |----------|-------------|----------|
@@ -604,6 +808,49 @@ ORDER BY
 ```
 
 
+## Environment Variables
+
+All configuration values can be overridden via environment variables with prefix `MCC_GAQL_`:
+
+| Variable | Purpose |
+|----------|---------|
+| `MCC_GAQL_DEV_TOKEN` | Google Ads developer token |
+| `MCC_GAQL_LOG_LEVEL` | Logging level (error, warn, info, debug, trace) |
+| `MCC_GAQL_LLM_API_KEY` | LLM provider API key (mcc-gaql-gen) |
+| `MCC_GAQL_LLM_BASE_URL` | LLM provider base URL (mcc-gaql-gen) |
+| `MCC_GAQL_LLM_MODEL` | Model name (mcc-gaql-gen) |
+| `MCC_GAQL_LLM_TEMPERATURE` | LLM temperature (default: 0.1) |
+| `OPENROUTER_API_KEY` | Alternative to MCC_GAQL_LLM_API_KEY |
+| `R2_ACCESS_KEY` | Cloudflare R2 access key (mcc-gaql-gen upload) |
+| `R2_SECRET_KEY` | Cloudflare R2 secret key (mcc-gaql-gen upload) |
+
+### Example Configuration Override
+
+```bash
+# Override storage path for query cookbook
+export MCC_GAQL_QUERIES_FILENAME="my_queries.toml"
+
+# Set default output format
+export MCC_GAQL_FORMAT="csv"
+
+# Continue processing on errors
+export MCC_GAQL_KEEP_GOING="true"
+```
+
+## File Locations
+
+Configuration and data files are stored in:
+
+| File/Directory | Location |
+|----------------|----------|
+| Config file | `~/.config/mcc-gaql/config.toml` (Linux/macOS)<br>`%APPDATA%\mcc-gaql\config.toml` (Windows) |
+| Proto docs cache | `~/.cache/mcc-gaql/proto_docs_v23.json` |
+| Field metadata cache | `~/.config/mcc-gaql/field_metadata.json` |
+| LanceDB vector store | `~/.cache/mcc-gaql/lancedb/` |
+| Scraped docs cache | `~/.config/mcc-gaql/scraped_docs.json` |
+| Token cache | Same directory as config, named by user email hash |
+
+
 ## Debugging
 
 Enable debug logging to troubleshoot issues:
@@ -617,23 +864,96 @@ MCC_GAQL_LOG_LEVEL="debug" mcc-gaql --profile myprofile "SELECT ..."
 ```
 
 ## Google Ads Field Metadata Caching
-### Field Metadata Management
 
-The tool maintains a local cache of Google Ads field metadata to support [natural language queries](#natural-language-queries-experimental) and field exploration. This cache provides the LLM with knowledge of valid fields, their types, and resource relationships. Use these commands to manage the field cache:
+### Overview
 
-#### Refresh Field Cache
+The `mcc-gaql-gen` tool maintains a local cache of Google Ads field metadata to support [natural language queries](#natural-language-queries-mcc-gaql-gen) and field exploration. This cache provides the LLM with knowledge of valid fields, their types, and resource relationships.
 
-Update the local field metadata cache from the Google Ads API:
+### Two Approaches to Metadata Collection
 
-```bash
-# Refresh cache using a profile
-mcc-gaql --profile myprofile --refresh-field-cache
+The tool supports two methods for extracting field documentation:
 
-# Refresh cache with explicit credentials
-mcc-gaql --mcc-id "111-222-3333" --user-email "mcc@company.com" --refresh-field-cache
+| Approach | Status | Description |
+|----------|--------|-------------|
+| **Proto Parsing** (Recommended) | ✅ Stable | Parses Google's official proto files from `googleads-rs` crate - authoritative source |
+| **Web Scraping** | ⚠️ Deprecated | Scrapes HTML documentation from Google's developer website - unreliable |
+
+#### Proto Parsing (Recommended)
+
+The **proto parsing** approach extracts field documentation directly from Google's official protocol buffer (`.proto`) files included in the `googleads-rs` dependency. This provides authoritative,高质量 documentation straight from the source.
+
+**Advantages:**
+- Authoritative source (Google's official proto definitions)
+- Complete field documentation with types and behaviors
+- Extracts enum value descriptions
+- Fast parsing (<30 seconds for all fields)
+- No network requests required
+- Works offline
+
+**Metadata Source:** ~955 proto files bundled with `googleads-rs` at:
+```
+$CARGO_HOME/git/checkouts/googleads-rs-*/proto/google/ads/googleads/v23/
 ```
 
-#### Show Fields for a Resource
+**Use this approach for:**
+- Production metadata preparation
+- Complete field and enum documentation
+- Fast, reliable cache building
+
+#### Web Scraping (Deprecated)
+
+The **web scraping** approach attempts to fetch documentation from Google's developer website. This is **deprecated** due to:
+- HTML structure changes breaking the scraper
+- Rate limiting and CAPTCHAs
+- Incomplete field coverage
+
+**Use this approach only if:**
+- You need documentation that's not in proto files (rare)
+- Proto parsing fails for some reason
+
+### Field Metadata Management
+
+#### Step 1: Parse Proto Files
+
+First, parse all proto files to extract documentation. This is the recommended first step:
+
+```bash
+# Parse proto files from googleads-rs (takes ~30 seconds)
+mcc-gaql-gen parse-protos
+
+# Force rebuild of cache
+mcc-gaql-gen parse-protos --force
+
+# Specify custom output path
+mcc-gaql-gen parse-protos --output /custom/path/proto_docs.json
+```
+
+This creates a cache at `~/.cache/mcc-gaql/proto_docs_v23.json` containing:
+- Field documentation from ~182 resource proto files
+- Enum documentation from ~360 enum proto files
+- Field behavior annotations (IMMUTABLE, OUTPUT_ONLY, REQUIRED, OPTIONAL)
+- Type information for all fields
+
+#### Step 2: Enrich Field Metadata
+
+Merge the proto documentation into your field metadata cache:
+
+```bash
+# Using proto documentation only (no LLM required)
+mcc-gaql-gen enrich --use-proto
+
+# This populates FieldMetadata.description for all fields with proto docs
+```
+
+#### Step 3: Download from Cloudflare R2 (Alternative)
+
+Instead of parsing proto files locally, you can download pre-enriched metadata from the public Cloudflare R2 bucket:
+
+```bash
+mcc-gaql-gen download --api-version v19
+```
+
+#### Show Fields for a Resource (mcc-gaql)
 
 Display available fields for a specific resource type (e.g., campaign, ad_group, customer):
 
@@ -651,7 +971,7 @@ mcc-gaql --show-fields customer
 mcc-gaql --show-fields keyword_view
 ```
 
-#### Export Field Metadata
+#### Export Field Metadata (mcc-gaql)
 
 Export the complete field metadata summary to stdout (useful for documentation or analysis):
 
@@ -663,11 +983,211 @@ mcc-gaql --export-field-metadata > field_metadata.txt
 mcc-gaql --export-field-metadata | grep "campaign"
 ```
 
+#### Upload to Cloudflare R2 (mcc-gaql-gen)
+
+Upload enriched metadata to Cloudflare R2 for public access:
+
+```bash
+R2_ACCESS_KEY="your_key" R2_SECRET_KEY="your_secret" mcc-gaql-gen upload
+```
+
+## Project Structure
+
+```
+mcc-gaql-rs/
+├── Cargo.toml                    # Workspace root
+├── crates/
+│   ├── mcc-gaql/                 # Core query tool (lightweight)
+│   │   └── src/
+│   │       ├── main.rs
+│   │       ├── googleads.rs     # gRPC client, OAuth2, queries
+│   │       ├── setup.rs          # Interactive wizard
+│   │       └── ...
+│   ├── mcc-gaql-gen/             # GAQL generation tool (with LLM/RAG)
+│   │   └── src/
+│   │       ├── main.rs           # CLI: parse-protos, enrich, generate, upload
+│   │       ├── proto_parser.rs  # Parse proto files for field docs
+│   │       ├── proto_docs_cache.rs # Cache parsed proto documentation
+│   │       ├── proto_locator.rs  # Find googleads-rs proto directory
+│   │       ├── enricher.rs       # Merge docs into metadata
+│   │       ├── rag.rs            # RAG pipeline for prompt→GAQL
+│   │       └── ...
+│   └── mcc-gaql-common/          # Shared types and utilities
+└── .github/workflows/
+    └── ...                       # CI/CD workflows
+```
+
+## When to Use Each Tool
+
+| Use Case | Recommended Tool |
+|----------|-----------------|
+| Run GAQL queries on Google Ads data | `mcc-gaql` |
+| Query multiple MCC child accounts | `mcc-gaql` |
+| Export results to CSV/JSON | `mcc-gaql` |
+| Parse proto files for metadata | `mcc-gaql-gen parse-protos` |
+| Enrich field metadata | `mcc-gaql-gen enrich --use-proto` |
+| Generate GAQL from natural language | `mcc-gaql-gen generate` |
+| Download/upload enriched metadata | `mcc-gaql-gen download/upload` |
+
 ## Alternatives
 
 * [gaql-cli](https://github.com/getyourguide/gaql-cli)
 * [Google Ads API Report Fetcher (gaarf)](https://github.com/google/ads-api-report-fetcher)
 
+## Development
+
+> **Note**: The information in this section may not be completely current. For the definitive source, see the actual code files and [CLAUDE.md](CLAUDE.md).
+
+### Repository Structure
+
+```
+mcc-gaql-rs/
+├── Cargo.toml                    # Workspace root
+├── CLAUDE.md                     # AI/coding agent guide
+├── README.md
+├── specs/                        # Implementation plans
+│
+├── crates/
+│   ├── mcc-gaql/                 # Core query tool
+│   │   ├── Cargo.toml
+│   │   └── src/
+│   │       ├── main.rs
+│   │       ├── args.rs           # CLI argument definitions
+│   │       ├── config.rs         # Profile-based TOML config
+│   │       ├── setup.rs          # Interactive wizard
+│   │       ├── googleads.rs      # gRPC client, OAuth2, queries
+│   │       └── util.rs           # Query parsing, helpers
+│   │
+│   ├── mcc-gaql-gen/             # GAQL generation tool
+│   │   ├── Cargo.toml
+│   │   └── src/
+│   │       ├── main.rs           # CLI: scrape, enrich, generate, upload
+│   │       ├── scraper.rs        # HTTP scraper for API docs
+│   │       ├── enricher.rs       # LLM-based field enrichment
+│   │       ├── rag.rs            # RAG pipeline for prompt→GAQL
+│   │       ├── vector_store.rs   # LanceDB vector store
+│   │       ├── r2.rs             # Cloudflare R2 client
+│   │       ├── proto_parser.rs   # Parse proto files for field docs
+│   │       ├── proto_docs_cache.rs # Cache parsed proto documentation
+│   │       └── proto_locator.rs  # Find googleads-rs proto directory
+│   │
+│   └── mcc-gaql-common/          # Shared types and utilities
+│       ├── Cargo.toml
+│       └── src/
+│           ├── lib.rs
+│           ├── config.rs         # Shared config loading
+│           ├── field_metadata.rs # FieldMetadata types
+│           └── paths.rs          # config_dir(), cache_dir(), etc.
+│
+└── .github/
+    └── workflows/
+        ├── build.yml             # Build both binaries
+        ├── release.yml           # Create GitHub releases with both binaries
+        └── metadata-pipeline.yml # Scheduled scrape/enrich/upload
+```
+
+### Module Descriptions
+
+#### mcc-gaql (Core Query Tool)
+
+| Module | Purpose |
+|--------|---------|
+| `args.rs` | CLI argument definitions using clap |
+| `config.rs` | Profile-based TOML configuration with env var override |
+| `setup.rs` | Interactive configuration wizard |
+| `googleads.rs` | Google Ads API client: OAuth2, gRPC, streaming queries |
+| `util.rs` | Query file parsing, logging setup, helpers |
+
+#### mcc-gaql-gen (GAQL Generation Tool)
+
+| Module | Purpose |
+|--------|---------|
+| `scraper.rs` | HTTP scraper for Google Ads API documentation |
+| `enricher.rs` | LLM-based enrichment of field descriptions |
+| `rag.rs` | RAG pipeline: embeddings + LLM for natural language queries |
+| `vector_store.rs` | LanceDB vector store management |
+| `r2.rs` | Cloudflare R2 download/upload client |
+| `proto_parser.rs` | Parse proto files for field documentation |
+| `proto_docs_cache.rs` | Cache and merge proto documentation |
+| `proto_locator.rs` | Find googleads-rs proto directory |
+
+#### mcc-gaql-common (Shared Library)
+
+| Module | Purpose |
+|--------|---------|
+| `config.rs` | Shared configuration types and loading |
+| `field_metadata.rs` | FieldMetadata struct and cache types |
+| `paths.rs` | Standard paths for config, cache, metadata files |
+
+### Running Tests
+
+```bash
+# Run all tests (workspace)
+cargo test --workspace
+
+# Run core query tool tests only
+cargo test -p mcc-gaql
+
+# Run GAQL generation tool tests only
+cargo test -p mcc-gaql-gen
+```
+
+### Common Development Tasks
+
+```bash
+# Build all crates
+cargo build --workspace
+
+# Build only core query tool (fast, ~15-20 MB)
+cargo build -p mcc-gaql --release
+
+# Build GAQL generation tool (slow, ~400 MB)
+cargo build -p mcc-gaql-gen --release
+
+# Build release with embedded credentials
+MCC_GAQL_DEV_TOKEN="token" MCC_GAQL_EMBED_CLIENT_SECRET="$(cat clientsecret.json)" \
+  cargo build -p mcc-gaql --release
+
+# Run core query tool
+cargo run -p mcc-gaql -- --help
+
+# Run GAQL generation tool
+cargo run -p mcc-gaql-gen -- --help
+
+# Check code without building
+cargo check --workspace
+
+# Format code
+cargo fmt --all
+
+# Lint
+cargo clippy --workspace
+```
+
+### Dependencies Overview
+
+#### mcc-gaql (Core - Lightweight)
+
+| Crate | Purpose |
+|-------|---------|
+| `googleads-rs` | Google Ads API gRPC bindings |
+| `tonic` | gRPC framework |
+| `yup-oauth2` | OAuth2 authentication |
+| `polars` | DataFrame operations |
+| `clap` | CLI argument parsing |
+| `figment` | Configuration management |
+
+#### mcc-gaql-gen (LLM/RAG - Heavy)
+
+| Crate | Purpose |
+|-------|---------|
+| `rig-core` | LLM abstraction layer |
+| `rig-fastembed` | Local embedding generation |
+| `rig-lancedb` | Vector store integration |
+| `lancedb` | Embedded vector database |
+| `reqwest` | HTTP client for scraping |
+| `scraper` | HTML parsing for API docs |
+
 ## Contributing
 
-See [DEVELOPER.md](DEVELOPER.md) for development setup, project structure, and contribution guidelines.
+See [DEVELOPER.md](DEVELOPER.md) for detailed development setup and contribution guidelines.
