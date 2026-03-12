@@ -1,4 +1,15 @@
 //
+// DEPRECATED: This module is deprecated in favor of proto-based metadata extraction.
+//
+// The HTML scraping approach is unreliable because Google's documentation pages use
+// JavaScript rendering. Use the proto-based approach instead:
+//
+//   mcc-gaql-gen parse-protos     # Parse proto files to extract documentation
+//   mcc-gaql-gen enrich --use-proto  # Enrich field metadata using proto docs
+//
+// The proto-based approach extracts authoritative field documentation directly
+// from Google's proto definitions in the googleads-rs crate.
+//
 // Metadata scraper: fetches Google Ads API field reference pages to extract
 // plain-text field descriptions and enum value documentation.
 //

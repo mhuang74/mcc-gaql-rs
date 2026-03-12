@@ -1,0 +1,493 @@
+//! Proto file parser for extracting field documentation.
+//!
+//! This module parses proto files from googleads-rs to extract documentation
+//! comments for fields, messages, and enums.
+
+use std::collections::HashMap;
+use std::path::Path;
+use anyhow::Result;
+use regex::Regex;
+use serde::{Deserialize, Serialize};
+use walkdir::WalkDir;
+
+/// Field behavior annotations (google.api.field_behavior)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FieldBehavior {
+    Immutable,
+    OutputOnly,
+    Required,
+    Optional,
+}
+
+/// Parsed documentation for a single proto field.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProtoFieldDoc {
+    pub field_name: String,
+    pub field_number: u32,
+    pub description: String,
+    pub field_behavior: Vec<FieldBehavior>,
+    pub type_name: String,
+    pub is_enum: bool,
+    pub enum_type: Option<String>,
+}
+
+/// Parsed documentation for a single proto message (resource).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProtoMessageDoc {
+    pub message_name: String,
+    pub description: String,
+    pub fields: Vec<ProtoFieldDoc>,
+}
+
+/// Parsed documentation for a single enum value.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnumValueDoc {
+    pub name: String,
+    pub number: i32,
+    pub description: String,
+}
+
+/// Parsed documentation for a proto enum.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProtoEnumDoc {
+    pub enum_name: String,
+    pub description: String,
+    pub values: Vec<EnumValueDoc>,
+}
+
+/// Main parser for proto files.
+pub struct ProtoParser {
+    // Regex patterns for parsing
+    message_pattern: Regex,
+    field_pattern: Regex,
+    enum_pattern: Regex,
+    enum_value_pattern: Regex,
+    field_behavior_pattern: Regex,
+}
+
+/// Find the line index for a given byte position in file content.
+/// Returns the index of the line containing the position.
+fn find_line_index(content: &str, pos: usize) -> usize {
+    content[..pos.min(content.len())]
+        .lines()
+        .count()
+        .saturating_sub(1)
+}
+
+/// Find the line index for a given byte position using a pre-split lines array.
+/// This avoids re-collecting lines when we already have them.
+fn find_line_index_from_lines(lines: &[&str], pos: usize) -> usize {
+    let mut current_pos = 0;
+
+    for (idx, line) in lines.iter().enumerate() {
+        // +1 accounts for newline character(s)
+        let line_end = current_pos + line.len() + 1;
+        if current_pos <= pos && pos < line_end {
+            return idx;
+        }
+        current_pos = line_end;
+    }
+
+    lines.len().saturating_sub(1)
+}
+
+/// Extract comment lines preceding a given line index.
+/// Returns the concatenated comment text.
+fn extract_preceding_comment_lines(lines: &[&str], line_idx: usize) -> String {
+    let mut comments = Vec::new();
+
+    for i in (0..line_idx).rev() {
+        let line = lines[i].trim();
+
+        // Stop at first non-comment line
+        if !line.starts_with("//") {
+            break;
+        }
+
+        // Remove leading // and whitespace
+        let comment = line.strip_prefix("//").unwrap_or(line).trim();
+        if !comment.is_empty() {
+            comments.push(comment.to_string());
+        }
+    }
+
+    // Reverse to get correct order
+    comments.reverse();
+    comments.join(" ")
+}
+
+impl ProtoParser {
+    pub fn new() -> Self {
+        Self {
+            // Match message definitions: message MessageName {
+            message_pattern: Regex::new(r"(?m)^message\s+(\w+)\s*\{").unwrap(),
+            // Match field definitions: type name = number;
+            // Captures: type, name, number
+            field_pattern: Regex::new(
+                r#"(?m)^\s*((?:\w+\.)*\w+)\s+(\w+)\s*=\s*(\d+)(?:\s*\[([^\]]*)\])?;"#
+            ).unwrap(),
+            // Match enum definitions: enum EnumName {
+            enum_pattern: Regex::new(r"(?m)^\s*enum\s+(\w+)\s*\{").unwrap(),
+            // Match enum values: NAME = number;
+            // Optionally preceded by // comment
+            enum_value_pattern: Regex::new(r"(?m)^\s*(\w+)\s*=\s*(-?\d+)\s*;").unwrap(),
+            // Match field behavior: (google.api.field_behavior) = BEHAVIOR
+            field_behavior_pattern: Regex::new(
+                r#"(?m)\(google\.api\.field_behavior\)\s*=\s*(\w+)"#
+            ).unwrap(),
+        }
+    }
+
+    /// Parse a proto file and extract message documentation.
+    pub fn parse_proto_file(&self, content: &str) -> Vec<ProtoMessageDoc> {
+        let mut messages = Vec::new();
+        let lines: Vec<&str> = content.lines().collect();
+
+        // Find all message definitions
+        for caps in self.message_pattern.captures_iter(content) {
+            let message_name = caps.get(1).unwrap().as_str().to_string();
+
+            // Find message start position
+            let msg_start = caps.get(0).unwrap().start();
+
+            // Extract message-level comment (lines before the message)
+            let description = self.extract_preceding_comment(&lines, msg_start);
+
+            // Extract fields within the message
+            let fields = self.extract_message_fields(content, msg_start, &message_name);
+
+            messages.push(ProtoMessageDoc {
+                message_name,
+                description,
+                fields,
+            });
+        }
+
+        messages
+    }
+
+    /// Parse an enum proto file and extract enum documentation.
+    pub fn parse_enum_file(&self, content: &str) -> Vec<ProtoEnumDoc> {
+        let mut enums = Vec::new();
+        let lines: Vec<&str> = content.lines().collect();
+
+        // Find all nested enum definitions (message EnumMessage { enum EnumName { ... } })
+        for caps in self.enum_pattern.captures_iter(content) {
+            let enum_name = caps.get(1).unwrap().as_str().to_string();
+            let enum_start = caps.get(0).unwrap().start();
+
+            // Get the enclosing message name
+            let container_name = self.find_container_message(content, enum_start)
+                .unwrap_or_else(|| format!("{}Enum", enum_name));
+
+            // Extract enum-level comment
+            let description = self.extract_preceding_comment(&lines, enum_start);
+
+            // Extract enum values
+            let values = self.extract_enum_values(content, enum_start);
+
+            enums.push(ProtoEnumDoc {
+                enum_name: format!("{}Enum.{}", container_name, enum_name),
+                description,
+                values,
+            });
+        }
+
+        enums
+    }
+
+    /// Extract the name of the containing message for an enum.
+    fn find_container_message(&self, content: &str, pos: usize) -> Option<String> {
+        // Look backwards from pos to find the message definition
+        let before = &content[..pos];
+
+        // Find the last message before this enum
+        for caps in self.message_pattern.captures_iter(before) {
+            return Some(caps.get(1).unwrap().as_str().to_string());
+        }
+
+        None
+    }
+
+    /// Extract comment lines preceding a definition.
+    fn extract_preceding_comment(&self, lines: &[&str], pos: usize) -> String {
+        let line_idx = find_line_index_from_lines(lines, pos);
+        extract_preceding_comment_lines(lines, line_idx)
+    }
+
+    /// Extract fields within a message block.
+    fn extract_message_fields(&self, content: &str, msg_start: usize, _message_name: &str) -> Vec<ProtoFieldDoc> {
+        // Find message end (matching brace)
+        let mut brace_count = 0;
+        let mut msg_end = msg_start;
+
+        let after_start = &content[msg_start..];
+        for (i, c) in after_start.char_indices() {
+            match c {
+                '{' => brace_count += 1,
+                '}' => {
+                    brace_count -= 1;
+                    if brace_count == 0 {
+                        msg_end = msg_start + i + 1;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let message_block = &content[msg_start..msg_end];
+        let mut fields = Vec::new();
+
+        for caps in self.field_pattern.captures_iter(message_block) {
+            let type_name = caps.get(1).unwrap().as_str().to_string();
+            let field_name = caps.get(2).unwrap().as_str().to_string();
+            let field_number: u32 = caps.get(3).unwrap().as_str().parse().unwrap_or(0);
+            let field_opts = caps.get(4).map(|m| m.as_str()).unwrap_or("");
+
+            // Extract field behavior
+            let field_behavior = self.extract_field_behavior(field_opts);
+
+            // Determine if this is an enum type
+            let is_enum = type_name.contains("Enum") || type_name.contains("Status");
+            let enum_type = if is_enum {
+                Some(type_name.clone())
+            } else {
+                None
+            };
+
+            // Get field comment
+            let field_pos = msg_start + caps.get(0).unwrap().start();
+            let description = self.extract_field_comment(content, field_pos);
+
+            fields.push(ProtoFieldDoc {
+                field_name,
+                field_number,
+                description,
+                field_behavior,
+                type_name,
+                is_enum,
+                enum_type,
+            });
+        }
+
+        fields
+    }
+
+    /// Extract field behavior annotations.
+    fn extract_field_behavior(&self, field_opts: &str) -> Vec<FieldBehavior> {
+        let mut behaviors = Vec::new();
+
+        for caps in self.field_behavior_pattern.captures_iter(field_opts) {
+            let behavior = caps.get(1).unwrap().as_str();
+            match behavior {
+                "IMMUTABLE" => behaviors.push(FieldBehavior::Immutable),
+                "OUTPUT_ONLY" => behaviors.push(FieldBehavior::OutputOnly),
+                "REQUIRED" => behaviors.push(FieldBehavior::Required),
+                "OPTIONAL" => behaviors.push(FieldBehavior::Optional),
+                _ => {}
+            }
+        }
+
+        behaviors
+    }
+
+    /// Extract comment for a specific field.
+    fn extract_field_comment(&self, content: &str, field_pos: usize) -> String {
+        let line_idx = find_line_index(content, field_pos);
+        let lines: Vec<&str> = content.lines().collect();
+        extract_preceding_comment_lines(&lines, line_idx)
+    }
+
+    /// Extract enum values from an enum block.
+    fn extract_enum_values(&self, content: &str, enum_start: usize) -> Vec<EnumValueDoc> {
+        // Find enum block end
+        let mut brace_count = 0;
+        let mut enum_end = enum_start;
+
+        let after_start = &content[enum_start..];
+        for (i, c) in after_start.char_indices() {
+            match c {
+                '{' => brace_count += 1,
+                '}' => {
+                    brace_count -= 1;
+                    if brace_count == 0 {
+                        enum_end = enum_start + i + 1;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let enum_block = &content[enum_start..enum_end];
+        let block_offset = enum_start;
+
+        let mut values = Vec::new();
+
+        for caps in self.enum_value_pattern.captures_iter(enum_block) {
+            let name = caps.get(1).unwrap().as_str().to_string();
+            let number: i32 = caps.get(2).unwrap().as_str().parse().unwrap_or(0);
+
+            // Get comment for this value
+            let val_start = block_offset + caps.get(0).unwrap().start();
+            let description = self.extract_enum_value_comment(content, val_start);
+
+            values.push(EnumValueDoc {
+                name,
+                number,
+                description,
+            });
+        }
+
+        values
+    }
+
+    /// Extract comment for an enum value.
+    fn extract_enum_value_comment(&self, content: &str, val_pos: usize) -> String {
+        let line_idx = find_line_index(content, val_pos);
+        let lines: Vec<&str> = content.lines().collect();
+        extract_preceding_comment_lines(&lines, line_idx)
+    }
+}
+
+impl Default for ProtoParser {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Parse all proto files in a directory and return combined documentation.
+pub fn parse_all_protos(proto_dir: &Path) -> Result<(HashMap<String, ProtoMessageDoc>, HashMap<String, ProtoEnumDoc>)> {
+    let parser = ProtoParser::new();
+    let mut messages = HashMap::new();
+    let mut enums = HashMap::new();
+
+    let resources_dir = proto_dir.join("resources");
+    let enums_dir = proto_dir.join("enums");
+
+    // Parse resource proto files
+    if resources_dir.exists() {
+        for entry in WalkDir::new(&resources_dir)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            let path = entry.path();
+            if path.extension().map_or(false, |ext| ext == "proto") {
+                let content = std::fs::read_to_string(path)?;
+                let parsed = parser.parse_proto_file(&content);
+
+                for msg in parsed {
+                    messages.insert(msg.message_name.clone(), msg);
+                }
+            }
+        }
+    }
+
+    // Parse enum proto files
+    if enums_dir.exists() {
+        for entry in WalkDir::new(&enums_dir)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            let path = entry.path();
+            if path.extension().map_or(false, |ext| ext == "proto") {
+                let content = std::fs::read_to_string(path)?;
+                let parsed = parser.parse_enum_file(&content);
+
+                for enum_doc in parsed {
+                    enums.insert(enum_doc.enum_name.clone(), enum_doc);
+                }
+            }
+        }
+    }
+
+    Ok((messages, enums))
+}
+
+/// Convert proto field to GAQL field name.
+/// E.g., Campaign.name -> campaign.name
+pub fn proto_to_gaql_field(resource: &str, field: &str) -> String {
+    let resource_snake = to_snake_case(resource);
+    format!("{}.{}", resource_snake, field)
+}
+
+/// Convert PascalCase to snake_case.
+fn to_snake_case(s: &str) -> String {
+    // Estimate capacity: original length plus ~20% for underscores
+    let mut result = String::with_capacity(s.len() + s.len() / 5);
+
+    for (i, c) in s.chars().enumerate() {
+        if c.is_uppercase() {
+            if i > 0 {
+                result.push('_');
+            }
+            result.push(c.to_ascii_lowercase());
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SAMPLE_PROTO: &str = r#"
+syntax = "proto3";
+
+package google.ads.googleads.v23.resources;
+
+// A campaign resource.
+message Campaign {
+  // The name of the campaign.
+  string name = 1;
+
+  // Output only. The status of the campaign.
+  // When a new campaign is added, the default value is ENABLED.
+  google.ads.googleads.v23.enums.CampaignStatusEnum.CampaignStatus status = 2 [
+    (google.api.field_behavior) = OUTPUT_ONLY
+  ];
+}
+"#;
+
+    #[test]
+    fn test_parse_proto_message() {
+        let parser = ProtoParser::new();
+        let messages = parser.parse_proto_file(SAMPLE_PROTO);
+
+        assert_eq!(messages.len(), 1);
+        let campaign = &messages[0];
+        assert_eq!(campaign.message_name, "Campaign");
+        assert!(campaign.description.contains("campaign"));
+
+        // Check fields
+        assert_eq!(campaign.fields.len(), 2);
+
+        let name_field = &campaign.fields[0];
+        assert_eq!(name_field.field_name, "name");
+        assert_eq!(name_field.field_number, 1);
+        assert!(name_field.description.contains("name"));
+
+        let status_field = &campaign.fields[1];
+        assert_eq!(status_field.field_name, "status");
+        assert_eq!(status_field.field_number, 2);
+        assert!(status_field.description.contains("status"));
+        assert!(status_field.description.contains("ENABLED"));
+        assert!(status_field.field_behavior.contains(&FieldBehavior::OutputOnly));
+    }
+
+    #[test]
+    fn test_to_snake_case() {
+        assert_eq!(to_snake_case("Campaign"), "campaign");
+        assert_eq!(to_snake_case("AdGroup"), "ad_group");
+        assert_eq!(to_snake_case("CampaignBudget"), "campaign_budget");
+    }
+
+    #[test]
+    fn test_proto_to_gaql_field() {
+        assert_eq!(proto_to_gaql_field("Campaign", "name"), "campaign.name");
+        assert_eq!(proto_to_gaql_field("AdGroup", "campaign"), "ad_group.campaign");
+    }
+}
