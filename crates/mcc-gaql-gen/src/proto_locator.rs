@@ -57,11 +57,20 @@ fn find_in_cargo_cache() -> Option<PathBuf> {
         let dir_name = entry.file_name().to_string_lossy().to_string();
 
         if dir_name.starts_with("googleads-rs-") {
-            let proto_path = entry.path()
-                .join("proto/google/ads/googleads/v23");
+            // Cargo git checkouts have an extra subdirectory (the commit hash)
+            // e.g., googleads-rs-8474eea31d345ffd/c24dbfb/proto/...
+            let crate_dir = entry.path();
 
-            if proto_path.exists() {
-                return Some(proto_path);
+            // Look for subdirectories within the checkout (the commit hash folders)
+            if let Ok(subdirs) = std::fs::read_dir(&crate_dir) {
+                for subdir in subdirs.flatten() {
+                    let proto_path = subdir.path()
+                        .join("proto/google/ads/googleads/v23");
+
+                    if proto_path.exists() {
+                        return Some(proto_path);
+                    }
+                }
             }
         }
     }

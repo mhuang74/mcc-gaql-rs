@@ -105,6 +105,86 @@ impl ProtoDocsCache {
         self.enums.get(enum_name)
     }
 
+    /// Convert proto docs to ScrapedDocs format for use with the enricher.
+    /// This allows the LLM enrichment to use proto documentation instead of web-scraped docs.
+    /// Preserves all proto information including field behaviors, types, and enum descriptions.
+    pub fn to_scraped_docs(&self) -> crate::scraper::ScrapedDocs {
+        use crate::scraper::{ScrapedDocs, ScrapedFieldDoc};
+        use crate::proto_parser::FieldBehavior;
+        use std::collections::HashMap;
+
+        let mut docs: HashMap<String, ScrapedFieldDoc> = HashMap::new();
+
+        // Convert messages to scraped field docs
+        for (message_name, message) in &self.messages {
+            for field in &message.fields {
+                // Construct GAQL-style field name: resource.field (lowercase resource)
+                let gaql_resource = message_name.to_ascii_lowercase();
+                let field_key = format!("{}.{}", gaql_resource, field.field_name);
+
+                // Convert field behaviors to strings
+                let field_behavior: Vec<String> = field.field_behavior.iter().map(|b| {
+                    match b {
+                        FieldBehavior::Immutable => "IMMUTABLE".to_string(),
+                        FieldBehavior::OutputOnly => "OUTPUT_ONLY".to_string(),
+                        FieldBehavior::Required => "REQUIRED".to_string(),
+                        FieldBehavior::Optional => "OPTIONAL".to_string(),
+                    }
+                }).collect();
+
+                // Get enum values and their descriptions if this is an enum field
+                let (enum_values, enum_value_descriptions) = if field.is_enum {
+                    field.enum_type.as_ref().and_then(|enum_type| {
+                        self.enums.get(enum_type).map(|e| {
+                            let values: Vec<String> = e.values.iter().map(|v| v.name.clone()).collect();
+                            let descriptions: Vec<String> = e.values.iter()
+                                .filter(|v| !v.description.is_empty())
+                                .map(|v| format!("{}: {}", v.name, v.description))
+                                .collect();
+                            (values, descriptions)
+                        })
+                    }).unwrap_or_default()
+                } else {
+                    (Vec::new(), Vec::new())
+                };
+
+                docs.insert(
+                    field_key,
+                    ScrapedFieldDoc {
+                        description: field.description.clone(),
+                        enum_values,
+                        enum_value_descriptions,
+                        field_behavior,
+                        proto_type: field.type_name.clone(),
+                    },
+                );
+            }
+
+            // Also add resource-level description
+            if !message.description.is_empty() {
+                let resource_key = message_name.to_ascii_lowercase();
+                docs.insert(
+                    resource_key,
+                    ScrapedFieldDoc {
+                        description: message.description.clone(),
+                        enum_values: Vec::new(),
+                        enum_value_descriptions: Vec::new(),
+                        field_behavior: Vec::new(),
+                        proto_type: String::new(),
+                    },
+                );
+            }
+        }
+
+        ScrapedDocs {
+            scraped_at: self.parsed_at,
+            api_version: self.api_version.clone(),
+            docs,
+            resources_scraped: self.messages.len(),
+            resources_skipped: 0,
+        }
+    }
+
     /// Save cache to disk.
     pub fn save_to_disk(&self, path: &PathBuf) -> Result<()> {
         // Ensure parent directory exists
@@ -189,6 +269,8 @@ pub fn build_cache(proto_dir: &PathBuf, api_version: &str, commit: &str) -> Resu
 }
 
 /// Load or build the cache.
+/// Note: This function does NOT save the cache to disk. Callers should call
+/// `cache.save_to_disk(&path)` explicitly after building if they want to persist it.
 pub fn load_or_build_cache(proto_dir: &PathBuf) -> Result<ProtoDocsCache> {
     let cache_path = get_cache_path()?;
 
@@ -220,10 +302,6 @@ pub fn load_or_build_cache(proto_dir: &PathBuf) -> Result<ProtoDocsCache> {
 
     let stats = cache.stats();
     log::info!("{}", stats);
-
-    // Save cache
-    log::info!("Saving cache to {:?}", cache_path);
-    cache.save_to_disk(&cache_path)?;
 
     Ok(cache)
 }

@@ -356,20 +356,47 @@ async fn cmd_enrich(
 
     let model_pool = Arc::new(model_pool::ModelPool::new(Arc::clone(&llm_config)));
 
-    // Determine scrape cache path
-    let scrape_cache_path = scraped_docs
-        .or_else(|| scraper::get_scraped_docs_cache_path().ok())
-        .context("Could not determine scraped docs cache path")?;
+    // Load proto docs (preferred) or scraped docs (legacy) for enrichment context
+    let scraped = if let Some(scraped_path) = scraped_docs {
+        // User explicitly specified scraped docs path
+        println!("Loading scraped docs from {:?}...", scraped_path);
+        if !scraped_path.exists() {
+            anyhow::bail!("Scraped docs not found at {:?}", scraped_path);
+        }
+        scraper::ScrapedDocs::load_from_disk(&scraped_path)
+            .await
+            .context("Failed to load scraped docs")?
+    } else {
+        // Default: use proto docs (more comprehensive than web-scraped docs)
+        let proto_cache_path = proto_docs_cache::get_cache_path()?;
+        println!("Loading proto docs from {:?}...", proto_cache_path);
 
-    // Run enrichment pipeline (includes scraping if needed)
-    enricher::run_enrichment_pipeline(
-        &mut cache,
-        model_pool,
-        &scrape_cache_path,
-        scrape_ttl_days,
-        scrape_delay_ms,
-    )
-    .await?;
+        let proto_cache = if proto_cache_path.exists() {
+            proto_docs_cache::ProtoDocsCache::load_from_disk(&proto_cache_path)?
+        } else {
+            anyhow::bail!(
+                "Proto docs cache not found at {:?}. Run 'mcc-gaql-gen parse-protos' first.",
+                proto_cache_path
+            );
+        };
+
+        let stats = proto_cache.stats();
+        println!(
+            "Loaded proto docs: {} messages, {} fields, {} enums",
+            stats.message_count, stats.field_count, stats.enum_count
+        );
+
+        proto_cache.to_scraped_docs()
+    };
+
+    let _ = scrape_delay_ms; // Not used - we don't scrape
+    let _ = scrape_ttl_days; // Not used - we don't scrape
+    let _ = batch_size; // Used by MetadataEnricher::with_batch_size if configured
+
+    // Run LLM enrichment
+    println!("Enriching {} fields using LLM...", cache.fields.len());
+    let enricher = enricher::MetadataEnricher::new(model_pool);
+    enricher.enrich(&mut cache, &scraped).await?;
 
     // Save enriched cache
     let enriched_path = output
@@ -388,8 +415,6 @@ async fn cmd_enrich(
         cache.enriched_field_count(),
         cache.fields.len()
     );
-
-    let _ = batch_size; // Used by MetadataEnricher::with_batch_size if configured
 
     Ok(())
 }
@@ -569,11 +594,13 @@ async fn cmd_parse_protos(output: Option<PathBuf>, force: bool) -> Result<()> {
     println!("Locating googleads-rs proto files...");
     let proto_dir = proto_locator::find_googleads_proto_dir()?;
     println!("Found proto directory: {:?}", proto_dir);
+    log::info!("Using proto directory: {:?}", proto_dir);
 
     // Determine output path
     let output_path = output
         .or_else(|| proto_docs_cache::get_cache_path().ok())
         .context("Could not determine output path")?;
+    log::info!("Output path: {:?}", output_path);
 
     // Check if we should skip (cache exists and not forced)
     if !force && output_path.exists() {
@@ -587,6 +614,9 @@ async fn cmd_parse_protos(output: Option<PathBuf>, force: bool) -> Result<()> {
     // Build the cache
     println!("Parsing proto files (this may take a minute)...");
     let cache = proto_docs_cache::load_or_build_cache(&proto_dir)?;
+
+    // Save to the specified output path
+    cache.save_to_disk(&output_path)?;
 
     let stats = cache.stats();
     println!("\nProto parsing complete:");
