@@ -68,10 +68,8 @@ pub struct ProtoParser {
 /// Find the line index for a given byte position in file content.
 /// Returns the index of the line containing the position.
 fn find_line_index(content: &str, pos: usize) -> usize {
-    content[..pos.min(content.len())]
-        .lines()
-        .count()
-        .saturating_sub(1)
+    // Count newlines before the position to get the line index
+    content[..pos.min(content.len())].matches('\n').count()
 }
 
 /// Find the line index for a given byte position using a pre-split lines array.
