@@ -7,6 +7,8 @@ use clap::{Parser, Subcommand};
 
 use mcc_gaql_gen::enricher as enricher;
 use mcc_gaql_gen::model_pool as model_pool;
+use mcc_gaql_gen::proto_locator as proto_locator;
+use mcc_gaql_gen::proto_docs_cache as proto_docs_cache;
 use mcc_gaql_gen::r2 as r2;
 use mcc_gaql_gen::rag as rag;
 use mcc_gaql_gen::scraper as scraper;
@@ -15,6 +17,23 @@ use mcc_gaql_gen::vector_store as vector_store;
 use mcc_gaql_common::config::{get_queries_from_file, QueryEntry};
 use mcc_gaql_common::field_metadata::FieldMetadataCache;
 use mcc_gaql_common::paths::config_file_path;
+
+/// Core resources for test-run mode
+const TEST_RUN_RESOURCES: &[&str] = &[
+    "campaign",
+    "ad_group",
+    "ad_group_ad",
+    "ad_group_criterion",
+];
+
+/// Filter resources for test-run mode
+fn filter_test_resources(resources: Vec<String>) -> Vec<String> {
+    let test_set: std::collections::HashSet<_> = TEST_RUN_RESOURCES.iter().cloned().collect();
+    resources
+        .into_iter()
+        .filter(|r| test_set.contains(r.as_str()))
+        .collect()
+}
 
 /// GAQL generation tool using LLM and RAG from Google Ads field metadata
 #[derive(Parser)]
@@ -47,6 +66,10 @@ enum Commands {
         /// Cache TTL in days (default: 30)
         #[arg(long, default_value = "30")]
         ttl_days: i64,
+
+        /// Only process core resources (campaign, ad_group, ad_group_ad, ad_group_criterion) for testing
+        #[arg(long)]
+        test_run: bool,
     },
 
     /// Enrich field metadata with LLM-generated descriptions
@@ -74,6 +97,14 @@ enum Commands {
         /// Scrape cache TTL in days (default: 30)
         #[arg(long, default_value = "30")]
         scrape_ttl_days: i64,
+
+        /// Only process core resources (campaign, ad_group, ad_group_ad, ad_group_criterion) for testing
+        #[arg(long)]
+        test_run: bool,
+
+        /// Use proto documentation as primary source (no LLM calls). Overrides --no-llm.
+        #[arg(long)]
+        use_proto: bool,
     },
 
     /// Generate a GAQL query from a natural language prompt
@@ -120,6 +151,17 @@ enum Commands {
         output: Option<PathBuf>,
     },
 
+    /// Parse proto files from googleads-rs to extract field documentation
+    ParseProtos {
+        /// Path to proto docs cache output. Defaults to ~/.cache/mcc-gaql/proto_docs_v23.json
+        #[arg(long)]
+        output: Option<PathBuf>,
+
+        /// Force rebuild of cache even if it exists
+        #[arg(long)]
+        force: bool,
+    },
+
     /// Clear the LanceDB vector cache
     ClearCache,
 }
@@ -137,8 +179,9 @@ async fn main() -> Result<()> {
             output,
             delay_ms,
             ttl_days,
+            test_run,
         } => {
-            cmd_scrape(metadata_cache, output, delay_ms, ttl_days).await?;
+            cmd_scrape(metadata_cache, output, delay_ms, ttl_days, test_run).await?;
         }
 
         Commands::Enrich {
@@ -148,6 +191,8 @@ async fn main() -> Result<()> {
             batch_size,
             scrape_delay_ms,
             scrape_ttl_days,
+            test_run,
+            use_proto,
         } => {
             cmd_enrich(
                 metadata_cache,
@@ -156,6 +201,8 @@ async fn main() -> Result<()> {
                 batch_size,
                 scrape_delay_ms,
                 scrape_ttl_days,
+                test_run,
+                use_proto,
             )
             .await?;
         }
@@ -181,6 +228,10 @@ async fn main() -> Result<()> {
             cmd_download(public_url, key, output).await?;
         }
 
+        Commands::ParseProtos { output, force } => {
+            cmd_parse_protos(output, force).await?;
+        }
+
         Commands::ClearCache => {
             vector_store::clear_cache()?;
         }
@@ -195,6 +246,7 @@ async fn cmd_scrape(
     output: Option<PathBuf>,
     delay_ms: u64,
     ttl_days: i64,
+    test_run: bool,
 ) -> Result<()> {
     // Load metadata cache to get the list of resources
     let cache_path = metadata_cache
@@ -206,7 +258,17 @@ async fn cmd_scrape(
         .await
         .context("Failed to load field metadata cache. Run 'mcc-gaql --refresh-field-cache' first.")?;
 
-    let resources = cache.get_resources();
+    let mut resources = cache.get_resources();
+
+    // Filter for test-run mode
+    if test_run {
+        resources = filter_test_resources(resources);
+        println!(
+            "Test run mode: limited to {} resources (campaign, ad_group, ad_group_ad, ad_group_criterion)",
+            resources.len()
+        );
+    }
+
     println!(
         "Found {} resources. Starting scrape (delay: {}ms, TTL: {} days)...",
         resources.len(),
@@ -246,7 +308,42 @@ async fn cmd_enrich(
     batch_size: usize,
     scrape_delay_ms: u64,
     scrape_ttl_days: i64,
+    test_run: bool,
+    use_proto: bool,
 ) -> Result<()> {
+    // Load metadata cache first (needed for both proto and LLM modes)
+    let cache_path = metadata_cache
+        .or_else(|| mcc_gaql_common::paths::field_metadata_cache_path().ok())
+        .context("Could not determine field metadata cache path")?;
+
+    println!("Loading field metadata from {:?}...", cache_path);
+    let mut cache = FieldMetadataCache::load_from_disk(&cache_path)
+        .await
+        .context("Failed to load field metadata cache. Run 'mcc-gaql --refresh-field-cache' first.")?;
+
+    // Filter resources in cache for test-run mode BEFORE enrichment
+    if test_run {
+        let test_resources = filter_test_resources(cache.get_resources());
+        cache.retain_resources(&test_resources);
+        println!(
+            "Test run mode: limited to {} resources, {} fields",
+            cache.get_resources().len(),
+            cache.fields.len()
+        );
+    }
+
+    println!(
+        "Loaded {} fields from {} resources.",
+        cache.fields.len(),
+        cache.get_resources().len()
+    );
+
+    // Proto-based enrichment (no LLM needed)
+    if use_proto {
+        return cmd_enrich_proto(&mut cache, output).await;
+    }
+
+    // LLM-based enrichment (original path)
     // Validate LLM environment
     validate_llm_env()?;
 
@@ -259,36 +356,47 @@ async fn cmd_enrich(
 
     let model_pool = Arc::new(model_pool::ModelPool::new(Arc::clone(&llm_config)));
 
-    // Load metadata cache
-    let cache_path = metadata_cache
-        .or_else(|| mcc_gaql_common::paths::field_metadata_cache_path().ok())
-        .context("Could not determine field metadata cache path")?;
+    // Load proto docs (preferred) or scraped docs (legacy) for enrichment context
+    let scraped = if let Some(scraped_path) = scraped_docs {
+        // User explicitly specified scraped docs path
+        println!("Loading scraped docs from {:?}...", scraped_path);
+        if !scraped_path.exists() {
+            anyhow::bail!("Scraped docs not found at {:?}", scraped_path);
+        }
+        scraper::ScrapedDocs::load_from_disk(&scraped_path)
+            .await
+            .context("Failed to load scraped docs")?
+    } else {
+        // Default: use proto docs (more comprehensive than web-scraped docs)
+        let proto_cache_path = proto_docs_cache::get_cache_path()?;
+        println!("Loading proto docs from {:?}...", proto_cache_path);
 
-    println!("Loading field metadata from {:?}...", cache_path);
-    let mut cache = FieldMetadataCache::load_from_disk(&cache_path)
-        .await
-        .context("Failed to load field metadata cache. Run 'mcc-gaql --refresh-field-cache' first.")?;
+        let proto_cache = if proto_cache_path.exists() {
+            proto_docs_cache::ProtoDocsCache::load_from_disk(&proto_cache_path)?
+        } else {
+            anyhow::bail!(
+                "Proto docs cache not found at {:?}. Run 'mcc-gaql-gen parse-protos' first.",
+                proto_cache_path
+            );
+        };
 
-    println!(
-        "Loaded {} fields from {} resources.",
-        cache.fields.len(),
-        cache.get_resources().len()
-    );
+        let stats = proto_cache.stats();
+        println!(
+            "Loaded proto docs: {} messages, {} fields, {} enums",
+            stats.message_count, stats.field_count, stats.enum_count
+        );
 
-    // Determine scrape cache path
-    let scrape_cache_path = scraped_docs
-        .or_else(|| scraper::get_scraped_docs_cache_path().ok())
-        .context("Could not determine scraped docs cache path")?;
+        proto_cache.to_scraped_docs()
+    };
 
-    // Run enrichment pipeline (includes scraping if needed)
-    enricher::run_enrichment_pipeline(
-        &mut cache,
-        model_pool,
-        &scrape_cache_path,
-        scrape_ttl_days,
-        scrape_delay_ms,
-    )
-    .await?;
+    let _ = scrape_delay_ms; // Not used - we don't scrape
+    let _ = scrape_ttl_days; // Not used - we don't scrape
+    let _ = batch_size; // Used by MetadataEnricher::with_batch_size if configured
+
+    // Run LLM enrichment
+    println!("Enriching {} fields using LLM...", cache.fields.len());
+    let enricher = enricher::MetadataEnricher::new(model_pool);
+    enricher.enrich(&mut cache, &scraped).await?;
 
     // Save enriched cache
     let enriched_path = output
@@ -308,7 +416,80 @@ async fn cmd_enrich(
         cache.fields.len()
     );
 
-    let _ = batch_size; // Used by MetadataEnricher::with_batch_size if configured
+    Ok(())
+}
+
+/// Proto-based enrichment: use proto documentation instead of LLM
+async fn cmd_enrich_proto(
+    cache: &mut FieldMetadataCache,
+    output: Option<PathBuf>,
+) -> Result<()> {
+    // Stage 1: Load or build proto docs cache
+    println!("\nStage 1/2: Loading proto documentation...");
+
+    // Try to load from cache first
+    let proto_cache_path = proto_docs_cache::get_cache_path()?;
+
+    let proto_cache = if proto_cache_path.exists() {
+        println!("Loading proto docs from cache: {:?}", proto_cache_path);
+        proto_docs_cache::ProtoDocsCache::load_from_disk(&proto_cache_path)?
+    } else {
+        // Build from scratch
+        println!("Proto docs cache not found. Building from proto files...");
+        let proto_dir = proto_locator::find_googleads_proto_dir()?;
+        println!("Found proto directory: {:?}", proto_dir);
+        proto_docs_cache::load_or_build_cache(&proto_dir)?
+    };
+
+    let proto_stats = proto_cache.stats();
+    println!(
+        "Loaded proto docs: {} messages, {} fields, {} enums",
+        proto_stats.message_count,
+        proto_stats.field_count,
+        proto_stats.enum_count
+    );
+
+    // Stage 2: Merge proto docs into field metadata
+    println!("\nStage 2/2: Merging proto documentation into field metadata...");
+
+    let enriched_count = proto_docs_cache::merge_into_field_metadata_cache(&proto_cache, cache);
+
+    let total_fields = cache.fields.len();
+    println!(
+        "Proto enrichment complete: {}/{} fields enriched",
+        enriched_count,
+        total_fields
+    );
+
+    // Count how many resources got descriptions
+    let resources_enriched = cache
+        .resource_metadata
+        .as_ref()
+        .map(|rm| rm.values().filter(|r| r.description.is_some()).count())
+        .unwrap_or(0);
+    println!(
+        "Resource descriptions: {}/{} enriched",
+        resources_enriched,
+        cache.get_resources().len()
+    );
+
+    // Save enriched cache
+    let enriched_path = output
+        .or_else(|| mcc_gaql_common::paths::field_metadata_enriched_path().ok())
+        .context("Could not determine enriched metadata output path")?;
+
+    println!("\nSaving enriched metadata to {:?}...", enriched_path);
+    cache.save_to_disk(&enriched_path).await?;
+
+    // Clear vector cache so it gets rebuilt with richer embeddings
+    println!("Clearing vector cache so it gets rebuilt with enriched embeddings...");
+    vector_store::clear_cache()?;
+
+    println!(
+        "\nEnrichment complete. {}/{} fields enriched.",
+        enriched_count,
+        total_fields
+    );
 
     Ok(())
 }
@@ -407,6 +588,45 @@ async fn cmd_download(
     Ok(())
 }
 
+/// Parse proto files from googleads-rs to extract field documentation
+async fn cmd_parse_protos(output: Option<PathBuf>, force: bool) -> Result<()> {
+    // Locate proto directory
+    println!("Locating googleads-rs proto files...");
+    let proto_dir = proto_locator::find_googleads_proto_dir()?;
+    println!("Found proto directory: {:?}", proto_dir);
+    log::info!("Using proto directory: {:?}", proto_dir);
+
+    // Determine output path
+    let output_path = output
+        .or_else(|| proto_docs_cache::get_cache_path().ok())
+        .context("Could not determine output path")?;
+    log::info!("Output path: {:?}", output_path);
+
+    // Check if we should skip (cache exists and not forced)
+    if !force && output_path.exists() {
+        println!("Proto docs cache already exists at {:?}. Use --force to rebuild.", output_path);
+        let cache = proto_docs_cache::ProtoDocsCache::load_from_disk(&output_path)?;
+        let stats = cache.stats();
+        println!("{}", stats);
+        return Ok(());
+    }
+
+    // Build the cache
+    println!("Parsing proto files (this may take a minute)...");
+    let cache = proto_docs_cache::load_or_build_cache(&proto_dir)?;
+
+    // Save to the specified output path
+    cache.save_to_disk(&output_path)?;
+
+    let stats = cache.stats();
+    println!("\nProto parsing complete:");
+    println!("  - {} messages with {} fields", stats.message_count, stats.field_count);
+    println!("  - {} enums with {} values", stats.enum_count, stats.enum_value_count);
+    println!("\nCache saved to: {:?}", output_path);
+
+    Ok(())
+}
+
 /// Validate that required LLM environment variables are set
 fn validate_llm_env() -> Result<()> {
     if env::var("MCC_GAQL_LLM_API_KEY").is_err() && env::var("OPENROUTER_API_KEY").is_err() {
@@ -457,5 +677,46 @@ fn init_logger(verbose: bool) {
         .duplicate_to_stderr(Duplicate::Warn)
         .start()
         .unwrap();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_filter_test_resources() {
+        // Test with mixed resources
+        let resources = vec![
+            "campaign".to_string(),
+            "ad_group".to_string(),
+            "ad_group_ad".to_string(),
+            "ad_group_criterion".to_string(),
+            "ad".to_string(),
+            "keyword".to_string(),
+            "campaign_budget".to_string(),
+            "customer".to_string(),
+            "user_list".to_string(),
+        ];
+
+        let filtered = filter_test_resources(resources);
+
+        assert_eq!(filtered.len(), 4);
+        assert!(filtered.contains(&"campaign".to_string()));
+        assert!(filtered.contains(&"ad_group".to_string()));
+        assert!(filtered.contains(&"ad_group_ad".to_string()));
+        assert!(filtered.contains(&"ad_group_criterion".to_string()));
+        assert!(!filtered.contains(&"ad".to_string()));
+        assert!(!filtered.contains(&"keyword".to_string()));
+        assert!(!filtered.contains(&"campaign_budget".to_string()));
+        assert!(!filtered.contains(&"customer".to_string()));
+        assert!(!filtered.contains(&"user_list".to_string()));
+    }
+
+    #[test]
+    fn test_filter_test_resources_empty_input() {
+        let resources: Vec<String> = vec![];
+        let filtered = filter_test_resources(resources);
+        assert!(filtered.is_empty());
+    }
 }
 

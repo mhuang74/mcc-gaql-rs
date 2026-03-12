@@ -307,6 +307,7 @@ async fn test_cache_save_and_load_roundtrip() {
         ScrapedFieldDoc {
             description: "The name of the campaign.".to_string(),
             enum_values: vec![],
+            ..Default::default()
         },
     );
     original.docs.insert(
@@ -314,6 +315,7 @@ async fn test_cache_save_and_load_roundtrip() {
         ScrapedFieldDoc {
             description: "The status.".to_string(),
             enum_values: vec!["ENABLED".to_string(), "PAUSED".to_string()],
+            ..Default::default()
         },
     );
 
@@ -371,6 +373,7 @@ async fn test_load_or_scrape_returns_cached_when_fresh() {
                 ScrapedFieldDoc {
                     description: "Cached description.".to_string(),
                     enum_values: vec![],
+                    ..Default::default()
                 },
             );
             m
@@ -667,6 +670,7 @@ fn test_get_description_returns_none_for_empty_description() {
         ScrapedFieldDoc {
             description: String::new(), // explicitly empty
             enum_values: vec![],
+            ..Default::default()
         },
     );
     assert_eq!(
@@ -690,6 +694,7 @@ fn test_get_enum_values_returns_none_for_empty_list() {
         ScrapedFieldDoc {
             description: "desc".to_string(),
             enum_values: vec![], // no enum values
+            ..Default::default()
         },
     );
     assert_eq!(

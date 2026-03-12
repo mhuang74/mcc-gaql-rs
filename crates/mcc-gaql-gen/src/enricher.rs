@@ -302,19 +302,40 @@ Use in SELECT to label rows in reports.\",\n\
                 prompt.push_str(&format!("  Enum values: {}\n", values.join(", ")));
             }
 
-            if let Some(scraped_desc) = scraped.get_description(&field.name) {
-                prompt.push_str(&format!("  Documentation: {}\n", scraped_desc));
-            }
-            if let Some(scraped_enums) = scraped.get_enum_values(&field.name)
-                && !field.enum_values.is_empty()
-            {
-                let scraped_str: Vec<&str> =
-                    scraped_enums.iter().take(10).map(String::as_str).collect();
-                if !scraped_str.is_empty() {
+            // Get full proto doc info if available (for proto-based enrichment)
+            if let Some(proto_doc) = scraped.docs.get(&field.name) {
+                // Proto type info
+                if !proto_doc.proto_type.is_empty() {
+                    prompt.push_str(&format!("  Proto type: {}\n", proto_doc.proto_type));
+                }
+
+                // Field behavior (OUTPUT_ONLY, REQUIRED, etc.)
+                if !proto_doc.field_behavior.is_empty() {
                     prompt.push_str(&format!(
-                        "  Additional enum context: {}\n",
-                        scraped_str.join(", ")
+                        "  Field behavior: {}\n",
+                        proto_doc.field_behavior.join(", ")
                     ));
+                }
+
+                // Description
+                if !proto_doc.description.is_empty() {
+                    prompt.push_str(&format!("  Documentation: {}\n", proto_doc.description));
+                }
+
+                // Enum value descriptions from proto (richer than just names)
+                if !proto_doc.enum_value_descriptions.is_empty() {
+                    let descs: Vec<&str> = proto_doc
+                        .enum_value_descriptions
+                        .iter()
+                        .take(10)
+                        .map(String::as_str)
+                        .collect();
+                    if !descs.is_empty() {
+                        prompt.push_str(&format!(
+                            "  Enum descriptions: {}\n",
+                            descs.join("; ")
+                        ));
+                    }
                 }
             }
 

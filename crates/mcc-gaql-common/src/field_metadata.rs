@@ -342,6 +342,28 @@ impl FieldMetadataCache {
             .count()
     }
 
+    /// Retain only fields and resources matching the given resource names
+    pub fn retain_resources(&mut self, keep_resources: &[String]) {
+        let keep_set: std::collections::HashSet<_> = keep_resources.iter().cloned().collect();
+
+        // Filter fields - only keep fields belonging to retained resources
+        self.fields.retain(|_, field| {
+            field.get_resource()
+                .map(|r| keep_set.contains(&r))
+                .unwrap_or(false)
+        });
+
+        // Filter resources map
+        if let Some(resources) = &mut self.resources {
+            resources.retain(|name, _| keep_set.contains(name));
+        }
+
+        // Filter resource metadata
+        if let Some(resource_metadata) = &mut self.resource_metadata {
+            resource_metadata.retain(|name, _| keep_set.contains(name));
+        }
+    }
+
     /// Export schema summary as formatted text
     pub fn export_summary(&self) -> String {
         let mut output = String::new();
@@ -656,5 +678,160 @@ mod tests {
 
         assert!(field.is_metric());
         assert!(!field.is_attribute());
+    }
+
+    #[test]
+    fn test_retain_resources() {
+        let mut cache = FieldMetadataCache::new();
+
+        // Add fields from different resources
+        cache.fields.insert(
+            "campaign.id".to_string(),
+            FieldMetadata {
+                name: "campaign.id".to_string(),
+                category: "ATTRIBUTE".to_string(),
+                data_type: "INT64".to_string(),
+                selectable: true,
+                filterable: true,
+                sortable: true,
+                metrics_compatible: true,
+                resource_name: None,
+                selectable_with: vec![],
+                enum_values: vec![],
+                attribute_resources: vec![],
+                description: None,
+                usage_notes: None,
+            },
+        );
+        cache.fields.insert(
+            "campaign.name".to_string(),
+            FieldMetadata {
+                name: "campaign.name".to_string(),
+                category: "ATTRIBUTE".to_string(),
+                data_type: "STRING".to_string(),
+                selectable: true,
+                filterable: true,
+                sortable: true,
+                metrics_compatible: true,
+                resource_name: None,
+                selectable_with: vec![],
+                enum_values: vec![],
+                attribute_resources: vec![],
+                description: None,
+                usage_notes: None,
+            },
+        );
+        cache.fields.insert(
+            "ad_group.id".to_string(),
+            FieldMetadata {
+                name: "ad_group.id".to_string(),
+                category: "ATTRIBUTE".to_string(),
+                data_type: "INT64".to_string(),
+                selectable: true,
+                filterable: true,
+                sortable: true,
+                metrics_compatible: true,
+                resource_name: None,
+                selectable_with: vec![],
+                enum_values: vec![],
+                attribute_resources: vec![],
+                description: None,
+                usage_notes: None,
+            },
+        );
+        cache.fields.insert(
+            "customer.id".to_string(),
+            FieldMetadata {
+                name: "customer.id".to_string(),
+                category: "ATTRIBUTE".to_string(),
+                data_type: "INT64".to_string(),
+                selectable: true,
+                filterable: true,
+                sortable: true,
+                metrics_compatible: true,
+                resource_name: None,
+                selectable_with: vec![],
+                enum_values: vec![],
+                attribute_resources: vec![],
+                description: None,
+                usage_notes: None,
+            },
+        );
+
+        // Add resources map
+        let mut resources = HashMap::new();
+        resources.insert(
+            "campaign".to_string(),
+            vec!["campaign.id".to_string(), "campaign.name".to_string()],
+        );
+        resources.insert(
+            "ad_group".to_string(),
+            vec!["ad_group.id".to_string()],
+        );
+        resources.insert("customer".to_string(), vec!["customer.id".to_string()]);
+        cache.resources = Some(resources);
+
+        // Add resource metadata
+        let mut resource_metadata = HashMap::new();
+        resource_metadata.insert(
+            "campaign".to_string(),
+            ResourceMetadata {
+                name: "campaign".to_string(),
+                selectable_with: vec![],
+                key_attributes: vec![],
+                key_metrics: vec![],
+                field_count: 2,
+                description: Some("Campaign resource".to_string()),
+            },
+        );
+        resource_metadata.insert(
+            "ad_group".to_string(),
+            ResourceMetadata {
+                name: "ad_group".to_string(),
+                selectable_with: vec![],
+                key_attributes: vec![],
+                key_metrics: vec![],
+                field_count: 1,
+                description: Some("Ad group resource".to_string()),
+            },
+        );
+        resource_metadata.insert(
+            "customer".to_string(),
+            ResourceMetadata {
+                name: "customer".to_string(),
+                selectable_with: vec![],
+                key_attributes: vec![],
+                key_metrics: vec![],
+                field_count: 1,
+                description: Some("Customer resource".to_string()),
+            },
+        );
+        cache.resource_metadata = Some(resource_metadata);
+
+        // Retain only campaign and ad_group
+        cache.retain_resources(&["campaign".to_string(), "ad_group".to_string()]);
+
+        // Check fields are filtered
+        assert_eq!(cache.fields.len(), 3);
+        assert!(cache.fields.contains_key("campaign.id"));
+        assert!(cache.fields.contains_key("campaign.name"));
+        assert!(cache.fields.contains_key("ad_group.id"));
+        assert!(!cache.fields.contains_key("customer.id"));
+
+        // Check resources map is filtered
+        if let Some(resources) = &cache.resources {
+            assert_eq!(resources.len(), 2);
+            assert!(resources.contains_key("campaign"));
+            assert!(resources.contains_key("ad_group"));
+            assert!(!resources.contains_key("customer"));
+        }
+
+        // Check resource metadata is filtered
+        if let Some(rm) = &cache.resource_metadata {
+            assert_eq!(rm.len(), 2);
+            assert!(rm.contains_key("campaign"));
+            assert!(rm.contains_key("ad_group"));
+            assert!(!rm.contains_key("customer"));
+        }
     }
 }

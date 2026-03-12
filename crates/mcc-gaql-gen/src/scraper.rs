@@ -1,4 +1,15 @@
 //
+// DEPRECATED: This module is deprecated in favor of proto-based metadata extraction.
+//
+// The HTML scraping approach is unreliable because Google's documentation pages use
+// JavaScript rendering. Use the proto-based approach instead:
+//
+//   mcc-gaql-gen parse-protos     # Parse proto files to extract documentation
+//   mcc-gaql-gen enrich --use-proto  # Enrich field metadata using proto docs
+//
+// The proto-based approach extracts authoritative field documentation directly
+// from Google's proto definitions in the googleads-rs crate.
+//
 // Metadata scraper: fetches Google Ads API field reference pages to extract
 // plain-text field descriptions and enum value documentation.
 //
@@ -22,11 +33,20 @@ use tokio::time::sleep;
 /// Scraped documentation for a single field
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ScrapedFieldDoc {
-    /// Plain-text description extracted from the reference page
+    /// Plain-text description extracted from the reference page or proto files
     pub description: String,
     /// Enum values extracted from the page (may be empty for non-ENUM fields)
     #[serde(default)]
     pub enum_values: Vec<String>,
+    /// Detailed enum value descriptions from proto files (e.g., "ENABLED: The campaign is running")
+    #[serde(default)]
+    pub enum_value_descriptions: Vec<String>,
+    /// Field behavior annotations from proto (e.g., OUTPUT_ONLY, REQUIRED, IMMUTABLE)
+    #[serde(default)]
+    pub field_behavior: Vec<String>,
+    /// Proto type name for the field (e.g., "google.ads.googleads.v23.enums.CampaignStatusEnum.CampaignStatus")
+    #[serde(default)]
+    pub proto_type: String,
 }
 
 /// Container for all scraped field documentation
@@ -198,6 +218,7 @@ impl ScrapedDocs {
         base_url: &str,
     ) -> Result<HashMap<String, ScrapedFieldDoc>> {
         let url = format!("{}/{}/{}", base_url, api_version, resource);
+        log::info!("Scraping URL: {}", url);
 
         let response = client
             .get(&url)
@@ -280,6 +301,9 @@ impl ScrapedDocs {
                     ScrapedFieldDoc {
                         description,
                         enum_values,
+                        enum_value_descriptions: Vec::new(),
+                        field_behavior: Vec::new(),
+                        proto_type: String::new(),
                     },
                 );
             }
@@ -523,6 +547,9 @@ mod tests {
             ScrapedFieldDoc {
                 description: "The name of the campaign.".to_string(),
                 enum_values: vec![],
+                enum_value_descriptions: vec![],
+                field_behavior: vec![],
+                proto_type: String::new(),
             },
         );
 
@@ -548,6 +575,9 @@ mod tests {
             ScrapedFieldDoc {
                 description: "Status field.".to_string(),
                 enum_values: vec!["ENABLED".to_string(), "PAUSED".to_string()],
+                enum_value_descriptions: vec![],
+                field_behavior: vec![],
+                proto_type: String::new(),
             },
         );
 
