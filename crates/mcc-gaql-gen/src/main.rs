@@ -116,9 +116,9 @@ enum Commands {
         #[arg(long)]
         queries: Option<String>,
 
-        /// Path to enriched field metadata JSON
+        /// Path to enriched field metadata JSON (defaults to standard enriched cache path)
         #[arg(long)]
-        metadata: PathBuf,
+        metadata: Option<PathBuf>,
 
         /// Skip implicit default filters (e.g., status = ENABLED)
         #[arg(long)]
@@ -498,7 +498,7 @@ async fn cmd_enrich_proto(
 async fn cmd_generate(
     prompt: String,
     queries: Option<String>,
-    metadata: PathBuf,
+    metadata: Option<PathBuf>,
     no_defaults: bool,
     verbose: bool,
 ) -> Result<()> {
@@ -535,10 +535,13 @@ async fn cmd_generate(
     };
 
     // Load field metadata
-    println!("Loading field metadata from {:?}...", metadata);
-    let field_cache = FieldMetadataCache::load_from_disk(&metadata)
+    let metadata_path = metadata
+        .or_else(|| mcc_gaql_common::paths::field_metadata_enriched_path().ok())
+        .context("Could not determine enriched metadata path. Use --metadata to specify it.")?;
+    println!("Loading field metadata from {:?}...", metadata_path);
+    let field_cache = FieldMetadataCache::load_from_disk(&metadata_path)
         .await
-        .context("Failed to load field metadata")?;
+        .context("Failed to load field metadata. Run 'mcc-gaql-gen enrich' first or use --metadata.")?;
 
     // Check if metadata is enriched (has resource_metadata with key_fields)
     let is_enriched = field_cache
