@@ -526,13 +526,13 @@ async fn cmd_generate(
         // Explicit --queries flag provided
         let queries_path = config_file_path(&queries_file)
             .with_context(|| format!("Could not find queries file: {}", queries_file))?;
-        println!("Loading query cookbook from {:?}...", queries_path);
+        log::info!("Loading query cookbook from {:?}...", queries_path);
         let map = get_queries_from_file(&queries_path).await?;
         map.into_values().collect()
     } else if let Some(default_path) = config_file_path("query_cookbook.toml") {
         // Try to auto-discover query_cookbook.toml in config directory
         if default_path.exists() {
-            println!("Loading query cookbook from {:?}...", default_path);
+            log::info!("Loading query cookbook from {:?}...", default_path);
             match get_queries_from_file(&default_path).await {
                 Ok(map) => map.into_values().collect(),
                 Err(e) => {
@@ -541,11 +541,11 @@ async fn cmd_generate(
                 }
             }
         } else {
-            println!("No query cookbook found. Using enhanced field metadata only.");
+            log::info!("No query cookbook found. Using enhanced field metadata only.");
             Vec::new()
         }
     } else {
-        println!("No query cookbook specified.");
+        log::info!("No query cookbook specified.");
         Vec::new()
     };
 
@@ -553,7 +553,7 @@ async fn cmd_generate(
     let metadata_path = metadata
         .or_else(|| mcc_gaql_common::paths::field_metadata_enriched_path().ok())
         .context("Could not determine enriched metadata path. Use --metadata to specify it.")?;
-    println!("Loading field metadata from {:?}...", metadata_path);
+    log::info!("Loading field metadata from {:?}...", metadata_path);
     let field_cache = FieldMetadataCache::load_from_disk(&metadata_path)
         .await
         .context("Failed to load field metadata. Run 'mcc-gaql-gen enrich' first or use --metadata.")?;
@@ -566,7 +566,7 @@ async fn cmd_generate(
         .unwrap_or(false);
 
     if !is_enriched {
-        println!("WARNING: Metadata does not appear to be enriched. Key fields may not be available.");
+        log::warn!("Metadata does not appear to be enriched. Key fields may not be available.");
     }
 
     // STRICT CHECK: Validate cache matches current data
@@ -582,7 +582,7 @@ async fn cmd_generate(
     }
 
     // Cache is valid - proceed with generation
-    println!("Cache valid. Generating GAQL for: \"{}\"", prompt);
+    log::info!("Cache valid. Generating GAQL for: \"{}\"", prompt);
 
     // Build pipeline config
     let pipeline_config = rag::PipelineConfig {
@@ -592,43 +592,43 @@ async fn cmd_generate(
     // Generate GAQL using MultiStepRAGAgent
     let result = rag::convert_to_gaql(example_queries, field_cache, &prompt, &llm_config, pipeline_config).await?;
 
-    println!("\nGenerated GAQL:\n{}", result.query);
+    println!("{}", result.query);
 
-    // Print validation errors/warnings if any
+    // Log validation errors/warnings if any
     if !result.validation.errors.is_empty() {
-        println!("\nValidation errors:");
+        log::error!("Validation errors:");
         for err in &result.validation.errors {
-            println!("  - {}", err);
+            log::error!("  - {}", err);
         }
     }
     if !result.validation.warnings.is_empty() {
-        println!("\nValidation warnings:");
+        log::warn!("Validation warnings:");
         for warn in &result.validation.warnings {
-            println!("  - {}", warn);
+            log::warn!("  - {}", warn);
         }
     }
 
-    // Print pipeline trace if verbose
+    // Log pipeline trace if verbose
     if verbose {
-        println!("\n--- Pipeline Trace ---");
-        println!("Phase 1 - Primary resource: {}", result.pipeline_trace.phase1_primary_resource);
-        println!("Phase 1 - Related resources: {:?}", result.pipeline_trace.phase1_related_resources);
-        println!("Phase 1 - Reasoning: {}", result.pipeline_trace.phase1_reasoning);
-        println!("Phase 2 - Candidates: {} (rejected: {})", result.pipeline_trace.phase2_candidate_count, result.pipeline_trace.phase2_rejected_count);
-        println!("Phase 3 - Selected fields: {:?}", result.pipeline_trace.phase3_selected_fields);
-        println!("Phase 3 - Filter fields: {:?}", result.pipeline_trace.phase3_filter_fields);
-        println!("Phase 3 - Order by: {:?}", result.pipeline_trace.phase3_order_by_fields);
-        println!("Phase 4 - WHERE clauses: {:?}", result.pipeline_trace.phase4_where_clauses);
+        log::debug!("--- Pipeline Trace ---");
+        log::debug!("Phase 1 - Primary resource: {}", result.pipeline_trace.phase1_primary_resource);
+        log::debug!("Phase 1 - Related resources: {:?}", result.pipeline_trace.phase1_related_resources);
+        log::debug!("Phase 1 - Reasoning: {}", result.pipeline_trace.phase1_reasoning);
+        log::debug!("Phase 2 - Candidates: {} (rejected: {})", result.pipeline_trace.phase2_candidate_count, result.pipeline_trace.phase2_rejected_count);
+        log::debug!("Phase 3 - Selected fields: {:?}", result.pipeline_trace.phase3_selected_fields);
+        log::debug!("Phase 3 - Filter fields: {:?}", result.pipeline_trace.phase3_filter_fields);
+        log::debug!("Phase 3 - Order by: {:?}", result.pipeline_trace.phase3_order_by_fields);
+        log::debug!("Phase 4 - WHERE clauses: {:?}", result.pipeline_trace.phase4_where_clauses);
         if let Some(during) = &result.pipeline_trace.phase4_during {
-            println!("Phase 4 - DURING: {}", during);
+            log::debug!("Phase 4 - DURING: {}", during);
         }
         if let Some(limit) = result.pipeline_trace.phase4_limit {
-            println!("Phase 4 - LIMIT: {}", limit);
+            log::debug!("Phase 4 - LIMIT: {}", limit);
         }
         if !result.pipeline_trace.phase4_implicit_filters.is_empty() {
-            println!("Phase 4 - Implicit filters: {:?}", result.pipeline_trace.phase4_implicit_filters);
+            log::debug!("Phase 4 - Implicit filters: {:?}", result.pipeline_trace.phase4_implicit_filters);
         }
-        println!("Generation time: {}ms", result.pipeline_trace.generation_time_ms);
+        log::debug!("Generation time: {}ms", result.pipeline_trace.generation_time_ms);
     }
 
     Ok(())
