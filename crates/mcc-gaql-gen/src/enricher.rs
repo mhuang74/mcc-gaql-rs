@@ -168,6 +168,33 @@ impl MetadataEnricher {
             }
         }
 
+        // Stage 3: Key field selection per resource (run before resource description enrichment)
+        log::info!(
+            "Selecting key fields for {} resources",
+            resources.len()
+        );
+        for resource in &resources {
+            match self.select_key_fields_for_resource(resource, cache).await {
+                Ok((key_attrs, key_mets)) => {
+                    if let Some(rm) = cache
+                        .resource_metadata
+                        .as_mut()
+                        .and_then(|m| m.get_mut(resource))
+                    {
+                        rm.key_attributes = key_attrs;
+                        rm.key_metrics = key_mets;
+                    }
+                }
+                Err(e) => {
+                    log::warn!(
+                        "  Key field selection failed for '{}': {}",
+                        resource,
+                        e
+                    );
+                }
+            }
+        }
+
         // Enrich resource-level metadata (sequential, since there are fewer resources)
         log::info!(
             "Enriching resource-level metadata for {} resources",
@@ -446,6 +473,123 @@ used to query. Return ONLY the sentence, no formatting.";
 
         Ok(response.trim().to_string())
     }
+
+    /// Select key attributes and metrics for a resource using LLM
+    /// Returns (key_attributes, key_metrics) or falls back to alphabetical first-N on failure
+    async fn select_key_fields_for_resource(
+        &self,
+        resource: &str,
+        cache: &FieldMetadataCache,
+    ) -> Result<(Vec<String>, Vec<String>)> {
+        // Get resource attributes (ATTRIBUTE fields for this resource)
+        let resource_attrs: Vec<String> = cache
+            .get_resource_fields(resource)
+            .iter()
+            .filter(|f| f.is_attribute())
+            .map(|f| f.name.clone())
+            .collect();
+
+        // Get compatible metrics from resource's selectable_with
+        let selectable_with = cache.get_resource_selectable_with(resource);
+        let resource_metrics: Vec<String> = selectable_with
+            .iter()
+            .filter(|f| f.starts_with("metrics."))
+            .cloned()
+            .collect();
+
+        if resource_attrs.is_empty() && resource_metrics.is_empty() {
+            return Err(anyhow::anyhow!(
+                "No attributes or metrics found for resource '{}'",
+                resource
+            ));
+        }
+
+        // Build prompt for LLM
+        let system_prompt = "\
+You are a Google Ads API expert. Given a list of GAQL field names, select the most \
+commonly useful ones for typical reporting queries. Return ONLY valid JSON with two keys:\n\
+- \"key_attributes\": array of 3-5 attribute field names (e.g., campaign.name, ad_group.status)\n\
+- \"key_metrics\": array of 5-10 metric field names (e.g., metrics.clicks, metrics.impressions)\n\
+\nSelect fields that are most commonly used in everyday Google Ads reporting. \
+Do NOT include fields that are rarely used or very specialized.";
+
+        let mut user_prompt = format!(
+            "For the Google Ads resource '{}', select the most useful fields:\n\n",
+            resource
+        );
+
+        if !resource_attrs.is_empty() {
+            user_prompt.push_str(&format!(
+                "Available attributes ({} total):\n{}\n\n",
+                resource_attrs.len(),
+                resource_attrs.join(", ")
+            ));
+        }
+
+        if !resource_metrics.is_empty() {
+            user_prompt.push_str(&format!(
+                "Available metrics ({} total):\n{}\n\n",
+                resource_metrics.len(),
+                resource_metrics.join(", ")
+            ));
+        }
+
+        user_prompt.push_str("Return JSON: {\"key_attributes\": [...], \"key_metrics\": [...]}");
+
+        let lease = self.model_pool.acquire_preferred().await;
+        let agent = lease
+            .create_agent(system_prompt)
+            .context("Failed to create LLM agent for key field selection")?;
+
+        let response = agent.prompt(&user_prompt).await.map_err(|e| {
+            anyhow::anyhow!("LLM prompt failed for key field selection on {}: {}", resource, e)
+        })?;
+
+        // Parse JSON response (strip markdown fences first)
+        let cleaned_response = strip_json_fences(&response);
+        let parsed: serde_json::Value = serde_json::from_str(&cleaned_response).map_err(|e| {
+            anyhow::anyhow!("Failed to parse LLM response as JSON: {}", e)
+        })?;
+
+        let mut key_attributes: Vec<String> = parsed
+            .get("key_attributes")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .filter(|s| resource_attrs.contains(s))
+                    .take(5)
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let mut key_metrics: Vec<String> = parsed
+            .get("key_metrics")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .filter(|s| resource_metrics.contains(s))
+                    .take(10)
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // Fallback: if LLM returned nothing valid, use alphabetical first-N
+        if key_attributes.is_empty() && !resource_attrs.is_empty() {
+            let mut sorted_attrs = resource_attrs.clone();
+            sorted_attrs.sort();
+            key_attributes = sorted_attrs.into_iter().take(5).collect();
+        }
+
+        if key_metrics.is_empty() && !resource_metrics.is_empty() {
+            let mut sorted_metrics = resource_metrics.clone();
+            sorted_metrics.sort();
+            key_metrics = sorted_metrics.into_iter().take(10).collect();
+        }
+
+        Ok((key_attributes, key_metrics))
+    }
 }
 
 /// Strip markdown code fences from a JSON string (LLM sometimes wraps output in ```json ... ```)
@@ -486,7 +630,7 @@ pub async fn run_enrichment_pipeline(
 
     // Stage 1: Web scraping
     println!(
-        "Stage 1/2: Scraping Google Ads API reference docs for {} resources...",
+        "Stage 1/3: Scraping Google Ads API reference docs for {} resources...",
         resources.len()
     );
     let scraped = crate::scraper::ScrapedDocs::load_or_scrape(
@@ -507,7 +651,7 @@ pub async fn run_enrichment_pipeline(
 
     // Stage 2: LLM enrichment
     println!(
-        "Stage 2/2: Generating LLM descriptions for {} fields...",
+        "Stage 2/3: Generating LLM descriptions for {} fields...",
         cache.fields.len()
     );
     let enricher = MetadataEnricher::new(model_pool);
@@ -517,6 +661,12 @@ pub async fn run_enrichment_pipeline(
         "  Enriched {}/{} fields",
         cache.enriched_field_count(),
         cache.fields.len()
+    );
+
+    // Stage 3: Key field selection (integrated in enrich())
+    println!(
+        "Stage 3/3: Key field selection complete for {} resources",
+        resources.len()
     );
 
     Ok(())
