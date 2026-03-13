@@ -116,13 +116,13 @@ enum Commands {
         #[arg(long)]
         queries: Option<String>,
 
-        /// Path to enriched field metadata JSON (for enhanced mode)
+        /// Path to enriched field metadata JSON
         #[arg(long)]
-        metadata: Option<PathBuf>,
+        metadata: PathBuf,
 
-        /// Use basic RAG mode (no field metadata, query cookbook only)
+        /// Skip implicit default filters (e.g., status = ENABLED)
         #[arg(long)]
-        basic: bool,
+        no_defaults: bool,
     },
 
     /// Upload enriched metadata to Cloudflare R2
@@ -211,9 +211,9 @@ async fn main() -> Result<()> {
             prompt,
             queries,
             metadata,
-            basic,
+            no_defaults,
         } => {
-            cmd_generate(prompt, queries, metadata, basic).await?;
+            cmd_generate(prompt, queries, metadata, no_defaults, cli.verbose).await?;
         }
 
         Commands::Upload { file, key } => {
@@ -498,8 +498,9 @@ async fn cmd_enrich_proto(
 async fn cmd_generate(
     prompt: String,
     queries: Option<String>,
-    metadata: Option<PathBuf>,
-    basic: bool,
+    metadata: PathBuf,
+    no_defaults: bool,
+    verbose: bool,
 ) -> Result<()> {
     validate_llm_env()?;
 
@@ -529,27 +530,75 @@ async fn cmd_generate(
             Vec::new()
         }
     } else {
-        println!("No query cookbook specified. Using enhanced field metadata only.");
+        println!("No query cookbook specified.");
         Vec::new()
     };
 
+    // Load field metadata
+    println!("Loading field metadata from {:?}...", metadata);
+    let field_cache = FieldMetadataCache::load_from_disk(&metadata)
+        .await
+        .context("Failed to load field metadata")?;
+
+    // Check if metadata is enriched (has resource_metadata with key_fields)
+    let is_enriched = field_cache
+        .resource_metadata
+        .as_ref()
+        .map(|m| m.values().any(|rm| !rm.key_attributes.is_empty() || !rm.key_metrics.is_empty()))
+        .unwrap_or(false);
+
+    if !is_enriched {
+        println!("WARNING: Metadata does not appear to be enriched. Key fields may not be available.");
+    }
+
     println!("Generating GAQL for: \"{}\"", prompt);
 
-    let gaql = if basic || metadata.is_none() {
-        // Basic RAG mode: use only query cookbook
-        rag::convert_to_gaql(example_queries, &prompt, &llm_config).await?
-    } else {
-        // Enhanced mode: use field metadata + query cookbook
-        let metadata_path = metadata.unwrap();
-        println!("Loading field metadata from {:?}...", metadata_path);
-        let field_cache = FieldMetadataCache::load_from_disk(&metadata_path)
-            .await
-            .ok();
-
-        rag::convert_to_gaql_enhanced(example_queries, field_cache, &prompt, &llm_config).await?
+    // Build pipeline config
+    let pipeline_config = rag::PipelineConfig {
+        add_defaults: !no_defaults,
     };
 
-    println!("\nGenerated GAQL:\n{}", gaql);
+    // Generate GAQL using MultiStepRAGAgent
+    let result = rag::convert_to_gaql(example_queries, field_cache, &prompt, &llm_config, pipeline_config).await?;
+
+    println!("\nGenerated GAQL:\n{}", result.query);
+
+    // Print validation errors/warnings if any
+    if !result.validation.errors.is_empty() {
+        println!("\nValidation errors:");
+        for err in &result.validation.errors {
+            println!("  - {}", err);
+        }
+    }
+    if !result.validation.warnings.is_empty() {
+        println!("\nValidation warnings:");
+        for warn in &result.validation.warnings {
+            println!("  - {}", warn);
+        }
+    }
+
+    // Print pipeline trace if verbose
+    if verbose {
+        println!("\n--- Pipeline Trace ---");
+        println!("Phase 1 - Primary resource: {}", result.pipeline_trace.phase1_primary_resource);
+        println!("Phase 1 - Related resources: {:?}", result.pipeline_trace.phase1_related_resources);
+        println!("Phase 1 - Reasoning: {}", result.pipeline_trace.phase1_reasoning);
+        println!("Phase 2 - Candidates: {} (rejected: {})", result.pipeline_trace.phase2_candidate_count, result.pipeline_trace.phase2_rejected_count);
+        println!("Phase 3 - Selected fields: {:?}", result.pipeline_trace.phase3_selected_fields);
+        println!("Phase 3 - Filter fields: {:?}", result.pipeline_trace.phase3_filter_fields);
+        println!("Phase 3 - Order by: {:?}", result.pipeline_trace.phase3_order_by_fields);
+        println!("Phase 4 - WHERE clauses: {:?}", result.pipeline_trace.phase4_where_clauses);
+        if let Some(during) = &result.pipeline_trace.phase4_during {
+            println!("Phase 4 - DURING: {}", during);
+        }
+        if let Some(limit) = result.pipeline_trace.phase4_limit {
+            println!("Phase 4 - LIMIT: {}", limit);
+        }
+        if !result.pipeline_trace.phase4_implicit_filters.is_empty() {
+            println!("Phase 4 - Implicit filters: {:?}", result.pipeline_trace.phase4_implicit_filters);
+        }
+        println!("Generation time: {}ms", result.pipeline_trace.generation_time_ms);
+    }
 
     Ok(())
 }

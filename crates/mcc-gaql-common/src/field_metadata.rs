@@ -72,42 +72,12 @@ impl FieldMetadata {
 
     /// Build a rich text description for embedding, using enriched description if available
     /// or falling back to a synthesized description from field metadata.
+    /// Enhanced semantic format - more natural language, removes structural flags.
     pub fn build_embedding_text(&self) -> String {
         let mut parts = Vec::new();
 
-        // Field name + structural tags
-        let flags: Vec<&str> = [
-            if self.selectable {
-                Some("selectable")
-            } else {
-                None
-            },
-            if self.filterable {
-                Some("filterable")
-            } else {
-                None
-            },
-            if self.sortable {
-                Some("sortable")
-            } else {
-                None
-            },
-        ]
-        .into_iter()
-        .flatten()
-        .collect();
-
-        parts.push(format!(
-            "{} [{}, {}{}]",
-            self.name,
-            self.category,
-            self.data_type,
-            if flags.is_empty() {
-                String::new()
-            } else {
-                format!(", {}", flags.join(", "))
-            }
-        ));
+        // Field name + category tag only (no data_type or flags)
+        parts.push(format!("{} [{}]", self.name, self.category));
 
         // Human-readable description (enriched or synthesized)
         if let Some(desc) = &self.description {
@@ -134,6 +104,7 @@ impl FieldMetadata {
             parts.push(format!("Resource: {}", r));
         }
 
+        // Join with period and space, ensuring clean formatting
         parts.join(". ")
     }
 }
@@ -525,6 +496,76 @@ impl FieldMetadataCache {
         output
     }
 
+    /// Get the RESOURCE-category field's selectable_with list for a resource
+    pub fn get_resource_selectable_with(&self, resource: &str) -> Vec<String> {
+        self.fields
+            .get(resource)
+            .filter(|f| f.is_resource())
+            .map(|f| f.selectable_with.clone())
+            .unwrap_or_default()
+    }
+
+    /// Validate field selection against a FROM resource's compatibility list
+    pub fn validate_field_selection_for_resource(
+        &self,
+        field_names: &[String],
+        from_resource: &str,
+    ) -> ValidationResult {
+        // Run existing validation checks
+        let mut result = self.validate_field_selection(field_names);
+
+        // Get the FROM resource's RESOURCE-field selectable_with list
+        let resource_selectable_with = self.get_resource_selectable_with(from_resource);
+
+        if resource_selectable_with.is_empty() {
+            // No RESOURCE field found for this resource - compatibility check skipped
+            // This could indicate metadata is not fully enriched
+            result.warnings.push(ValidationWarning::MissingResourceSelectableWith {
+                resource: from_resource.to_string(),
+            });
+            return result;
+        }
+
+        let mut incompatible_fields = Vec::new();
+
+        // Check each field for compatibility
+        for field_name in field_names {
+            if let Some(field) = self.fields.get(field_name) {
+                if field.is_metric() {
+                    // For metrics: check if metric field name is in the selectable_with list
+                    if !resource_selectable_with.contains(field_name) {
+                        incompatible_fields.push(field_name.clone());
+                    }
+                } else if field.is_segment() {
+                    // For segments: check if segment field name is in the selectable_with list
+                    if !resource_selectable_with.contains(field_name) {
+                        incompatible_fields.push(field_name.clone());
+                    }
+                } else if field.is_attribute() {
+                    // For attributes: check they belong to from_resource or related resources
+                    // Simple prefix check: "campaign.name" is compatible with FROM campaign
+                    if let Some(resource) = field.get_resource() {
+                        let is_compatible = resource == from_resource
+                            || resource_selectable_with.iter().any(|r| r == &resource);
+                        if !is_compatible {
+                            incompatible_fields.push(field_name.clone());
+                        }
+                    }
+                }
+            }
+        }
+
+        if !incompatible_fields.is_empty() {
+            result.errors.push(ValidationError::IncompatibleFields {
+                fields: incompatible_fields,
+                resource: from_resource.to_string(),
+            });
+            result.is_valid = false;
+        }
+
+        result
+    }
+
     /// Validate if a set of fields can be selected together
     pub fn validate_field_selection(&self, field_names: &[String]) -> ValidationResult {
         let mut errors = Vec::new();
@@ -585,7 +626,7 @@ impl Default for FieldMetadataCache {
 }
 
 /// Result of field validation
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ValidationResult {
     pub is_valid: bool,
     pub errors: Vec<ValidationError>,
@@ -593,10 +634,11 @@ pub struct ValidationResult {
 }
 
 /// Validation errors
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ValidationError {
     UnknownFields(Vec<String>),
     NonSelectableFields(Vec<String>),
+    IncompatibleFields { fields: Vec<String>, resource: String },
 }
 
 impl std::fmt::Display for ValidationError {
@@ -608,14 +650,23 @@ impl std::fmt::Display for ValidationError {
             ValidationError::NonSelectableFields(fields) => {
                 write!(f, "Non-selectable fields: {}", fields.join(", "))
             }
+            ValidationError::IncompatibleFields { fields, resource } => {
+                write!(
+                    f,
+                    "Incompatible fields for FROM {}: {}",
+                    resource,
+                    fields.join(", ")
+                )
+            }
         }
     }
 }
 
 /// Validation warnings
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ValidationWarning {
     MetricsWithoutGrouping,
+    MissingResourceSelectableWith { resource: String },
 }
 
 impl std::fmt::Display for ValidationWarning {
@@ -627,8 +678,50 @@ impl std::fmt::Display for ValidationWarning {
                     "Metrics selected without segments or resource fields (may cause aggregation issues)"
                 )
             }
+            ValidationWarning::MissingResourceSelectableWith { resource } => {
+                write!(
+                    f,
+                    "No RESOURCE field found for '{}' - compatibility validation skipped. Metadata may not be fully enriched.",
+                    resource
+                )
+            }
         }
     }
+}
+
+/// Result of GAQL generation with validation and trace
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GAQLResult {
+    pub query: String,
+    pub validation: ValidationResult,
+    pub pipeline_trace: PipelineTrace,
+}
+
+/// Pipeline trace for debugging multi-step RAG
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PipelineTrace {
+    pub phase1_primary_resource: String,
+    pub phase1_related_resources: Vec<String>,
+    pub phase1_dropped_resources: Vec<String>,
+    pub phase1_reasoning: String,
+    pub phase2_candidate_count: usize,
+    pub phase2_rejected_count: usize,
+    pub phase3_selected_fields: Vec<String>,
+    pub phase3_filter_fields: Vec<FilterField>,
+    pub phase3_order_by_fields: Vec<String>,
+    pub phase4_where_clauses: Vec<String>,
+    pub phase4_during: Option<String>,
+    pub phase4_limit: Option<u32>,
+    pub phase4_implicit_filters: Vec<String>,
+    pub generation_time_ms: u64,
+}
+
+/// Filter field specification
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FilterField {
+    pub field_name: String,
+    pub operator: String,
+    pub value: String,
 }
 
 #[cfg(test)]
@@ -833,5 +926,221 @@ mod tests {
             assert!(rm.contains_key("ad_group"));
             assert!(!rm.contains_key("customer"));
         }
+    }
+
+    #[test]
+    fn test_get_resource_selectable_with() {
+        let mut cache = FieldMetadataCache::new();
+
+        // Add a RESOURCE field with selectable_with list
+        cache.fields.insert(
+            "campaign".to_string(),
+            FieldMetadata {
+                name: "campaign".to_string(),
+                category: "RESOURCE".to_string(),
+                data_type: "String".to_string(),
+                selectable: true,
+                filterable: false,
+                sortable: false,
+                metrics_compatible: true,
+                resource_name: None,
+                selectable_with: vec![
+                    "campaign".to_string(),
+                    "metrics.clicks".to_string(),
+                    "segments.date".to_string(),
+                ],
+                enum_values: vec![],
+                attribute_resources: vec![],
+                description: None,
+                usage_notes: None,
+            },
+        );
+
+        let result = cache.get_resource_selectable_with("campaign");
+        assert_eq!(result.len(), 3);
+        assert!(result.contains(&"metrics.clicks".to_string()));
+        assert!(result.contains(&"segments.date".to_string()));
+    }
+
+    #[test]
+    fn test_get_resource_selectable_with_not_found() {
+        let cache = FieldMetadataCache::new();
+        let result = cache.get_resource_selectable_with("nonexistent");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_validate_field_selection_for_resource_rejects_incompatible_metric() {
+        let mut cache = FieldMetadataCache::new();
+
+        // Add campaign RESOURCE field
+        cache.fields.insert(
+            "campaign".to_string(),
+            FieldMetadata {
+                name: "campaign".to_string(),
+                category: "RESOURCE".to_string(),
+                data_type: "String".to_string(),
+                selectable: true,
+                filterable: false,
+                sortable: false,
+                metrics_compatible: true,
+                resource_name: None,
+                selectable_with: vec![
+                    "campaign".to_string(),
+                    "metrics.clicks".to_string(),
+                    // Note: metrics.cost is NOT in the list
+                ],
+                enum_values: vec![],
+                attribute_resources: vec![],
+                description: None,
+                usage_notes: None,
+            },
+        );
+
+        // Add metrics.clicks
+        cache.fields.insert(
+            "metrics.clicks".to_string(),
+            FieldMetadata {
+                name: "metrics.clicks".to_string(),
+                category: "METRIC".to_string(),
+                data_type: "INT64".to_string(),
+                selectable: true,
+                filterable: false,
+                sortable: true,
+                metrics_compatible: false,
+                resource_name: None,
+                selectable_with: vec![],
+                enum_values: vec![],
+                attribute_resources: vec![],
+                description: None,
+                usage_notes: None,
+            },
+        );
+
+        // Add metrics.cost (incompatible)
+        cache.fields.insert(
+            "metrics.cost".to_string(),
+            FieldMetadata {
+                name: "metrics.cost".to_string(),
+                category: "METRIC".to_string(),
+                data_type: "INT64".to_string(),
+                selectable: true,
+                filterable: false,
+                sortable: true,
+                metrics_compatible: false,
+                resource_name: None,
+                selectable_with: vec![],
+                enum_values: vec![],
+                attribute_resources: vec![],
+                description: None,
+                usage_notes: None,
+            },
+        );
+
+        // Test: metrics.cost should be rejected
+        let result = cache.validate_field_selection_for_resource(
+            &["campaign".to_string(), "metrics.cost".to_string()],
+            "campaign",
+        );
+
+        assert!(!result.is_valid);
+        assert!(result.errors.iter().any(|e| matches!(
+            e,
+            ValidationError::IncompatibleFields { fields, resource } if fields.contains(&"metrics.cost".to_string()) && resource == "campaign"
+        )));
+    }
+
+    #[test]
+    fn test_validate_field_selection_for_resource_accepts_compatible_metric() {
+        let mut cache = FieldMetadataCache::new();
+
+        // Add campaign RESOURCE field
+        cache.fields.insert(
+            "campaign".to_string(),
+            FieldMetadata {
+                name: "campaign".to_string(),
+                category: "RESOURCE".to_string(),
+                data_type: "String".to_string(),
+                selectable: true,
+                filterable: false,
+                sortable: false,
+                metrics_compatible: true,
+                resource_name: None,
+                selectable_with: vec![
+                    "campaign".to_string(),
+                    "metrics.clicks".to_string(),
+                ],
+                enum_values: vec![],
+                attribute_resources: vec![],
+                description: None,
+                usage_notes: None,
+            },
+        );
+
+        // Add metrics.clicks (compatible)
+        cache.fields.insert(
+            "metrics.clicks".to_string(),
+            FieldMetadata {
+                name: "metrics.clicks".to_string(),
+                category: "METRIC".to_string(),
+                data_type: "INT64".to_string(),
+                selectable: true,
+                filterable: false,
+                sortable: true,
+                metrics_compatible: false,
+                resource_name: None,
+                selectable_with: vec![],
+                enum_values: vec![],
+                attribute_resources: vec![],
+                description: None,
+                usage_notes: None,
+            },
+        );
+
+        // Test: metrics.clicks should be accepted
+        let result = cache.validate_field_selection_for_resource(
+            &["campaign".to_string(), "metrics.clicks".to_string()],
+            "campaign",
+        );
+
+        assert!(result.is_valid);
+        assert!(!result.errors.iter().any(|e| matches!(
+            e,
+            ValidationError::IncompatibleFields { .. }
+        )));
+    }
+
+    #[test]
+    fn test_build_embedding_text_no_structural_flags() {
+        let field = FieldMetadata {
+            name: "campaign.status".to_string(),
+            category: "ATTRIBUTE".to_string(),
+            data_type: "ENUM".to_string(),
+            selectable: true,
+            filterable: true,
+            sortable: false,
+            metrics_compatible: true,
+            resource_name: None,
+            selectable_with: vec![],
+            enum_values: vec!["ENABLED".to_string(), "PAUSED".to_string()],
+            attribute_resources: vec!["campaign".to_string()],
+            description: Some("The status of the campaign".to_string()),
+            usage_notes: Some("Use with WHERE clause to filter".to_string()),
+        };
+
+        let text = field.build_embedding_text();
+
+        // Should NOT contain data_type, selectable, filterable, sortable flags
+        assert!(!text.contains("ENUM"));
+        assert!(!text.contains("selectable"));
+        assert!(!text.contains("filterable"));
+        assert!(!text.contains("sortable"));
+
+        // Should contain category tag, description, usage notes, enum values, resource
+        assert!(text.contains("[ATTRIBUTE]"));
+        assert!(text.contains("The status of the campaign"));
+        assert!(text.contains("Use with WHERE clause"));
+        assert!(text.contains("Valid values: ENABLED, PAUSED"));
+        assert!(text.contains("Resource: campaign"));
     }
 }

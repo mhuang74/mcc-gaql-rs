@@ -12,7 +12,7 @@ use rig::{
     completion::{Completion, Prompt},
     embeddings::{EmbedError, EmbeddingsBuilder, TextEmbedder, embed::Embed},
     providers::openai::{self, completion::CompletionModel},
-    vector_store::VectorStoreIndex,
+    vector_store::{VectorStoreIndex, VectorSearchRequest},
 };
 use rig_fastembed::FastembedModel;
 use rig_lancedb::{LanceDbVectorIndex, SearchParams};
@@ -543,6 +543,7 @@ fn strip_markdown_code_blocks(text: &str) -> String {
 
 /// Newtype wrapper around QueryEntry that implements Embed.
 /// Required because QueryEntry is defined in mcc-gaql-common (orphan rule).
+#[derive(Deserialize)]
 struct QueryEntryEmbed(QueryEntry);
 
 // use description field from QueryEntry for embedding
@@ -710,20 +711,40 @@ impl Embed for FieldDocument {
     }
 }
 
-struct RAGAgent {
-    agent: Agent<CompletionModel>,
+/// Configuration for the multi-step RAG pipeline
+#[derive(Debug, Clone)]
+pub struct PipelineConfig {
+    /// Whether to add implicit default filters (e.g., status = ENABLED)
+    pub add_defaults: bool,
+}
+
+impl Default for PipelineConfig {
+    fn default() -> Self {
+        Self { add_defaults: true }
+    }
+}
+
+/// Multi-step RAG Agent for high-accuracy GAQL generation
+pub struct MultiStepRAGAgent {
+    llm_config: LlmConfig,
+    field_cache: FieldMetadataCache,
+    field_index: LanceDbVectorIndex<rig_fastembed::EmbeddingModel>,
     query_index: LanceDbVectorIndex<rig_fastembed::EmbeddingModel>,
+    pipeline_config: PipelineConfig,
     // Keep embed client alive to prevent premature resource dropping
     _embed_client: rig_fastembed::Client,
 }
 
-impl RAGAgent {
+impl MultiStepRAGAgent {
+    /// Initialize the multi-step RAG agent
     pub async fn init(
-        query_cookbook: Vec<QueryEntry>,
+        example_queries: Vec<QueryEntry>,
+        field_cache: FieldMetadataCache,
         config: &LlmConfig,
+        pipeline_config: PipelineConfig,
     ) -> Result<Self, anyhow::Error> {
         log::info!(
-            "Using LLM: {} via {}",
+            "Initializing MultiStepRAGAgent with LLM: {} via {}",
             config.preferred_model(),
             config.base_url
         );
@@ -731,452 +752,635 @@ impl RAGAgent {
         // Initialize shared LLM resources
         let resources = init_llm_resources(config)?;
 
-        // Build or load query vector store with LanceDB caching
+        // Build or load field vector store
+        let field_index = build_or_load_field_vector_store(
+            &field_cache,
+            resources.embedding_model.clone(),
+        )
+        .await?;
+
+        // Build or load query vector store
         let query_index =
-            build_or_load_query_vector_store(query_cookbook, resources.embedding_model).await?;
-
-        let agent = resources
-            .llm_client
-            .agent(config.preferred_model())
-            .preamble("
-                You are a Google Ads GAQL query assistant here to assist the user to translate natural language query requests into valid GAQL.
-
-                CRITICAL RULES:
-                - NEVER invent or create field names
-                - ONLY use field names from the example queries provided below
-                - If you're unsure about a field name, use the closest match from the examples
-
-                OUTPUT REQUIREMENTS:
-                - Respond with ONLY the GAQL query as plain text
-                - Do not include markdown code blocks (```sql or ```gaql or ```)
-                - Do not include quotes (single or double)
-                - Do not include explanatory text before or after the query
-                - Do not include any other formatting
-
-                You will find example GAQL queries in the context provided with each request.
-            ")
-            .temperature(config.temperature as f64)
-            .build();
-
-        Ok(RAGAgent {
-            agent,
-            query_index,
-            _embed_client: resources.embed_client,
-        })
-    }
-
-    pub async fn prompt(&self, prompt: &str) -> Result<String, anyhow::Error> {
-        use rig::vector_store::VectorSearchRequest;
-        let search_request = VectorSearchRequest::builder()
-            .query(prompt)
-            .samples(10)
-            .build()
-            .expect("Failed to build search request");
-
-        let relevant_queries = self
-            .query_index
-            .top_n::<QueryEntry>(search_request)
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to retrieve relevant queries: {}", e))?;
-
-        // Format relevant queries as context
-        let mut context = String::from("RELEVANT EXAMPLE QUERIES:\n\n");
-        for (score, _id, query_entry) in relevant_queries.iter().take(10) {
-            context.push_str(&format!(
-                "Example (relevance: {:.3}):\nDescription: {}\nQuery: {}\n\n",
-                score, query_entry.description, query_entry.query
-            ));
-        }
-
-        // Build enhanced prompt with context
-        let enhanced_prompt = format!("{}\n\nUSER REQUEST: {}", context, prompt);
-
-        // Dump full LLM request for debugging
-        if log::log_enabled!(log::Level::Debug) {
-            let completion_request = self
-                .agent
-                .completion(&enhanced_prompt, vec![])
-                .await?
-                .build();
-            let formatted_request =
-                format_llm_request_debug(&completion_request.preamble, &enhanced_prompt);
-            log::debug!("{}", formatted_request);
-        }
-
-        // Prompt the agent with enhanced context
-        let response = self
-            .agent
-            .prompt(&enhanced_prompt)
-            .await
-            .map_err(anyhow::Error::new)?;
-
-        // Strip markdown code blocks from response
-        Ok(strip_markdown_code_blocks(&response))
-    }
-}
-
-pub async fn convert_to_gaql(
-    example_queries: Vec<QueryEntry>,
-    prompt: &str,
-    config: &LlmConfig,
-) -> Result<String, anyhow::Error> {
-    // Initialize RAGAgent
-    let rag_agent = RAGAgent::init(example_queries, config).await?;
-
-    // Use RAGAgent to prompt
-    rag_agent.prompt(prompt).await
-}
-
-/// Enhanced RAG Agent with field metadata awareness
-struct EnhancedRAGAgent {
-    agent: Agent<CompletionModel>,
-    query_index: LanceDbVectorIndex<rig_fastembed::EmbeddingModel>,
-    field_cache: Option<FieldMetadataCache>,
-    field_vector_store: Option<LanceDbVectorIndex<rig_fastembed::EmbeddingModel>>,
-    // Keep embed client alive to prevent premature resource dropping
-    _embed_client: rig_fastembed::Client,
-}
-
-impl EnhancedRAGAgent {
-    pub async fn init(
-        query_cookbook: Vec<QueryEntry>,
-        field_cache: Option<FieldMetadataCache>,
-        config: &LlmConfig,
-    ) -> Result<Self, anyhow::Error> {
-        let init_start = std::time::Instant::now();
-
-        log::info!(
-            "Using LLM: {} via {}",
-            config.preferred_model(),
-            config.base_url
-        );
-
-        // Initialize shared LLM resources
-        let resources = init_llm_resources(config)?;
-
-        // Build or load query cookbook vector store with LanceDB caching
-        log::info!(
-            "Initializing query cookbook embeddings for {} queries",
-            query_cookbook.len()
-        );
-        let query_index =
-            build_or_load_query_vector_store(query_cookbook, resources.embedding_model.clone())
+            build_or_load_query_vector_store(example_queries, resources.embedding_model)
                 .await?;
 
-        // Build or load field embeddings if field cache is available
-        let field_vector_store = if let Some(ref cache) = field_cache {
-            log::info!(
-                "Initializing field embeddings for {} fields",
-                cache.fields.len()
-            );
-            Some(build_or_load_field_vector_store(cache, resources.embedding_model.clone()).await?)
-        } else {
-            None
-        };
-
-        // Build enhanced preamble with field metadata
-        let preamble = Self::build_preamble(&field_cache);
-
-        let agent = resources
-            .llm_client
-            .agent(config.preferred_model())
-            .preamble(&preamble)
-            .temperature(config.temperature as f64)
-            .build();
-
-        log::info!(
-            "EnhancedRAGAgent initialized in {:.2}s",
-            init_start.elapsed().as_secs_f64()
-        );
-
-        Ok(EnhancedRAGAgent {
-            agent,
-            query_index,
+        Ok(Self {
+            llm_config: config.clone(),
             field_cache,
-            field_vector_store,
+            field_index,
+            query_index,
+            pipeline_config,
             _embed_client: resources.embed_client,
         })
     }
 
-    fn build_preamble(field_cache: &Option<FieldMetadataCache>) -> String {
-        let mut preamble = String::from(
-            "You are a Google Ads GAQL query assistant. Convert natural language requests into valid GAQL queries.\n\n",
+    /// Main entry point: generate GAQL query from user prompt
+    pub async fn generate(&self, user_query: &str) -> Result<mcc_gaql_common::field_metadata::GAQLResult, anyhow::Error> {
+        let start = std::time::Instant::now();
+
+        // Phase 1: Resource selection
+        let (primary_resource, related_resources, dropped_resources, reasoning) =
+            self.select_resource(user_query).await?;
+
+        // Phase 2: Field candidate retrieval
+        let (candidates, candidate_count, rejected_count) =
+            self.retrieve_field_candidates(user_query, &primary_resource, &related_resources)
+                .await?;
+
+        // Phase 2.5: Pre-scan for filter keywords
+        let filter_enums = self.prescan_filters(user_query, &candidates);
+
+        // Phase 3: Field selection via LLM
+        let field_selection = self
+            .select_fields(user_query, &primary_resource, &candidates, &filter_enums)
+            .await?;
+
+        // Phase 4: Assemble WHERE, ORDER BY, LIMIT, DURING
+        let (where_clauses, during, limit, implicit_filters) = self.assemble_criteria(
+            user_query,
+            &field_selection,
+            &primary_resource,
         );
 
-        if let Some(cache) = field_cache {
-            preamble.push_str("SCHEMA INFORMATION:\n");
-            preamble.push_str(&format!(
-                "Available resources: {}\n\n",
-                cache.get_resources().join(", ")
-            ));
+        // Phase 5: Generate final GAQL query
+        let result = self
+            .generate_gaql(
+                &primary_resource,
+                &field_selection,
+                &where_clauses,
+                during.as_deref(),
+                limit,
+            )
+            .await?;
 
-            preamble.push_str("AVAILABLE FIELDS:\n");
-            preamble.push_str("For each query, you will be provided with relevant fields selected specifically for your request.\n");
-            preamble.push_str("These fields are chosen based on semantic similarity to your query and may include metrics, segments, and attributes.\n\n");
+        let generation_time_ms = start.elapsed().as_millis() as u64;
 
-            preamble.push_str(
-                "CRITICAL: NEVER invent or create field names. ONLY use field names from:\n",
-            );
-            preamble.push_str("1. The relevant fields provided for your specific query\n");
-            preamble.push_str("2. Field names from the example queries\n\n");
-        }
+        // Build pipeline trace
+        let pipeline_trace = mcc_gaql_common::field_metadata::PipelineTrace {
+            phase1_primary_resource: primary_resource,
+            phase1_related_resources: related_resources,
+            phase1_dropped_resources: dropped_resources,
+            phase1_reasoning: reasoning,
+            phase2_candidate_count: candidate_count,
+            phase2_rejected_count: rejected_count,
+            phase3_selected_fields: field_selection.select_fields.clone(),
+            phase3_filter_fields: field_selection.filter_fields.clone(),
+            phase3_order_by_fields: field_selection.order_by_fields.clone(),
+            phase4_where_clauses: where_clauses,
+            phase4_during: during,
+            phase4_limit: limit,
+            phase4_implicit_filters: implicit_filters,
+            generation_time_ms,
+        };
 
-        preamble.push_str("RULES:\n");
-        preamble.push_str("- SELECT only fields marked as selectable\n");
-        preamble.push_str("- FROM clause specifies the primary resource\n");
-        preamble.push_str("- WHERE clause supports filterable fields only\n");
-        preamble.push_str("- Metrics require grouping by resource attributes or segments\n");
-        preamble.push_str("- Use segments.date for time-based analysis\n");
-        preamble.push_str(
-            "- For trending, always include segments.date and use ORDER BY segments.date\n",
-        );
-        preamble.push_str("- DURING operator for date ranges (e.g., DURING LAST_30_DAYS)\n\n");
-
-        preamble.push_str("OUTPUT:\n");
-        preamble.push_str(
-            "CRITICAL: Respond with ONLY the GAQL query as plain text. Do not include:\n",
-        );
-        preamble.push_str("- Markdown code blocks (```sql or ```gaql or ```)\n");
-        preamble.push_str("- Quotes (single or double)\n");
-        preamble.push_str("- Explanatory text before or after the query\n");
-        preamble.push_str("- Any other formatting\n\n");
-        preamble.push_str(
-            "You will find example GAQL queries that could be useful in the attachments below.\n",
-        );
-
-        preamble
+        Ok(mcc_gaql_common::field_metadata::GAQLResult {
+            query: result,
+            validation: mcc_gaql_common::field_metadata::ValidationResult {
+                is_valid: true,
+                errors: vec![],
+                warnings: vec![],
+            },
+            pipeline_trace,
+        })
     }
 
-    /// Retrieve relevant fields using RAG based on user query
-    async fn retrieve_relevant_fields(&self, user_query: &str, limit: usize) -> Vec<FieldMetadata> {
-        if let Some(ref field_index) = self.field_vector_store {
-            use rig::vector_store::VectorSearchRequest;
-            let search_request = VectorSearchRequest::builder()
-                .query(user_query)
-                .samples(limit as u64)
-                .build()
-                .expect("Failed to build search request");
+    // =========================================================================
+    // Phase 1: Resource Selection
+    // =========================================================================
 
-            match field_index.top_n::<FieldDocumentFlat>(search_request).await {
-                Ok(results) => {
-                    log::debug!(
-                        "Retrieved {} relevant fields for query: {}",
-                        results.len(),
-                        user_query
-                    );
-                    for (score, id, flat_doc) in &results {
-                        log::debug!("  Score: {:.3}, ID: {}, Field: {:?}", score, id, flat_doc);
-                    }
-                    results
-                        .into_iter()
-                        .map(|(_, _, flat_doc)| FieldMetadata::from(flat_doc))
-                        .collect()
+    async fn select_resource(
+        &self,
+        user_query: &str,
+    ) -> Result<(String, Vec<String>, Vec<String>, String), anyhow::Error> {
+        let resources = self.field_cache.get_resources();
+
+        // Build compact resource list for LLM
+        let resource_list: Vec<String> = resources
+            .iter()
+            .map(|r| {
+                let rm = self.field_cache.resource_metadata.as_ref()
+                    .and_then(|m| m.get(r));
+                let desc = rm.and_then(|m| m.description.as_deref()).unwrap_or("");
+                format!("- {}: {}", r, desc)
+            })
+            .collect();
+
+        let system_prompt = r#"You are a Google Ads Query Language (GAQL) expert. Given a user query, determine:
+1. The primary resource to query FROM (e.g., campaign, ad_group, keyword_view)
+2. Any related resources that might be needed (for JOINs or attributes)
+
+Respond ONLY with valid JSON:
+{
+  "primary_resource": "resource_name",
+  "related_resources": ["related_resource1", "related_resource2"],
+  "confidence": 0.95,
+  "reasoning": "brief explanation"
+}
+
+Choose from: "#.to_string() + &resource_list.join(", ");
+
+        let user_prompt = format!("User query: {}", user_query);
+
+        let agent = self.llm_config.create_agent_for_model(
+            self.llm_config.preferred_model(),
+            &system_prompt,
+        )?;
+        let response = agent.prompt(&user_prompt).await?;
+
+        // Parse JSON response
+        let parsed: serde_json::Value = serde_json::from_str(&response)
+            .map_err(|e| anyhow::anyhow!("Failed to parse LLM response: {}", e))?;
+
+        let primary = parsed["primary_resource"]
+            .as_str()
+            .unwrap_or("campaign")
+            .to_string();
+
+        let related: Vec<String> = parsed["related_resources"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let reasoning = parsed["reasoning"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
+
+        // Validate related_resources against primary's selectable_with
+        let selectable_with = self.field_cache.get_resource_selectable_with(&primary);
+        let mut dropped = Vec::new();
+        let validated_related: Vec<String> = related
+            .into_iter()
+            .filter(|r| {
+                if selectable_with.contains(r) {
+                    true
+                } else {
+                    dropped.push(r.clone());
+                    false
                 }
-                Err(e) => {
-                    log::warn!("Failed to retrieve relevant fields: {}", e);
-                    Vec::new()
+            })
+            .collect();
+
+        Ok((primary, validated_related, dropped, reasoning))
+    }
+
+    // =========================================================================
+    // Phase 2: Field Candidate Retrieval
+    // =========================================================================
+
+    async fn retrieve_field_candidates(
+        &self,
+        _user_query: &str,
+        primary: &str,
+        related: &[String],
+    ) -> Result<(Vec<FieldMetadata>, usize, usize), anyhow::Error> {
+        let mut candidates = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+
+        // Get primary resource's key fields from ResourceMetadata
+        if let Some(rm) = self.field_cache.resource_metadata.as_ref().and_then(|m| m.get(primary)) {
+            // Add key_attributes
+            for attr in &rm.key_attributes {
+                if let Some(field) = self.field_cache.fields.get(attr) {
+                    if seen.insert(field.name.clone()) {
+                        candidates.push(field.clone());
+                    }
                 }
             }
-        } else {
-            Vec::new()
-        }
-    }
-
-    /// Format relevant fields organized by category
-    fn format_relevant_fields(&self, fields: &[FieldMetadata]) -> String {
-        if fields.is_empty() {
-            return String::new();
-        }
-
-        let mut output = String::from("RELEVANT FIELDS FOR YOUR QUERY:\n\n");
-
-        let mut metrics: Vec<&FieldMetadata> = fields.iter().filter(|f| f.is_metric()).collect();
-        let mut segments: Vec<&FieldMetadata> = fields.iter().filter(|f| f.is_segment()).collect();
-        let mut attributes: Vec<&FieldMetadata> =
-            fields.iter().filter(|f| f.is_attribute()).collect();
-
-        metrics.sort_by(|a, b| a.name.cmp(&b.name));
-        segments.sort_by(|a, b| a.name.cmp(&b.name));
-        attributes.sort_by(|a, b| a.name.cmp(&b.name));
-
-        if !metrics.is_empty() {
-            output.push_str("Metrics:\n");
-            for field in metrics {
-                output.push_str(&format!(
-                    "- {}: {} ({})\n",
-                    field.name,
-                    field.data_type,
-                    if field.selectable {
-                        "selectable"
-                    } else {
-                        "not selectable"
+            // Add key_metrics
+            for metric in &rm.key_metrics {
+                if let Some(field) = self.field_cache.fields.get(metric) {
+                    if seen.insert(field.name.clone()) {
+                        candidates.push(field.clone());
                     }
-                ));
+                }
             }
-            output.push('\n');
         }
 
-        if !segments.is_empty() {
-            output.push_str("Segments:\n");
-            for field in segments {
-                output.push_str(&format!("- {}: {}\n", field.name, field.data_type));
+        // Get selectable_with for compatibility check
+        let selectable_with = self.field_cache.get_resource_selectable_with(primary);
+
+        // Add key_attributes from related resources
+        for rel in related {
+            if let Some(rm) = self.field_cache.resource_metadata.as_ref().and_then(|m| m.get(rel)) {
+                for attr in &rm.key_attributes {
+                    if let Some(field) = self.field_cache.fields.get(attr) {
+                        // Only add if compatible with primary resource
+                        if let Some(resource) = field.get_resource() {
+                            if resource == primary || selectable_with.contains(&resource) {
+                                if seen.insert(field.name.clone()) {
+                                    candidates.push(field.clone());
+                                }
+                            }
+                        }
+                    }
+                }
             }
-            output.push('\n');
         }
 
-        if !attributes.is_empty() {
-            output.push_str("Attributes:\n");
-            for field in attributes {
-                output.push_str(&format!(
-                    "- {}: {} ({}{})\n",
-                    field.name,
-                    field.data_type,
-                    if field.selectable {
-                        "selectable"
-                    } else {
-                        "not selectable"
-                    },
-                    if field.filterable { ", filterable" } else { "" }
-                ));
-            }
-            output.push('\n');
-        }
+        let candidate_count = candidates.len();
+        let rejected_count = 0; // All retrieved candidates are compatible by construction
 
-        output
+        Ok((candidates, candidate_count, rejected_count))
     }
 
-    fn identify_resources(&self, user_query: &str) -> Vec<String> {
+    // =========================================================================
+    // Phase 2.5: Pre-scan Filters
+    // =========================================================================
+
+    fn prescan_filters(
+        &self,
+        user_query: &str,
+        candidates: &[FieldMetadata],
+    ) -> Vec<(String, Vec<String>)> {
         let query_lower = user_query.to_lowercase();
-        let mut resources = Vec::new();
+        let mut filter_enums = Vec::new();
 
-        if query_lower.contains("campaign") {
-            resources.push("campaign".to_string());
-        }
-        if query_lower.contains("ad group") || query_lower.contains("adgroup") {
-            resources.push("ad_group".to_string());
-        }
-        if query_lower.contains("keyword") {
-            resources.push("keyword_view".to_string());
-        }
-        if query_lower.contains("search term") {
-            resources.push("search_term_view".to_string());
-        }
-        if query_lower.contains("ad ") || query_lower.contains("ads ") {
-            resources.push("ad_group_ad".to_string());
-        }
-        if query_lower.contains("asset") {
-            resources.push("asset".to_string());
+        // Keyword mappings
+        let keyword_map: HashMap<&str, &str> = [
+            ("status", "status"),
+            ("enabled", "status"),
+            ("paused", "status"),
+            ("active", "status"),
+            ("type", "advertising_channel_type"),
+            ("channel", "advertising_channel_type"),
+            ("device", "device"),
+            ("mobile", "device"),
+            ("desktop", "device"),
+            ("network", "ad_network_type"),
+            ("search", "ad_network_type"),
+            ("display", "ad_network_type"),
+            ("match type", "keyword_match_type"),
+            ("match_type", "keyword_match_type"),
+        ]
+        .into_iter()
+        .collect();
+
+        for (keyword, field_name) in keyword_map {
+            if query_lower.contains(keyword) {
+                // Find matching candidate field
+                if let Some(field) = candidates.iter().find(|f| f.name == field_name) {
+                    if !field.enum_values.is_empty() {
+                        // Find enum values that match the keyword
+                        let matching_enums: Vec<String> = field
+                            .enum_values
+                            .iter()
+                            .filter(|e| {
+                                let e_lower = e.to_lowercase();
+                                e_lower.contains(keyword)
+                                    || (keyword == "enabled" && e.as_str() == "ENABLED")
+                                    || (keyword == "paused" && e.as_str() == "PAUSED")
+                                    || (keyword == "active" && e.as_str() == "ENABLED")
+                            })
+                            .cloned()
+                            .collect();
+
+                        if !matching_enums.is_empty() {
+                            filter_enums.push((field_name.to_string(), matching_enums));
+                        }
+                    }
+                }
+            }
         }
 
-        // Default to campaign if nothing specific mentioned
-        if resources.is_empty() {
-            resources.push("campaign".to_string());
-        }
-
-        resources
+        filter_enums
     }
 
-    fn build_context_for_query(&self, user_query: &str) -> String {
-        if let Some(cache) = &self.field_cache {
-            let mut context = String::new();
+    // =========================================================================
+    // Phase 3: Field Selection
+    // =========================================================================
 
-            let resources = self.identify_resources(user_query);
-            context.push_str("LIKELY RESOURCES:\n");
-            for resource in &resources {
-                let fields = cache.get_resource_fields(resource);
-                context.push_str(&format!(
-                    "- {}: {} fields available\n",
-                    resource,
-                    fields.len()
+    async fn select_fields(
+        &self,
+        user_query: &str,
+        primary: &str,
+        candidates: &[FieldMetadata],
+        filter_enums: &[(String, Vec<String>)],
+    ) -> Result<FieldSelectionResult, anyhow::Error> {
+        // Retrieve top cookbook examples
+        let examples = self.retrieve_cookbook_examples(user_query, 3).await?;
+
+        // Build candidate list for LLM
+        let mut candidate_text = String::new();
+        let mut categories = std::collections::HashMap::new();
+
+        for field in candidates {
+            let category = categories.entry(field.category.clone()).or_insert_with(Vec::new);
+            category.push(field);
+        }
+
+        for (cat, fields) in categories {
+            candidate_text.push_str(&format!("\n### {} ({})\n", cat, fields.len()));
+            for f in fields.iter().take(15) {
+                let filterable_tag = if f.filterable { " [filterable]" } else { "" };
+                let sortable_tag = if f.sortable { " [sortable]" } else { "" };
+
+                // Check for pre-scanned enum values
+                let enum_note = filter_enums
+                    .iter()
+                    .find(|(name, _)| name == &f.name)
+                    .map(|(_, enums)| format!(" (valid: {})", enums.join(", ")))
+                    .unwrap_or_default();
+
+                candidate_text.push_str(&format!(
+                    "- {}{}{}: {}{}\n",
+                    f.name,
+                    filterable_tag,
+                    sortable_tag,
+                    f.description.as_deref().unwrap_or(""),
+                    enum_note
                 ));
             }
-            context.push('\n');
-
-            let query_lower = user_query.to_lowercase();
-            if query_lower.contains("last")
-                || query_lower.contains("week")
-                || query_lower.contains("month")
-                || query_lower.contains("trend")
-                || query_lower.contains("over time")
-            {
-                context.push_str("TEMPORAL ANALYSIS DETECTED - Include segments.date\n\n");
-            }
-
-            context
-        } else {
-            String::new()
         }
+
+        let system_prompt = format!(
+            r#"You are a Google Ads Query Language (GAQL) expert. Given:
+1. A user query
+2. Cookbook examples
+3. Available fields categorized by type
+
+Select the appropriate fields and build WHERE filters.
+
+Respond ONLY with valid JSON:
+{{{{
+  "select_fields": ["field1", "field2", ...],
+  "filter_fields": [{{{{"field": "field_name", "operator": "=", "value": "value"}}}}],
+  "order_by_fields": [{{{{"field": "field_name", "direction": "DESC"}}}}],
+  "reasoning": "brief explanation"
+}}}}
+
+- Use ONLY fields from the provided list
+- Add filter_fields for any WHERE clauses
+- Add order_by_fields for sorting (use DESC for "top", "best", "worst"; ASC for "first" if ascending)
+- Include segments.date if temporal period is specified
+"#
+        );
+
+        let user_prompt = format!(
+            "User query: {}\n\nCookbook examples:\n{}\n\nAvailable fields:{}",
+            user_query, examples, candidate_text
+        );
+
+        let agent = self.llm_config.create_agent_for_model(
+            self.llm_config.preferred_model(),
+            &system_prompt,
+        )?;
+        let response = agent.prompt(&user_prompt).await?;
+
+        // Parse JSON response
+        let parsed: serde_json::Value = serde_json::from_str(&response)
+            .map_err(|e| anyhow::anyhow!("Failed to parse LLM response: {}", e))?;
+
+        let select_fields: Vec<String> = parsed["select_fields"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .filter(|s| self.field_cache.fields.contains_key(s))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let filter_fields: Vec<mcc_gaql_common::field_metadata::FilterField> = parsed["filter_fields"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|f| {
+                        let field = f.get("field")?.as_str()?.to_string();
+                        let operator = f.get("operator").and_then(|v| v.as_str()).unwrap_or("=").to_string();
+                        let value = f.get("value").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                        Some(mcc_gaql_common::field_metadata::FilterField { field_name: field, operator, value })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let order_by_fields: Vec<String> = parsed["order_by_fields"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|f| f.get("field").and_then(|v| v.as_str()).map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        Ok(FieldSelectionResult {
+            select_fields,
+            filter_fields,
+            order_by_fields,
+        })
     }
 
-    pub async fn prompt(&self, prompt: &str) -> Result<String, anyhow::Error> {
-        use rig::vector_store::VectorSearchRequest;
+    async fn retrieve_cookbook_examples(&self, query: &str, limit: usize) -> Result<String, anyhow::Error> {
         let search_request = VectorSearchRequest::builder()
-            .query(prompt)
-            .samples(3)
+            .query(query)
+            .samples(limit as u64)
             .build()
-            .expect("Failed to build search request");
+            .map_err(|e| anyhow::anyhow!("Failed to build search request: {}", e))?;
 
-        let relevant_queries = self
+        let results = self
             .query_index
-            .top_n::<QueryEntry>(search_request)
+            .top_n::<QueryEntryEmbed>(search_request)
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to retrieve relevant queries: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Vector search failed: {}", e))?;
 
-        // Retrieve relevant fields via RAG (10 fields)
-        let relevant_fields = self.retrieve_relevant_fields(prompt, 10).await;
+        let mut examples = String::new();
+        for result in results {
+            examples.push_str(&format!("- {}\n  GAQL: {}\n", result.2.0.description, result.2.0.query));
+        }
 
-        // Build enhanced prompt with all context
-        let mut enhanced_prompt = String::new();
-        enhanced_prompt.push_str(&format!("USER QUERY: {}\n\n", prompt));
+        Ok(examples)
+    }
 
-        if !relevant_queries.is_empty() {
-            enhanced_prompt.push_str("RELEVANT EXAMPLE QUERIES:\n\n");
-            for (score, _id, query_entry) in relevant_queries.iter().take(3) {
-                enhanced_prompt.push_str(&format!(
-                    "Example (relevance: {:.3}):\nDescription: {}\nQuery: {}\n\n",
-                    score, query_entry.description, query_entry.query
-                ));
+    // =========================================================================
+    // Phase 4: Assemble Criteria
+    // =========================================================================
+
+    fn assemble_criteria(
+        &self,
+        user_query: &str,
+        field_selection: &FieldSelectionResult,
+        primary: &str,
+    ) -> (Vec<String>, Option<String>, Option<u32>, Vec<String>) {
+        let mut where_clauses = Vec::new();
+        let mut implicit_filters = Vec::new();
+
+        // Add explicit filter fields from LLM
+        for ff in &field_selection.filter_fields {
+            let clause = format!("{} {} '{}'", ff.field_name, ff.operator, ff.value);
+            where_clauses.push(clause);
+        }
+
+        // Temporal detection
+        let during = self.detect_temporal_period(user_query);
+
+        // Limit detection
+        let limit = self.detect_limit(user_query);
+
+        // Implicit defaults (if enabled)
+        if self.pipeline_config.add_defaults {
+            let default_filters = self.get_implicit_defaults(primary, &where_clauses);
+            for f in default_filters {
+                where_clauses.push(f.clone());
+                implicit_filters.push(f);
             }
         }
 
-        if !relevant_fields.is_empty() {
-            enhanced_prompt.push_str(&self.format_relevant_fields(&relevant_fields));
+        (where_clauses, during, limit, implicit_filters)
+    }
+
+    fn detect_temporal_period(&self, query: &str) -> Option<String> {
+        let query_lower = query.to_lowercase();
+
+        let period_map: Vec<(&str, &str)> = [
+            ("last 7 days", "LAST_7_DAYS"),
+            ("last week", "LAST_7_DAYS"),
+            ("last 30 days", "LAST_30_DAYS"),
+            ("last 30d", "LAST_30_DAYS"),
+            ("last month", "LAST_MONTH"),
+            ("this month", "THIS_MONTH"),
+            ("today", "TODAY"),
+            ("yesterday", "YESTERDAY"),
+            ("last 14 days", "LAST_14_DAYS"),
+            ("last 90 days", "LAST_90_DAYS"),
+        ].to_vec();
+
+        for (pattern, period) in period_map {
+            if query_lower.contains(pattern) {
+                return Some(period.to_string());
+            }
         }
 
-        enhanced_prompt.push_str(&self.build_context_for_query(prompt));
-        enhanced_prompt.push_str("\nGenerate GAQL query:");
+        None
+    }
 
-        // Dump full LLM request for debugging
-        if log::log_enabled!(log::Level::Debug) {
-            let completion_request = self
-                .agent
-                .completion(&enhanced_prompt, vec![])
-                .await?
-                .build();
-            let formatted_request =
-                format_llm_request_debug(&completion_request.preamble, &enhanced_prompt);
-            log::debug!("{}", formatted_request);
+    fn detect_limit(&self, query: &str) -> Option<u32> {
+        let query_lower = query.to_lowercase();
+
+        let patterns = ["top ", "first ", "best ", "worst "];
+        for pattern in patterns {
+            if let Some(idx) = query_lower.find(pattern) {
+                let after = &query_lower[idx + pattern.len()..];
+                // Extract first number
+                let number: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
+                if let Ok(n) = number.parse::<u32>() {
+                    return Some(n);
+                }
+            }
         }
 
-        let response = self
-            .agent
-            .prompt(&enhanced_prompt)
-            .await
-            .map_err(anyhow::Error::new)?;
+        None
+    }
 
-        Ok(strip_markdown_code_blocks(&response))
+    fn get_implicit_defaults(&self, resource: &str, existing_clauses: &[String]) -> Vec<String> {
+        // Only add defaults if no explicit status filter exists
+        let has_status_filter = existing_clauses.iter().any(|c| c.contains(".status"));
+
+        if has_status_filter {
+            return vec![];
+        }
+
+        // Resources that typically need status filter
+        let status_resources = [
+            "campaign",
+            "ad_group",
+            "keyword_view",
+            "ad_group_ad",
+            "search_term_view",
+            "user_list",
+        ];
+
+        if status_resources.contains(&resource) {
+            vec!["campaign.status = 'ENABLED'".to_string()]
+        } else {
+            vec![]
+        }
+    }
+
+    // =========================================================================
+    // Phase 5: Generate GAQL
+    // =========================================================================
+
+    async fn generate_gaql(
+        &self,
+        primary: &str,
+        field_selection: &FieldSelectionResult,
+        where_clauses: &[String],
+        during: Option<&str>,
+        limit: Option<u32>,
+    ) -> Result<String, anyhow::Error> {
+        let mut query = String::new();
+
+        // SELECT clause
+        let select_fields: Vec<&str> = field_selection.select_fields.iter().map(|s| s.as_str()).collect();
+
+        // Add segments.date if temporal but not present
+        let has_date_segment = select_fields.iter().any(|s| *s == "segments.date");
+        if during.is_some() && !has_date_segment {
+            query.push_str("SELECT ");
+            if !select_fields.is_empty() {
+                query.push_str(&select_fields.join(", "));
+                query.push_str(", ");
+            }
+            query.push_str("segments.date\n");
+        } else {
+            query.push_str("SELECT ");
+            query.push_str(&select_fields.join(", "));
+            query.push('\n');
+        }
+
+        // FROM clause
+        query.push_str(&format!("FROM {}\n", primary));
+
+        // WHERE clause
+        if !where_clauses.is_empty() {
+            query.push_str("WHERE ");
+            query.push_str(&where_clauses.join(" AND "));
+            query.push('\n');
+        }
+
+        // DURING clause
+        if let Some(period) = during {
+            query.push_str(&format!("DURING {}\n", period));
+        }
+
+        // ORDER BY clause
+        if !field_selection.order_by_fields.is_empty() {
+            query.push_str("ORDER BY ");
+            query.push_str(&field_selection.order_by_fields.join(", "));
+            query.push('\n');
+        }
+
+        // LIMIT clause
+        if let Some(n) = limit {
+            query.push_str(&format!("LIMIT {}\n", n));
+        }
+
+        Ok(query.trim().to_string())
     }
 }
 
-/// Convert natural language to GAQL with field metadata awareness
-pub async fn convert_to_gaql_enhanced(
+/// Result of field selection from Phase 3
+struct FieldSelectionResult {
+    select_fields: Vec<String>,
+    filter_fields: Vec<mcc_gaql_common::field_metadata::FilterField>,
+    order_by_fields: Vec<String>,
+}
+
+/// Public entry point for GAQL generation
+pub async fn convert_to_gaql(
     example_queries: Vec<QueryEntry>,
-    field_cache: Option<FieldMetadataCache>,
+    field_cache: FieldMetadataCache,
     prompt: &str,
     config: &LlmConfig,
-) -> Result<String, anyhow::Error> {
-    let rag_agent = EnhancedRAGAgent::init(example_queries, field_cache, config).await?;
-    rag_agent.prompt(prompt).await
+    pipeline_config: PipelineConfig,
+) -> Result<mcc_gaql_common::field_metadata::GAQLResult, anyhow::Error> {
+    let agent = MultiStepRAGAgent::init(example_queries, field_cache, config, pipeline_config).await?;
+    agent.generate(prompt).await
 }
 
 #[cfg(test)]
