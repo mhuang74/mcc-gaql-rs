@@ -408,7 +408,6 @@ pub async fn build_or_load_query_vector_store(
                             "id",
                             SearchParams::default()
                                 .distance_type(DistanceType::Cosine)
-                                .column("vector"),
                         )
                         .await
                         .map_err(|e| anyhow::anyhow!("Failed to create vector index: {}", e))?;
@@ -494,7 +493,6 @@ pub async fn build_or_load_query_vector_store(
         "id",
         SearchParams::default()
             .distance_type(DistanceType::Cosine)
-            .column("vector"),
     )
     .await
     .map_err(|e| anyhow::anyhow!("Failed to create vector index: {}", e))?;
@@ -630,7 +628,6 @@ pub async fn build_or_load_field_vector_store(
                             "id",
                             SearchParams::default()
                                 .distance_type(DistanceType::Cosine)
-                                .column("vector"),
                         )
                         .await
                         .map_err(|e| anyhow::anyhow!("Failed to create vector index: {}", e))?;
@@ -717,7 +714,6 @@ pub async fn build_or_load_field_vector_store(
         "id",
         SearchParams::default()
             .distance_type(DistanceType::Cosine)
-            .column("vector"),
     )
     .await
     .map_err(|e| anyhow::anyhow!("Failed to create vector index: {}", e))?;

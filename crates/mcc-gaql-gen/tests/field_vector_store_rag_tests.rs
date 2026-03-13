@@ -1,15 +1,21 @@
 
 use mcc_gaql_common::field_metadata::{FieldMetadata, FieldMetadataCache};
-use mcc_gaql_gen::rag::{FieldDocument, FieldDocumentFlat, build_or_load_field_vector_store};
-use mcc_gaql_gen::vector_store::clear_lancedb_tables_only;
+use mcc_gaql_gen::rag::{FieldDocument, FieldDocumentFlat};
+use rig::embeddings::EmbeddingsBuilder;
 use rig::vector_store::{VectorSearchRequest, VectorStoreIndex};
 use rig_fastembed::{Client as FastembedClient, FastembedModel};
-use rig_lancedb::LanceDbVectorIndex;
+use rig_lancedb::{LanceDbVectorIndex, SearchParams};
+use lancedb::DistanceType;
+use arrow_array::{ArrayRef, BooleanArray, FixedSizeListArray, Float64Array, RecordBatch, RecordBatchIterator, StringArray};
+use arrow_schema::{DataType, Field, Schema};
 use std::collections::{HashMap, HashSet};
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 #[allow(unused_imports)]
 use dirs;
+
+/// Embedding dimension for BGESmallENV15 model
+const EMBEDDING_DIM: i32 = 384;
 
 /// Shared embedding model to avoid parallel initialization issues
 fn get_shared_embedding_model() -> &'static rig_fastembed::EmbeddingModel {
@@ -215,15 +221,10 @@ fn create_test_field_cache() -> FieldMetadataCache {
     }
 }
 
-/// Helper to create the field vector store for testing with synthetic data
+/// Helper to create the field vector store for testing with synthetic data.
+/// Uses a temp directory to avoid affecting production cache.
 async fn get_test_field_vector_store()
 -> anyhow::Result<LanceDbVectorIndex<rig_fastembed::EmbeddingModel>> {
-    // Clear only LanceDB tables to avoid "table already exists" errors
-    // when running tests concurrently or after interrupted runs.
-    // NOTE: We intentionally do NOT clear hash files to avoid invalidating
-    // the production query cookbook cache.
-    let _ = clear_lancedb_tables_only().await;
-
     // Create synthetic field cache for testing
     let field_cache = create_test_field_cache();
 
@@ -235,10 +236,151 @@ async fn get_test_field_vector_store()
     // Use shared embedding model to avoid parallel initialization issues
     let embedding_model = get_shared_embedding_model().clone();
 
-    // Build or load vector store
-    let vector_store = build_or_load_field_vector_store(&field_cache, embedding_model).await?;
+    // Convert FieldMetadataCache to FieldDocuments
+    let field_docs: Vec<FieldDocument> = field_cache
+        .fields
+        .values()
+        .cloned()
+        .map(FieldDocument::new)
+        .collect();
 
-    Ok(vector_store)
+    // Generate embeddings
+    let embeddings = EmbeddingsBuilder::new(embedding_model.clone())
+        .documents(field_docs.clone())?
+        .build()
+        .await?;
+
+    // Match embeddings to documents by ID
+    let mut embedding_map: HashMap<String, Vec<f64>> = HashMap::new();
+    for (doc_ref, emb) in embeddings.iter() {
+        let embedding_vec: Vec<f64> = emb.iter().flat_map(|e| e.vec.clone()).collect();
+        embedding_map.insert(doc_ref.id.clone(), embedding_vec);
+    }
+
+    // Create documents with embeddings matched by ID
+    let mut docs_with_embeddings: Vec<(FieldDocument, Vec<f64>)> = Vec::new();
+    for doc in field_docs {
+        let vec = embedding_map
+            .get(&doc.id)
+            .cloned()
+            .unwrap_or_else(|| vec![0.0_f64; EMBEDDING_DIM as usize]);
+        docs_with_embeddings.push((doc, vec));
+    }
+
+    // Create temp directory for LanceDB (isolated from production cache)
+    let temp_dir = tempfile::tempdir()?;
+    let db_path = temp_dir.path().join("test_field_rag.lancedb");
+    let db = lancedb::connect(db_path.to_str().unwrap())
+        .execute()
+        .await?;
+
+    println!("Created test LanceDB at: {}", db_path.display());
+
+    // Define schema matching the field metadata structure
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Utf8, false),
+        Field::new("description", DataType::Utf8, false),
+        Field::new("category", DataType::Utf8, false),
+        Field::new("data_type", DataType::Utf8, false),
+        Field::new("selectable", DataType::Boolean, false),
+        Field::new("filterable", DataType::Boolean, false),
+        Field::new("sortable", DataType::Boolean, false),
+        Field::new("metrics_compatible", DataType::Boolean, false),
+        Field::new("resource_name", DataType::Utf8, true),
+        Field::new(
+            "vector",
+            DataType::FixedSizeList(
+                Arc::new(Field::new("item", DataType::Float64, true)),
+                EMBEDDING_DIM,
+            ),
+            false,
+        ),
+    ]));
+
+    // Convert documents to Arrow arrays
+    let ids: StringArray =
+        StringArray::from_iter_values(docs_with_embeddings.iter().map(|(d, _)| d.id.as_str()));
+    let descriptions: StringArray =
+        StringArray::from_iter_values(docs_with_embeddings.iter().map(|(d, _)| d.description.as_str()));
+    let categories: StringArray =
+        StringArray::from_iter_values(docs_with_embeddings.iter().map(|(d, _)| d.field.category.as_str()));
+    let data_types: StringArray =
+        StringArray::from_iter_values(docs_with_embeddings.iter().map(|(d, _)| d.field.data_type.as_str()));
+    let selectable: BooleanArray = docs_with_embeddings
+        .iter()
+        .map(|(d, _)| Some(d.field.selectable))
+        .collect();
+    let filterable: BooleanArray = docs_with_embeddings
+        .iter()
+        .map(|(d, _)| Some(d.field.filterable))
+        .collect();
+    let sortable: BooleanArray = docs_with_embeddings
+        .iter()
+        .map(|(d, _)| Some(d.field.sortable))
+        .collect();
+    let metrics_compatible: BooleanArray = docs_with_embeddings
+        .iter()
+        .map(|(d, _)| Some(d.field.metrics_compatible))
+        .collect();
+    let resource_names: StringArray = StringArray::from_iter(
+        docs_with_embeddings
+            .iter()
+            .map(|(d, _)| d.field.resource_name.as_deref()),
+    );
+
+    // Convert embeddings to FixedSizeListArray
+    let embedding_values: Vec<f64> = docs_with_embeddings
+        .iter()
+        .flat_map(|(_, vec)| vec.clone())
+        .collect();
+
+    let vectors = FixedSizeListArray::try_new(
+        Arc::new(Field::new("item", DataType::Float64, true)),
+        EMBEDDING_DIM,
+        Arc::new(Float64Array::from(embedding_values)),
+        None,
+    )?;
+
+    let batch = RecordBatch::try_new(
+        schema.clone(),
+        vec![
+            Arc::new(ids) as ArrayRef,
+            Arc::new(descriptions) as ArrayRef,
+            Arc::new(categories) as ArrayRef,
+            Arc::new(data_types) as ArrayRef,
+            Arc::new(selectable) as ArrayRef,
+            Arc::new(filterable) as ArrayRef,
+            Arc::new(sortable) as ArrayRef,
+            Arc::new(metrics_compatible) as ArrayRef,
+            Arc::new(resource_names) as ArrayRef,
+            Arc::new(vectors) as ArrayRef,
+        ],
+    )?;
+
+    let batches = RecordBatchIterator::new(vec![Ok(batch)], schema.clone());
+
+    // Create LanceDB table
+    let table = db
+        .create_table("field_metadata", Box::new(batches))
+        .execute()
+        .await?;
+
+    // Create vector index
+    let index = LanceDbVectorIndex::new(
+        table,
+        embedding_model,
+        "id",
+        SearchParams::default()
+            .distance_type(DistanceType::Cosine)
+            .column("vector"),
+    )
+    .await?;
+
+    // Keep temp_dir alive by leaking it (tests are short-lived anyway)
+    // This prevents the directory from being deleted before the test completes
+    std::mem::forget(temp_dir);
+
+    Ok(index)
 }
 
 /// Helper to search the vector store with a query and limit

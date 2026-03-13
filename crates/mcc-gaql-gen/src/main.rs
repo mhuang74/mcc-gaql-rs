@@ -815,15 +815,20 @@ fn validate_llm_env() -> Result<()> {
 fn init_logger(verbose: bool) {
     use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
 
-    let log_level = if verbose {
+    let base_level = if verbose {
         "debug".to_string()
     } else {
         env::var("MCC_GAQL_LOG_LEVEL").unwrap_or_else(|_| "warn".to_string())
     };
 
+    // Suppress LanceDB deprecation warning about _distance column auto-projection
+    // This is an upstream issue in rig-lancedb: https://github.com/0xPlaygrounds/rig/issues/XXX
+    // The warning is harmless - _distance is still being included via auto-projection
+    let log_spec = format!("{}, lance::dataset::scanner=error", base_level);
+
     let log_dir = env::var("MCC_GAQL_LOG_DIR").unwrap_or_else(|_| ".".to_string());
 
-    Logger::try_with_env_or_str(log_level)
+    Logger::try_with_env_or_str(&log_spec)
         .unwrap()
         .use_utc()
         .log_to_file(
