@@ -576,7 +576,7 @@ async fn cmd_generate(
         eprintln!("\nERROR: Embeddings cache is not built or is out-of-date.");
         eprintln!("\nTo generate GAQL queries, you must first build the embeddings cache:");
         eprintln!("  mcc-gaql-gen index");
-        eprintln!("\nThis is a one-time operation that takes 20-30 minutes.");
+        eprintln!("\nThis is a one-time operation that takes 3-5 minutes.");
         eprintln!("After indexing, 'generate' commands will be instant.");
         anyhow::bail!("Cache not available - run 'mcc-gaql-gen index' first");
     }
@@ -689,7 +689,7 @@ async fn cmd_index(
             return Ok(());
         }
         false => {
-            println!("\nBuilding embeddings (this may take 20-30 minutes on first run)...");
+            println!("\nBuilding embeddings (this may take 3-5 minutes on first run)...");
             println!("Subsequent runs will be much faster if the data hasn't changed.\n");
         }
     }

@@ -246,10 +246,22 @@ fn format_llm_request_debug(preamble: &Option<String>, prompt: &str) -> String {
 }
 
 /// Compute hash of query cookbook for cache validation
+/// Queries are sorted by ID to ensure deterministic ordering regardless of HashMap iteration order
 pub fn compute_query_cookbook_hash(queries: &[QueryEntry]) -> u64 {
     // Use a fixed seed for deterministic hashing
     let mut hasher = XxHash64::with_seed(0x1234_5678_9abc_def0);
-    for query in queries {
+
+    // Sort queries for deterministic ordering (HashMap iteration is random)
+    // Sort by id first, then by description, then by query for complete determinism
+    // (duplicate IDs are possible when different descriptions produce the same truncated ID)
+    let mut sorted_queries: Vec<_> = queries.iter().collect();
+    sorted_queries.sort_by(|a, b| {
+        a.id.cmp(&b.id)
+            .then_with(|| a.description.cmp(&b.description))
+            .then_with(|| a.query.cmp(&b.query))
+    });
+
+    for query in sorted_queries {
         query.description.hash(&mut hasher);
         query.query.hash(&mut hasher);
     }
@@ -287,18 +299,45 @@ pub fn validate_cache_for_data(
 ) -> Result<bool, anyhow::Error> {
     // Check field metadata cache
     let field_hash = compute_field_cache_hash(field_cache);
-    let field_valid = match lancedb_utils::load_hash("field_metadata")? {
-        Some(cached_hash) => cached_hash == field_hash,
-        None => false,
+    let field_cached = lancedb_utils::load_hash("field_metadata")?;
+    let field_valid = match field_cached {
+        Some(cached_hash) => {
+            log::debug!(
+                "Field metadata: computed={}, cached={}",
+                field_hash,
+                cached_hash
+            );
+            cached_hash == field_hash
+        }
+        None => {
+            log::debug!("Field metadata: no cached hash found");
+            false
+        }
     };
 
     // Check query cookbook cache
     let query_hash = compute_query_cookbook_hash(query_cookbook);
-    let query_valid = match lancedb_utils::load_hash("query_cookbook")? {
-        Some(cached_hash) => cached_hash == query_hash,
-        None => false,
+    let query_cached = lancedb_utils::load_hash("query_cookbook")?;
+    let query_valid = match query_cached {
+        Some(cached_hash) => {
+            log::debug!(
+                "Query cookbook: computed={}, cached={}",
+                query_hash,
+                cached_hash
+            );
+            cached_hash == query_hash
+        }
+        None => {
+            log::debug!("Query cookbook: no cached hash found");
+            false
+        }
     };
 
+    log::debug!(
+        "Cache validation: field_valid={}, query_valid={}",
+        field_valid,
+        query_valid
+    );
     Ok(field_valid && query_valid)
 }
 
@@ -1967,5 +2006,90 @@ mod tests {
         assert!(result.contains("LIMIT 10"));
         let _ = during;
         let _ = limit;
+    }
+
+    #[test]
+    fn test_compute_query_cookbook_hash_order_independent() {
+        // Same queries in different order should produce same hash
+        let queries_order1 = vec![
+            QueryEntry {
+                id: "query_a".to_string(),
+                description: "First query".to_string(),
+                query: "SELECT a FROM b".to_string(),
+            },
+            QueryEntry {
+                id: "query_b".to_string(),
+                description: "Second query".to_string(),
+                query: "SELECT c FROM d".to_string(),
+            },
+        ];
+
+        let queries_order2 = vec![
+            QueryEntry {
+                id: "query_b".to_string(),
+                description: "Second query".to_string(),
+                query: "SELECT c FROM d".to_string(),
+            },
+            QueryEntry {
+                id: "query_a".to_string(),
+                description: "First query".to_string(),
+                query: "SELECT a FROM b".to_string(),
+            },
+        ];
+
+        let hash1 = compute_query_cookbook_hash(&queries_order1);
+        let hash2 = compute_query_cookbook_hash(&queries_order2);
+        assert_eq!(hash1, hash2, "Hash should be independent of input order");
+    }
+
+    #[test]
+    fn test_compute_query_cookbook_hash_duplicate_ids() {
+        // Different queries with same ID should produce different hashes
+        let queries1 = vec![
+            QueryEntry {
+                id: "same_id".to_string(),
+                description: "Description A".to_string(),
+                query: "SELECT a FROM b".to_string(),
+            },
+            QueryEntry {
+                id: "same_id".to_string(),
+                description: "Description B".to_string(),
+                query: "SELECT c FROM d".to_string(),
+            },
+        ];
+
+        let queries2 = vec![
+            QueryEntry {
+                id: "same_id".to_string(),
+                description: "Description B".to_string(),
+                query: "SELECT c FROM d".to_string(),
+            },
+            QueryEntry {
+                id: "same_id".to_string(),
+                description: "Description A".to_string(),
+                query: "SELECT a FROM b".to_string(),
+            },
+        ];
+
+        // Both should produce the same hash despite different input order
+        // because sorting is stable when IDs are equal (falls back to description/query)
+        let hash1 = compute_query_cookbook_hash(&queries1);
+        let hash2 = compute_query_cookbook_hash(&queries2);
+        assert_eq!(
+            hash1, hash2,
+            "Hash should be consistent even with duplicate IDs in different order"
+        );
+
+        // Verify the hash is different from a single-query version
+        let single_query = vec![QueryEntry {
+            id: "same_id".to_string(),
+            description: "Description A".to_string(),
+            query: "SELECT a FROM b".to_string(),
+        }];
+        let hash_single = compute_query_cookbook_hash(&single_query);
+        assert_ne!(
+            hash1, hash_single,
+            "Different query sets should produce different hashes"
+        );
     }
 }
