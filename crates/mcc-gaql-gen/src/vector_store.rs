@@ -71,6 +71,26 @@ pub fn clear_cache() -> Result<()> {
     Ok(())
 }
 
+/// Clear only LanceDB tables without removing hash files.
+/// Used by tests to avoid "table already exists" errors while
+/// preserving production cache hashes.
+pub async fn clear_lancedb_tables_only() -> Result<()> {
+    let cache_dir = dirs::cache_dir()
+        .ok_or_else(|| anyhow::anyhow!("Failed to get cache directory"))?
+        .join("mcc-gaql")
+        .join("lancedb");
+
+    if cache_dir.exists() {
+        std::fs::remove_dir_all(&cache_dir)?;
+        println!(
+            "Removed LanceDB cache directory: {}",
+            cache_dir.display()
+        );
+    }
+
+    Ok(())
+}
+
 /// Save hash to file with schema version
 pub fn save_hash(cache_type: &str, hash: u64) -> Result<()> {
     let hash_path = get_hash_path(cache_type)?;
