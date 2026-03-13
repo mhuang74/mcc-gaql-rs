@@ -9,7 +9,7 @@ use lancedb::DistanceType;
 use rig::{
     agent::Agent,
     client::CompletionClient,
-    completion::{Completion, Prompt},
+    completion::Prompt,
     embeddings::{EmbedError, EmbeddingsBuilder, TextEmbedder, embed::Embed},
     providers::openai::{self, completion::CompletionModel},
     vector_store::{VectorStoreIndex, VectorSearchRequest},
@@ -817,7 +817,7 @@ impl MultiStepRAGAgent {
 
         // Build pipeline trace
         let pipeline_trace = mcc_gaql_common::field_metadata::PipelineTrace {
-            phase1_primary_resource: primary_resource,
+            phase1_primary_resource: primary_resource.clone(),
             phase1_related_resources: related_resources,
             phase1_dropped_resources: dropped_resources,
             phase1_reasoning: reasoning,
@@ -833,13 +833,16 @@ impl MultiStepRAGAgent {
             generation_time_ms,
         };
 
+        // Validate the field selection against the primary resource
+        let all_fields: Vec<String> = field_selection.select_fields.iter()
+            .chain(field_selection.filter_fields.iter().map(|f| &f.field_name))
+            .cloned()
+            .collect();
+        let validation = self.field_cache.validate_field_selection_for_resource(&all_fields, &primary_resource);
+
         Ok(mcc_gaql_common::field_metadata::GAQLResult {
             query: result,
-            validation: mcc_gaql_common::field_metadata::ValidationResult {
-                is_valid: true,
-                errors: vec![],
-                warnings: vec![],
-            },
+            validation,
             pipeline_trace,
         })
     }
@@ -887,8 +890,9 @@ Choose from: "#.to_string() + &resource_list.join(", ");
         )?;
         let response = agent.prompt(&user_prompt).await?;
 
-        // Parse JSON response
-        let parsed: serde_json::Value = serde_json::from_str(&response)
+        // Parse JSON response (strip markdown fences first)
+        let cleaned_response = strip_markdown_code_blocks(&response);
+        let parsed: serde_json::Value = serde_json::from_str(&cleaned_response)
             .map_err(|e| anyhow::anyhow!("Failed to parse LLM response: {}", e))?;
 
         let primary = parsed["primary_resource"]
@@ -934,35 +938,37 @@ Choose from: "#.to_string() + &resource_list.join(", ");
 
     async fn retrieve_field_candidates(
         &self,
-        _user_query: &str,
+        user_query: &str,
         primary: &str,
         related: &[String],
     ) -> Result<(Vec<FieldMetadata>, usize, usize), anyhow::Error> {
         let mut candidates = Vec::new();
         let mut seen = std::collections::HashSet::new();
 
+        // Get selectable_with for compatibility check
+        let selectable_with = self.field_cache.get_resource_selectable_with(primary);
+
+        // =========================================================================
+        // Tier 1: Key fields from ResourceMetadata (curated high-value fields)
+        // =========================================================================
+
         // Get primary resource's key fields from ResourceMetadata
         if let Some(rm) = self.field_cache.resource_metadata.as_ref().and_then(|m| m.get(primary)) {
             // Add key_attributes
             for attr in &rm.key_attributes {
-                if let Some(field) = self.field_cache.fields.get(attr) {
-                    if seen.insert(field.name.clone()) {
+                if let Some(field) = self.field_cache.fields.get(attr)
+                    && seen.insert(field.name.clone()) {
                         candidates.push(field.clone());
                     }
-                }
             }
             // Add key_metrics
             for metric in &rm.key_metrics {
-                if let Some(field) = self.field_cache.fields.get(metric) {
-                    if seen.insert(field.name.clone()) {
+                if let Some(field) = self.field_cache.fields.get(metric)
+                    && seen.insert(field.name.clone()) {
                         candidates.push(field.clone());
                     }
-                }
             }
         }
-
-        // Get selectable_with for compatibility check
-        let selectable_with = self.field_cache.get_resource_selectable_with(primary);
 
         // Add key_attributes from related resources
         for rel in related {
@@ -971,14 +977,115 @@ Choose from: "#.to_string() + &resource_list.join(", ");
                     if let Some(field) = self.field_cache.fields.get(attr) {
                         // Only add if compatible with primary resource
                         if let Some(resource) = field.get_resource() {
-                            if resource == primary || selectable_with.contains(&resource) {
-                                if seen.insert(field.name.clone()) {
+                            if (resource == primary || selectable_with.contains(&resource))
+                                && seen.insert(field.name.clone()) {
                                     candidates.push(field.clone());
                                 }
-                            }
                         }
                     }
                 }
+            }
+        }
+
+        // =========================================================================
+        // Tier 2: Query-specific RAG vector searches
+        // =========================================================================
+
+        // Search for attributes matching the primary resource
+        let attr_search = async {
+            let search_request = VectorSearchRequest::builder()
+                .query(user_query)
+                .samples(30)
+                .build()
+                .map_err(|e| anyhow::anyhow!("Failed to build attr search request: {}", e))?;
+
+            self.field_index
+                .top_n::<FieldDocumentFlat>(search_request)
+                .await
+                .map_err(|e| anyhow::anyhow!("Attr vector search failed: {}", e))
+        };
+
+        // Search for metrics
+        let metric_search = async {
+            let search_request = VectorSearchRequest::builder()
+                .query(user_query)
+                .samples(30)
+                .build()
+                .map_err(|e| anyhow::anyhow!("Failed to build metric search request: {}", e))?;
+
+            self.field_index
+                .top_n::<FieldDocumentFlat>(search_request)
+                .await
+                .map_err(|e| anyhow::anyhow!("Metric vector search failed: {}", e))
+        };
+
+        // Search for segments
+        let segment_search = async {
+            let search_request = VectorSearchRequest::builder()
+                .query(user_query)
+                .samples(15)
+                .build()
+                .map_err(|e| anyhow::anyhow!("Failed to build segment search request: {}", e))?;
+
+            self.field_index
+                .top_n::<FieldDocumentFlat>(search_request)
+                .await
+                .map_err(|e| anyhow::anyhow!("Segment vector search failed: {}", e))
+        };
+
+        // Run all 3 searches in parallel
+        let (attr_results, metric_results, segment_results) =
+            tokio::join!(attr_search, metric_search, segment_search);
+
+        // Process attribute results: filter to fields starting with "{primary}."
+        let prefix = format!("{}.", primary);
+        if let Ok(results) = attr_results {
+            for result in results {
+                let doc = &result.2;
+                // Filter to attributes for the primary resource
+                if (doc.id.starts_with(&prefix) || doc.category == "ATTRIBUTE")
+                    && let Some(field) = self.field_cache.fields.get(&doc.id)
+                        && seen.insert(field.name.clone()) {
+                            candidates.push(field.clone());
+                        }
+            }
+        }
+
+        // Process metric results: filter to metrics
+        if let Ok(results) = metric_results {
+            for result in results {
+                let doc = &result.2;
+                if (doc.category == "METRIC" || doc.id.starts_with("metrics."))
+                    && let Some(field) = self.field_cache.fields.get(&doc.id) {
+                        // Check compatibility: metrics must be in selectable_with
+                        let compatible = if let Some(resource) = field.get_resource() {
+                            resource == primary || selectable_with.contains(&resource)
+                        } else {
+                            true // No resource constraint means compatible
+                        };
+                        if compatible && seen.insert(field.name.clone()) {
+                            candidates.push(field.clone());
+                        }
+                    }
+            }
+        }
+
+        // Process segment results: filter to segments
+        if let Ok(results) = segment_results {
+            for result in results {
+                let doc = &result.2;
+                if (doc.category == "SEGMENT" || doc.id.starts_with("segments."))
+                    && let Some(field) = self.field_cache.fields.get(&doc.id) {
+                        // Check compatibility: segments must be in selectable_with
+                        let compatible = if let Some(resource) = field.get_resource() {
+                            resource == primary || selectable_with.contains(&resource)
+                        } else {
+                            true // No resource constraint means compatible
+                        };
+                        if compatible && seen.insert(field.name.clone()) {
+                            candidates.push(field.clone());
+                        }
+                    }
             }
         }
 
@@ -1022,9 +1129,9 @@ Choose from: "#.to_string() + &resource_list.join(", ");
 
         for (keyword, field_name) in keyword_map {
             if query_lower.contains(keyword) {
-                // Find matching candidate field
-                if let Some(field) = candidates.iter().find(|f| f.name == field_name) {
-                    if !field.enum_values.is_empty() {
+                // Find matching candidate field - use ends_with to match qualified names like "campaign.status"
+                if let Some(field) = candidates.iter().find(|f| f.name.ends_with(&format!(".{}", field_name)))
+                    && !field.enum_values.is_empty() {
                         // Find enum values that match the keyword
                         let matching_enums: Vec<String> = field
                             .enum_values
@@ -1040,10 +1147,10 @@ Choose from: "#.to_string() + &resource_list.join(", ");
                             .collect();
 
                         if !matching_enums.is_empty() {
-                            filter_enums.push((field_name.to_string(), matching_enums));
+                            // Use the actual qualified field name (e.g., "campaign.status")
+                            filter_enums.push((field.name.clone(), matching_enums));
                         }
                     }
-                }
             }
         }
 
@@ -1097,8 +1204,7 @@ Choose from: "#.to_string() + &resource_list.join(", ");
             }
         }
 
-        let system_prompt = format!(
-            r#"You are a Google Ads Query Language (GAQL) expert. Given:
+        let system_prompt = r#"You are a Google Ads Query Language (GAQL) expert. Given:
 1. A user query
 2. Cookbook examples
 3. Available fields categorized by type
@@ -1106,19 +1212,18 @@ Choose from: "#.to_string() + &resource_list.join(", ");
 Select the appropriate fields and build WHERE filters.
 
 Respond ONLY with valid JSON:
-{{{{
+{
   "select_fields": ["field1", "field2", ...],
-  "filter_fields": [{{{{"field": "field_name", "operator": "=", "value": "value"}}}}],
-  "order_by_fields": [{{{{"field": "field_name", "direction": "DESC"}}}}],
+  "filter_fields": [{"field": "field_name", "operator": "=", "value": "value"}],
+  "order_by_fields": [{"field": "field_name", "direction": "DESC"}],
   "reasoning": "brief explanation"
-}}}}
+}
 
 - Use ONLY fields from the provided list
 - Add filter_fields for any WHERE clauses
 - Add order_by_fields for sorting (use DESC for "top", "best", "worst"; ASC for "first" if ascending)
 - Include segments.date if temporal period is specified
-"#
-        );
+"#.to_string();
 
         let user_prompt = format!(
             "User query: {}\n\nCookbook examples:\n{}\n\nAvailable fields:{}",
@@ -1131,8 +1236,9 @@ Respond ONLY with valid JSON:
         )?;
         let response = agent.prompt(&user_prompt).await?;
 
-        // Parse JSON response
-        let parsed: serde_json::Value = serde_json::from_str(&response)
+        // Parse JSON response (strip markdown fences first)
+        let cleaned_response = strip_markdown_code_blocks(&response);
+        let parsed: serde_json::Value = serde_json::from_str(&cleaned_response)
             .map_err(|e| anyhow::anyhow!("Failed to parse LLM response: {}", e))?;
 
         let select_fields: Vec<String> = parsed["select_fields"]
@@ -1144,6 +1250,29 @@ Respond ONLY with valid JSON:
                     .collect()
             })
             .unwrap_or_default();
+
+        // Fallback: If all LLM fields fail validation, use key_attributes + key_metrics
+        let final_select_fields = if select_fields.is_empty() {
+            log::warn!("No valid select_fields from LLM, falling back to key fields for resource '{}'", primary);
+            let mut fallback = Vec::new();
+            if let Some(rm) = self.field_cache.resource_metadata.as_ref().and_then(|m| m.get(primary)) {
+                // Add first 3 key_attributes
+                for attr in rm.key_attributes.iter().take(3) {
+                    if self.field_cache.fields.contains_key(attr) {
+                        fallback.push(attr.clone());
+                    }
+                }
+                // Add first 3 key_metrics
+                for metric in rm.key_metrics.iter().take(3) {
+                    if self.field_cache.fields.contains_key(metric) {
+                        fallback.push(metric.clone());
+                    }
+                }
+            }
+            fallback
+        } else {
+            select_fields
+        };
 
         let filter_fields: Vec<mcc_gaql_common::field_metadata::FilterField> = parsed["filter_fields"]
             .as_array()
@@ -1159,17 +1288,21 @@ Respond ONLY with valid JSON:
             })
             .unwrap_or_default();
 
-        let order_by_fields: Vec<String> = parsed["order_by_fields"]
+        let order_by_fields: Vec<(String, String)> = parsed["order_by_fields"]
             .as_array()
             .map(|arr| {
                 arr.iter()
-                    .filter_map(|f| f.get("field").and_then(|v| v.as_str()).map(|s| s.to_string()))
+                    .filter_map(|f| {
+                        let field = f.get("field").and_then(|v| v.as_str())?;
+                        let direction = f.get("direction").and_then(|v| v.as_str()).unwrap_or("DESC");
+                        Some((field.to_string(), direction.to_string()))
+                    })
                     .collect()
             })
             .unwrap_or_default();
 
         Ok(FieldSelectionResult {
-            select_fields,
+            select_fields: final_select_fields,
             filter_fields,
             order_by_fields,
         })
@@ -1209,9 +1342,23 @@ Respond ONLY with valid JSON:
         let mut where_clauses = Vec::new();
         let mut implicit_filters = Vec::new();
 
+        // Valid GAQL operators
+        const VALID_OPERATORS: &[&str] = &[
+            "=", "!=", "<", ">", "<=", ">=", "IN", "NOT IN", "LIKE", "NOT LIKE",
+            "CONTAINS ANY", "CONTAINS ALL", "CONTAINS NONE", "IS NULL", "IS NOT NULL",
+            "BETWEEN", "REGEXP_MATCH", "NOT REGEXP_MATCH",
+        ];
+
         // Add explicit filter fields from LLM
         for ff in &field_selection.filter_fields {
-            let clause = format!("{} {} '{}'", ff.field_name, ff.operator, ff.value);
+            let op = ff.operator.to_uppercase();
+            if !VALID_OPERATORS.contains(&op.as_str()) {
+                log::warn!("Invalid operator '{}' for field '{}', skipping", ff.operator, ff.field_name);
+                continue;
+            }
+            // Escape single quotes in values
+            let escaped_value = ff.value.replace('\'', "\\'");
+            let clause = format!("{} {} '{}'", ff.field_name, op, escaped_value);
             where_clauses.push(clause);
         }
 
@@ -1319,7 +1466,7 @@ Respond ONLY with valid JSON:
         let select_fields: Vec<&str> = field_selection.select_fields.iter().map(|s| s.as_str()).collect();
 
         // Add segments.date if temporal but not present
-        let has_date_segment = select_fields.iter().any(|s| *s == "segments.date");
+        let has_date_segment = select_fields.contains(&"segments.date");
         if during.is_some() && !has_date_segment {
             query.push_str("SELECT ");
             if !select_fields.is_empty() {
@@ -1351,7 +1498,11 @@ Respond ONLY with valid JSON:
         // ORDER BY clause
         if !field_selection.order_by_fields.is_empty() {
             query.push_str("ORDER BY ");
-            query.push_str(&field_selection.order_by_fields.join(", "));
+            let order_by_parts: Vec<String> = field_selection.order_by_fields
+                .iter()
+                .map(|(field, direction)| format!("{} {}", field, direction))
+                .collect();
+            query.push_str(&order_by_parts.join(", "));
             query.push('\n');
         }
 
@@ -1368,7 +1519,7 @@ Respond ONLY with valid JSON:
 struct FieldSelectionResult {
     select_fields: Vec<String>,
     filter_fields: Vec<mcc_gaql_common::field_metadata::FilterField>,
-    order_by_fields: Vec<String>,
+    order_by_fields: Vec<(String, String)>, // (field_name, direction)
 }
 
 /// Public entry point for GAQL generation
@@ -1381,6 +1532,49 @@ pub async fn convert_to_gaql(
 ) -> Result<mcc_gaql_common::field_metadata::GAQLResult, anyhow::Error> {
     let agent = MultiStepRAGAgent::init(example_queries, field_cache, config, pipeline_config).await?;
     agent.generate(prompt).await
+}
+
+/// Helper function for detect_temporal_period - extracted for testing
+fn detect_temporal_period_impl(query: &str) -> Option<String> {
+    let query_lower = query.to_lowercase();
+
+    let period_map: Vec<(&str, &str)> = [
+        ("last 7 days", "LAST_7_DAYS"),
+        ("last week", "LAST_7_DAYS"),
+        ("last 30 days", "LAST_30_DAYS"),
+        ("last 30d", "LAST_30_DAYS"),
+        ("last month", "LAST_MONTH"),
+        ("this month", "THIS_MONTH"),
+        ("today", "TODAY"),
+        ("yesterday", "YESTERDAY"),
+        ("last 14 days", "LAST_14_DAYS"),
+        ("last 90 days", "LAST_90_DAYS"),
+    ].to_vec();
+
+    for (pattern, period) in period_map {
+        if query_lower.contains(pattern) {
+            return Some(period.to_string());
+        }
+    }
+    None
+}
+
+/// Helper function for detect_limit - extracted for testing
+fn detect_limit_impl(query: &str) -> Option<u32> {
+    let query_lower = query.to_lowercase();
+
+    let patterns = ["top ", "first ", "best ", "worst "];
+    for pattern in patterns {
+        if let Some(idx) = query_lower.find(pattern) {
+            let after = &query_lower[idx + pattern.len()..];
+            // Extract first number
+            let number: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
+            if let Ok(n) = number.parse::<u32>() {
+                return Some(n);
+            }
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -1485,5 +1679,55 @@ mod tests {
         assert_eq!(config.all_models(), &["model-a", "model-b", "model-c"]);
         assert_eq!(config.preferred_model(), "model-a");
         assert_eq!(config.model_count(), 3);
+    }
+
+    // Tests for fixup issues - these test helper functions directly
+
+    #[test]
+    fn test_detect_temporal_period_last_7_days() {
+        let period = detect_temporal_period_impl("show me performance last 7 days");
+        assert_eq!(period, Some("LAST_7_DAYS".to_string()));
+    }
+
+    #[test]
+    fn test_detect_temporal_period_last_30_days() {
+        let period = detect_temporal_period_impl("campaign performance for last 30 days");
+        assert_eq!(period, Some("LAST_30_DAYS".to_string()));
+    }
+
+    #[test]
+    fn test_detect_temporal_period_yesterday() {
+        let period = detect_temporal_period_impl("yesterday's metrics");
+        assert_eq!(period, Some("YESTERDAY".to_string()));
+    }
+
+    #[test]
+    fn test_detect_temporal_period_no_match() {
+        let period = detect_temporal_period_impl("show all campaigns");
+        assert_eq!(period, None);
+    }
+
+    #[test]
+    fn test_detect_limit_top_10() {
+        let limit = detect_limit_impl("show top 10 campaigns");
+        assert_eq!(limit, Some(10));
+    }
+
+    #[test]
+    fn test_detect_limit_first_5() {
+        let limit = detect_limit_impl("first 5 results");
+        assert_eq!(limit, Some(5));
+    }
+
+    #[test]
+    fn test_detect_limit_best_3() {
+        let limit = detect_limit_impl("best 3 performing ads");
+        assert_eq!(limit, Some(3));
+    }
+
+    #[test]
+    fn test_detect_limit_no_match() {
+        let limit = detect_limit_impl("show all campaigns");
+        assert_eq!(limit, None);
     }
 }

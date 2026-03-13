@@ -168,6 +168,33 @@ impl MetadataEnricher {
             }
         }
 
+        // Stage 3: Key field selection per resource (run before resource description enrichment)
+        log::info!(
+            "Selecting key fields for {} resources",
+            resources.len()
+        );
+        for resource in &resources {
+            match self.select_key_fields_for_resource(resource, cache).await {
+                Ok((key_attrs, key_mets)) => {
+                    if let Some(rm) = cache
+                        .resource_metadata
+                        .as_mut()
+                        .and_then(|m| m.get_mut(resource))
+                    {
+                        rm.key_attributes = key_attrs;
+                        rm.key_metrics = key_mets;
+                    }
+                }
+                Err(e) => {
+                    log::warn!(
+                        "  Key field selection failed for '{}': {}",
+                        resource,
+                        e
+                    );
+                }
+            }
+        }
+
         // Enrich resource-level metadata (sequential, since there are fewer resources)
         log::info!(
             "Enriching resource-level metadata for {} resources",
@@ -192,33 +219,6 @@ impl MetadataEnricher {
                             e
                         );
                     }
-                }
-            }
-        }
-
-        // Stage 3: Key field selection per resource
-        log::info!(
-            "Selecting key fields for {} resources",
-            resources.len()
-        );
-        for resource in &resources {
-            match self.select_key_fields_for_resource(resource, cache).await {
-                Ok((key_attrs, key_mets)) => {
-                    if let Some(rm) = cache
-                        .resource_metadata
-                        .as_mut()
-                        .and_then(|m| m.get_mut(resource))
-                    {
-                        rm.key_attributes = key_attrs;
-                        rm.key_metrics = key_mets;
-                    }
-                }
-                Err(e) => {
-                    log::warn!(
-                        "  Key field selection failed for '{}': {}",
-                        resource,
-                        e
-                    );
                 }
             }
         }
@@ -545,8 +545,9 @@ Do NOT include fields that are rarely used or very specialized.";
             anyhow::anyhow!("LLM prompt failed for key field selection on {}: {}", resource, e)
         })?;
 
-        // Parse JSON response
-        let parsed: serde_json::Value = serde_json::from_str(&response).map_err(|e| {
+        // Parse JSON response (strip markdown fences first)
+        let cleaned_response = strip_json_fences(&response);
+        let parsed: serde_json::Value = serde_json::from_str(&cleaned_response).map_err(|e| {
             anyhow::anyhow!("Failed to parse LLM response as JSON: {}", e)
         })?;
 
@@ -556,7 +557,7 @@ Do NOT include fields that are rarely used or very specialized.";
             .map(|arr| {
                 arr.iter()
                     .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                    .filter(|s| cache.fields.contains_key(s))
+                    .filter(|s| resource_attrs.contains(s))
                     .take(5)
                     .collect()
             })
@@ -568,7 +569,7 @@ Do NOT include fields that are rarely used or very specialized.";
             .map(|arr| {
                 arr.iter()
                     .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                    .filter(|s| cache.fields.contains_key(s))
+                    .filter(|s| resource_metrics.contains(s))
                     .take(10)
                     .collect()
             })

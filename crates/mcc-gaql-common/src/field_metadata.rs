@@ -708,7 +708,7 @@ pub struct PipelineTrace {
     pub phase2_rejected_count: usize,
     pub phase3_selected_fields: Vec<String>,
     pub phase3_filter_fields: Vec<FilterField>,
-    pub phase3_order_by_fields: Vec<String>,
+    pub phase3_order_by_fields: Vec<(String, String)>, // (field_name, direction)
     pub phase4_where_clauses: Vec<String>,
     pub phase4_during: Option<String>,
     pub phase4_limit: Option<u32>,
