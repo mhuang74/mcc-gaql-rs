@@ -984,30 +984,56 @@ impl MultiStepRAGAgent {
         let start = std::time::Instant::now();
 
         // Phase 1: Resource selection
+        let phase1_start = std::time::Instant::now();
+        log::info!("Phase 1: Resource selection...");
         let (primary_resource, related_resources, dropped_resources, reasoning) =
             self.select_resource(user_query).await?;
+        let phase1_time_ms = phase1_start.elapsed().as_millis() as u64;
+        log::info!(
+            "Phase 1 complete: {} ({}ms)",
+            primary_resource, phase1_time_ms
+        );
 
         // Phase 2: Field candidate retrieval
+        let phase2_start = std::time::Instant::now();
+        log::info!("Phase 2: Retrieving field candidates...");
         let (candidates, candidate_count, rejected_count) =
             self.retrieve_field_candidates(user_query, &primary_resource, &related_resources)
                 .await?;
+        let phase2_time_ms = phase2_start.elapsed().as_millis() as u64;
+        log::info!(
+            "Phase 2 complete: {} candidates ({}ms)",
+            candidates.len(), phase2_time_ms
+        );
 
         // Phase 2.5: Pre-scan for filter keywords
+        let phase25_start = std::time::Instant::now();
         let filter_enums = self.prescan_filters(user_query, &candidates);
+        log::debug!("Phase 2.5: Pre-scan filters ({}ms)", phase25_start.elapsed().as_millis());
 
         // Phase 3: Field selection via LLM
+        let phase3_start = std::time::Instant::now();
+        log::info!("Phase 3: Field selection via LLM...");
         let field_selection = self
             .select_fields(user_query, &primary_resource, &candidates, &filter_enums)
             .await?;
+        let phase3_time_ms = phase3_start.elapsed().as_millis() as u64;
+        log::info!(
+            "Phase 3 complete: {} fields selected ({}ms)",
+            field_selection.select_fields.len(), phase3_time_ms
+        );
 
         // Phase 4: Assemble WHERE, ORDER BY, LIMIT, DURING
+        let phase4_start = std::time::Instant::now();
         let (where_clauses, during, limit, implicit_filters) = self.assemble_criteria(
             user_query,
             &field_selection,
             &primary_resource,
         );
+        log::debug!("Phase 4: Criteria assembly ({}ms)", phase4_start.elapsed().as_millis());
 
         // Phase 5: Generate final GAQL query
+        let phase5_start = std::time::Instant::now();
         let result = self
             .generate_gaql(
                 &primary_resource,
@@ -1017,8 +1043,13 @@ impl MultiStepRAGAgent {
                 limit,
             )
             .await?;
+        log::debug!("Phase 5: GAQL generation ({}ms)", phase5_start.elapsed().as_millis());
 
         let generation_time_ms = start.elapsed().as_millis() as u64;
+        log::info!(
+            "GAQL generation complete: total={}ms (Phase1={}ms, Phase2={}ms, Phase3={}ms)",
+            generation_time_ms, phase1_time_ms, phase2_time_ms, phase3_time_ms
+        );
 
         // Build pipeline trace
         let pipeline_trace = mcc_gaql_common::field_metadata::PipelineTrace {
@@ -1093,7 +1124,10 @@ Choose from: "#.to_string() + &resource_list.join(", ");
             self.llm_config.preferred_model(),
             &system_prompt,
         )?;
+        log::debug!("Phase 1: Calling LLM for resource selection...");
+        let llm_start = std::time::Instant::now();
         let response = agent.prompt(&user_prompt).await?;
+        log::debug!("Phase 1: LLM responded in {}ms", llm_start.elapsed().as_millis());
 
         // Parse JSON response (strip markdown fences first)
         let cleaned_response = strip_markdown_code_blocks(&response);
@@ -1239,8 +1273,11 @@ Choose from: "#.to_string() + &resource_list.join(", ");
         };
 
         // Run all 3 searches in parallel
+        log::debug!("Phase 2: Running 3 parallel vector searches...");
+        let search_start = std::time::Instant::now();
         let (attr_results, metric_results, segment_results) =
             tokio::join!(attr_search, metric_search, segment_search);
+        log::debug!("Phase 2: Vector searches complete in {}ms", search_start.elapsed().as_millis());
 
         // Process attribute results: filter to fields starting with "{primary}."
         let prefix = format!("{}.", primary);
@@ -1364,7 +1401,10 @@ Choose from: "#.to_string() + &resource_list.join(", ");
         filter_enums: &[(String, Vec<String>)],
     ) -> Result<FieldSelectionResult, anyhow::Error> {
         // Retrieve top cookbook examples
+        log::debug!("Phase 3: Retrieving cookbook examples...");
+        let cookbook_start = std::time::Instant::now();
         let examples = self.retrieve_cookbook_examples(user_query, 3).await?;
+        log::debug!("Phase 3: Cookbook examples retrieved in {}ms", cookbook_start.elapsed().as_millis());
 
         // Build candidate list for LLM
         let mut candidate_text = String::new();
@@ -1429,7 +1469,10 @@ Respond ONLY with valid JSON:
             self.llm_config.preferred_model(),
             &system_prompt,
         )?;
+        log::debug!("Phase 3: Calling LLM for field selection...");
+        let llm_start = std::time::Instant::now();
         let response = agent.prompt(&user_prompt).await?;
+        log::debug!("Phase 3: LLM responded in {}ms", llm_start.elapsed().as_millis());
 
         // Parse JSON response (strip markdown fences first)
         let cleaned_response = strip_markdown_code_blocks(&response);
