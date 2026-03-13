@@ -12,7 +12,7 @@ use mcc_gaql_common::config::QueryEntry;
 use crate::rag::FieldDocument;
 
 /// Embedding dimension for BGESmallENV15 model
-const EMBEDDING_DIM: i32 = 384;
+pub const EMBEDDING_DIM: i32 = 384;
 
 /// Schema version for tracking schema evolution (includes embedding dimension)
 /// Format: "v1-dim384" - changing EMBEDDING_DIM will invalidate old caches
@@ -559,5 +559,70 @@ mod tests {
         // Clean up
         let hash_path = get_hash_path(cache_type).unwrap();
         let _ = std::fs::remove_file(hash_path);
+    }
+}
+
+/// Cache status information
+#[derive(Debug)]
+pub struct CacheStatus {
+    /// Whether field metadata cache exists and is valid
+    pub field_metadata_valid: bool,
+    /// Whether query cookbook cache exists and is valid
+    pub query_cookbook_valid: bool,
+    /// Last update timestamp for field metadata cache
+    pub field_metadata_updated: Option<chrono::DateTime<chrono::Local>>,
+    /// Last update timestamp for query cookbook cache
+    pub query_cookbook_updated: Option<chrono::DateTime<chrono::Local>>,
+}
+
+impl CacheStatus {
+    /// Check if all caches are valid
+    pub fn is_valid(&self) -> bool {
+        self.field_metadata_valid && self.query_cookbook_valid
+    }
+}
+
+/// Get the last update timestamp for a cache type
+pub fn get_cache_updated_time(cache_type: &str) -> Result<Option<chrono::DateTime<chrono::Local>>> {
+    let cache_dir = dirs::cache_dir()
+        .ok_or_else(|| anyhow::anyhow!("Failed to get cache directory"))?
+        .join("mcc-gaql");
+
+    let hash_path = cache_dir.join(format!("{}.hash", cache_type));
+
+    if !hash_path.exists() {
+        return Ok(None);
+    }
+
+    let metadata = std::fs::metadata(&hash_path)?;
+    let modified = metadata.modified()?;
+    let datetime: chrono::DateTime<chrono::Local> = chrono::DateTime::from(modified);
+    Ok(Some(datetime))
+}
+
+/// Check cache status for both field metadata and query cookbook
+pub fn check_cache_status() -> Result<CacheStatus> {
+    let field_metadata_hash = load_hash("field_metadata")?;
+    let query_cookbook_hash = load_hash("query_cookbook")?;
+
+    let field_metadata_valid = field_metadata_hash.is_some();
+    let query_cookbook_valid = query_cookbook_hash.is_some();
+
+    let field_metadata_updated = get_cache_updated_time("field_metadata")?;
+    let query_cookbook_updated = get_cache_updated_time("query_cookbook")?;
+
+    Ok(CacheStatus {
+        field_metadata_valid,
+        query_cookbook_valid,
+        field_metadata_updated,
+        query_cookbook_updated,
+    })
+}
+
+/// Get a human-readable timestamp string
+pub fn format_timestamp(dt: Option<chrono::DateTime<chrono::Local>>) -> String {
+    match dt {
+        Some(datetime) => datetime.format("%Y-%m-%d %H:%M:%S").to_string(),
+        None => "Never".to_string(),
     }
 }

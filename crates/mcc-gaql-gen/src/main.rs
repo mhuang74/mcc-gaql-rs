@@ -162,6 +162,17 @@ enum Commands {
         force: bool,
     },
 
+    /// Index embeddings for fast generation (pre-build LanceDB cache)
+    Index {
+        /// Path to query cookbook TOML file
+        #[arg(long)]
+        queries: Option<String>,
+
+        /// Path to enriched field metadata JSON (defaults to standard enriched cache path)
+        #[arg(long)]
+        metadata: Option<PathBuf>,
+    },
+
     /// Clear the LanceDB vector cache
     ClearCache,
 }
@@ -230,6 +241,10 @@ async fn main() -> Result<()> {
 
         Commands::ParseProtos { output, force } => {
             cmd_parse_protos(output, force).await?;
+        }
+
+        Commands::Index { queries, metadata } => {
+            cmd_index(queries, metadata).await?;
         }
 
         Commands::ClearCache => {
@@ -554,7 +569,20 @@ async fn cmd_generate(
         println!("WARNING: Metadata does not appear to be enriched. Key fields may not be available.");
     }
 
-    println!("Generating GAQL for: \"{}\"", prompt);
+    // STRICT CHECK: Validate cache matches current data
+    let cache_valid = rag::validate_cache_for_data(&field_cache, &example_queries)?;
+
+    if !cache_valid {
+        eprintln!("\nERROR: Embeddings cache is not built or is out-of-date.");
+        eprintln!("\nTo generate GAQL queries, you must first build the embeddings cache:");
+        eprintln!("  mcc-gaql-gen index");
+        eprintln!("\nThis is a one-time operation that takes 20-30 minutes.");
+        eprintln!("After indexing, 'generate' commands will be instant.");
+        anyhow::bail!("Cache not available - run 'mcc-gaql-gen index' first");
+    }
+
+    // Cache is valid - proceed with generation
+    println!("Cache valid. Generating GAQL for: \"{}\"", prompt);
 
     // Build pipeline config
     let pipeline_config = rag::PipelineConfig {
@@ -601,6 +629,91 @@ async fn cmd_generate(
             println!("Phase 4 - Implicit filters: {:?}", result.pipeline_trace.phase4_implicit_filters);
         }
         println!("Generation time: {}ms", result.pipeline_trace.generation_time_ms);
+    }
+
+    Ok(())
+}
+
+/// Index embeddings for fast query generation
+async fn cmd_index(
+    queries: Option<String>,
+    metadata: Option<PathBuf>,
+) -> Result<()> {
+    validate_llm_env()?;
+
+    let llm_config = rag::LlmConfig::from_env();
+
+    println!("Indexing embeddings for fast GAQL generation...\n");
+
+    // Load query cookbook
+    let example_queries: Vec<QueryEntry> = if let Some(queries_file) = queries {
+        // Explicit --queries flag provided
+        let queries_path = config_file_path(&queries_file)
+            .with_context(|| format!("Could not find queries file: {}", queries_file))?;
+        println!("Loading query cookbook from {:?}...", queries_path);
+        get_queries_from_file(&queries_path).await?.into_values().collect()
+    } else if let Some(default_path) = config_file_path("query_cookbook.toml") {
+        // Try to auto-discover query_cookbook.toml in config directory
+        if default_path.exists() {
+            println!("Loading query cookbook from {:?}...", default_path);
+            match get_queries_from_file(&default_path).await {
+                Ok(map) => map.into_values().collect(),
+                Err(e) => {
+                    log::warn!("Failed to load query cookbook: {}", e);
+                    Vec::new()
+                }
+            }
+        } else {
+            println!("No query cookbook found. Using enhanced field metadata only.");
+            Vec::new()
+        }
+    } else {
+        println!("No query cookbook specified.");
+        Vec::new()
+    };
+
+    // Load field metadata
+    let metadata_path = metadata
+        .or_else(|| mcc_gaql_common::paths::field_metadata_enriched_path().ok())
+        .context("Could not determine enriched metadata path. Use --metadata to specify it.")?;
+    println!("Loading field metadata from {:?}...", metadata_path);
+    let field_cache = FieldMetadataCache::load_from_disk(&metadata_path)
+        .await
+        .context("Failed to load field metadata. Run 'mcc-gaql-gen enrich' first or use --metadata.")?;
+
+    // Check if cache already exists and is valid
+    match rag::validate_cache_for_data(&field_cache, &example_queries)? {
+        true => {
+            println!("\nEmbeddings cache is already up-to-date.");
+            println!("You can now run 'mcc-gaql-gen generate' for instant GAQL generation.");
+            return Ok(());
+        }
+        false => {
+            println!("\nBuilding embeddings (this may take 20-30 minutes on first run)...");
+            println!("Subsequent runs will be much faster if the data hasn't changed.\n");
+        }
+    }
+
+    // Build embeddings only (no RAG pipeline)
+    let start = std::time::Instant::now();
+    rag::build_embeddings(example_queries, &field_cache, &llm_config).await
+        .context("Failed to build embeddings index")?;
+
+    println!("\n--- Indexing Complete ---");
+    println!("Total time: {:.2}s", start.elapsed().as_secs_f64());
+
+    // Show cache status
+    let status = vector_store::check_cache_status()?;
+    println!("\nCache Status:");
+    println!("  Field metadata: valid: {}", status.field_metadata_valid);
+    println!("  Field metadata: updated: {}", vector_store::format_timestamp(status.field_metadata_updated));
+    println!("  Query cookbook: valid: {}", status.query_cookbook_valid);
+    println!("  Query cookbook: updated: {}", vector_store::format_timestamp(status.query_cookbook_updated));
+
+    if status.is_valid() {
+        println!("\nYou can now run 'mcc-gaql-gen generate' for instant GAQL generation.");
+    } else {
+        println!("\nWARNING: Some caches may be incomplete. Run this command again if issues persist.");
     }
 
     Ok(())

@@ -245,7 +245,7 @@ fn format_llm_request_debug(preamble: &Option<String>, prompt: &str) -> String {
 }
 
 /// Compute hash of query cookbook for cache validation
-fn compute_query_cookbook_hash(queries: &[QueryEntry]) -> u64 {
+pub fn compute_query_cookbook_hash(queries: &[QueryEntry]) -> u64 {
     let mut hasher = DefaultHasher::new();
     for query in queries {
         query.description.hash(&mut hasher);
@@ -255,7 +255,7 @@ fn compute_query_cookbook_hash(queries: &[QueryEntry]) -> u64 {
 }
 
 /// Compute hash of field cache for cache validation
-fn compute_field_cache_hash(cache: &FieldMetadataCache) -> u64 {
+pub fn compute_field_cache_hash(cache: &FieldMetadataCache) -> u64 {
     let mut hasher = DefaultHasher::new();
 
     // Hash description generation version to invalidate cache when logic changes
@@ -277,8 +277,71 @@ fn compute_field_cache_hash(cache: &FieldMetadataCache) -> u64 {
     hasher.finish()
 }
 
+/// Validate that the cache is valid for the current data
+/// Returns Ok(true) if both field metadata and query cookbook caches are valid
+pub fn validate_cache_for_data(
+    field_cache: &FieldMetadataCache,
+    query_cookbook: &[QueryEntry],
+) -> Result<bool, anyhow::Error> {
+    // Check field metadata cache
+    let field_hash = compute_field_cache_hash(field_cache);
+    let field_valid = match lancedb_utils::load_hash("field_metadata")? {
+        Some(cached_hash) => cached_hash == field_hash,
+        None => false,
+    };
+
+    // Check query cookbook cache
+    let query_hash = compute_query_cookbook_hash(query_cookbook);
+    let query_valid = match lancedb_utils::load_hash("query_cookbook")? {
+        Some(cached_hash) => cached_hash == query_hash,
+        None => false,
+    };
+
+    Ok(field_valid && query_valid)
+}
+
+/// Build embeddings for field metadata and query cookbook
+/// This is a lightweight operation that only builds embeddings, without running the RAG pipeline
+pub async fn build_embeddings(
+    example_queries: Vec<QueryEntry>,
+    field_cache: &FieldMetadataCache,
+    config: &LlmConfig,
+) -> Result<(), anyhow::Error> {
+    log::info!("Building embeddings for fast GAQL generation...");
+
+    // Initialize embedding resources
+    let resources = init_llm_resources(config)?;
+
+    // Build field vector store (this will use cache if valid)
+    let field_start = std::time::Instant::now();
+    log::info!("Building field metadata embeddings...");
+    let _field_index = build_or_load_field_vector_store(
+        field_cache,
+        resources.embedding_model.clone(),
+    ).await?;
+    log::info!(
+        "Field metadata embeddings ready (took {:.2}s)",
+        field_start.elapsed().as_secs_f64()
+    );
+
+    // Build query vector store (this will use cache if valid)
+    let query_start = std::time::Instant::now();
+    log::info!("Building query cookbook embeddings...");
+    let _query_index = build_or_load_query_vector_store(
+        example_queries,
+        resources.embedding_model,
+    ).await?;
+    log::info!(
+        "Query cookbook embeddings ready (took {:.2}s)",
+        query_start.elapsed().as_secs_f64()
+    );
+
+    log::info!("Embeddings build complete");
+    Ok(())
+}
+
 /// Build or load query cookbook vector store with LanceDB caching
-async fn build_or_load_query_vector_store(
+pub async fn build_or_load_query_vector_store(
     query_cookbook: Vec<QueryEntry>,
     embedding_model: rig_fastembed::EmbeddingModel,
 ) -> Result<LanceDbVectorIndex<rig_fastembed::EmbeddingModel>, anyhow::Error> {
@@ -365,7 +428,7 @@ async fn build_or_load_query_vector_store(
         } else {
             log::warn!("Missing embedding for document ID: {}", document.id);
             embedding_vecs.push(rig::embeddings::Embedding {
-                vec: vec![0.0_f64; 384],
+                vec: vec![0.0_f64; lancedb_utils::EMBEDDING_DIM as usize],
                 document: String::new(),
             });
         }
@@ -492,7 +555,7 @@ pub async fn build_or_load_field_vector_store(
         } else {
             log::warn!("Missing embedding for document ID: {}", document.id);
             embedding_vecs.push(rig::embeddings::Embedding {
-                vec: vec![0.0_f64; 384],
+                vec: vec![0.0_f64; lancedb_utils::EMBEDDING_DIM as usize],
                 document: String::new(),
             });
         }
