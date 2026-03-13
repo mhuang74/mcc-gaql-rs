@@ -1,8 +1,9 @@
 use std::collections::HashMap;
-use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+use twox_hash::XxHash64;
 use std::vec;
 
+use futures::stream::{self, StreamExt};
 use log::info;
 
 use lancedb::DistanceType;
@@ -246,7 +247,8 @@ fn format_llm_request_debug(preamble: &Option<String>, prompt: &str) -> String {
 
 /// Compute hash of query cookbook for cache validation
 pub fn compute_query_cookbook_hash(queries: &[QueryEntry]) -> u64 {
-    let mut hasher = DefaultHasher::new();
+    // Use a fixed seed for deterministic hashing
+    let mut hasher = XxHash64::with_seed(0x1234_5678_9abc_def0);
     for query in queries {
         query.description.hash(&mut hasher);
         query.query.hash(&mut hasher);
@@ -256,7 +258,7 @@ pub fn compute_query_cookbook_hash(queries: &[QueryEntry]) -> u64 {
 
 /// Compute hash of field cache for cache validation
 pub fn compute_field_cache_hash(cache: &FieldMetadataCache) -> u64 {
-    let mut hasher = DefaultHasher::new();
+    let mut hasher = XxHash64::with_seed(0x1234_5678_9abc_def0);
 
     // Hash description generation version to invalidate cache when logic changes
     "DESCRIPTION_VERSION_2".hash(&mut hasher);
@@ -402,10 +404,14 @@ pub async fn build_or_load_query_vector_store(
         .cloned()
         .map(QueryEntryEmbed)
         .collect();
-    let embeddings = EmbeddingsBuilder::new(embedding_model.clone())
-        .documents(wrapped)?
-        .build()
-        .await?;
+
+    // Generate embeddings in parallel chunks for better performance
+    let embeddings = generate_embeddings_parallel(
+        wrapped,
+        embedding_model.clone(),
+        50, // Process 50 documents per chunk
+    )
+    .await?;
 
     log::info!(
         "Query cookbook embeddings generated in {:.2}s",
@@ -460,6 +466,103 @@ pub async fn build_or_load_query_vector_store(
     );
 
     Ok(index)
+}
+
+/// Generate embeddings in parallel chunks for better performance
+///
+/// This function splits documents into chunks and processes them concurrently
+/// using all available CPU cores, significantly speeding up embedding generation.
+/// Generate embeddings in parallel chunks for better performance
+///
+/// This function splits documents into chunks and processes them concurrently
+/// using all available CPU cores, significantly speeding up embedding generation.
+async fn generate_embeddings_parallel<T: Embed + Clone + Send + Sync + 'static>(
+    documents: Vec<T>,
+    embedding_model: rig_fastembed::EmbeddingModel,
+    chunk_size: usize,
+) -> Result<Vec<(T, Vec<rig::embeddings::Embedding>)>, anyhow::Error> {
+    if documents.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let concurrency = num_cpus::get().max(2);
+    let total_docs = documents.len();
+    let total_chunks = (total_docs + chunk_size - 1) / chunk_size;
+
+    log::info!(
+        "Generating embeddings for {} documents in {} chunks (concurrency: {})",
+        total_docs,
+        total_chunks,
+        concurrency
+    );
+
+    let chunks: Vec<Vec<T>> = documents
+        .chunks(chunk_size)
+        .map(|c| c.to_vec())
+        .collect();
+
+    // Process chunks concurrently and collect results
+    let results: Vec<Result<Vec<(T, Vec<rig::embeddings::Embedding>)>, anyhow::Error>> = stream::iter(chunks.into_iter().enumerate())
+        .map(|(idx, chunk)| {
+            let model = embedding_model.clone();
+            async move {
+                log::debug!("Processing embedding chunk {}/{}", idx + 1, total_chunks);
+                let chunk_start = std::time::Instant::now();
+
+                // Build embeddings for this chunk
+                let builder = EmbeddingsBuilder::new(model)
+                    .documents(chunk.clone())
+                    .map_err(|e| anyhow::anyhow!("Failed to create embeddings builder: {}", e))?;
+
+                let chunk_embeddings = builder
+                    .build()
+                    .await
+                    .map_err(|e| anyhow::anyhow!("Failed to build embeddings: {}", e))?;
+
+                log::debug!(
+                    "Chunk {}/{} completed ({} docs, {:.2}s)",
+                    idx + 1,
+                    total_chunks,
+                    chunk.len(),
+                    chunk_start.elapsed().as_secs_f64()
+                );
+
+                // Convert OneOrMany<Embedding> to Vec<Embedding>
+                let result: Vec<(T, Vec<rig::embeddings::Embedding>)> = chunk_embeddings
+                    .into_iter()
+                    .map(|(doc, one_or_many)| {
+                        let embeddings: Vec<rig::embeddings::Embedding> = one_or_many.into_iter().collect();
+                        (doc, embeddings)
+                    })
+                    .collect();
+
+                Ok(result)
+            }
+        })
+        .buffer_unordered(concurrency)
+        .collect::<Vec<_>>()
+        .await;
+
+    // Flatten results and handle errors
+    let mut all_embeddings = Vec::with_capacity(total_docs);
+    for result in results {
+        match result {
+            Ok(chunk_embeddings) => {
+                all_embeddings.extend(chunk_embeddings);
+            }
+            Err(e) => {
+                return Err(e);
+            }
+        }
+    }
+
+    log::info!(
+        "Successfully generated {} embeddings from {} documents",
+        all_embeddings.len(),
+        total_docs
+    );
+
+    Ok(all_embeddings)
 }
 
 /// Build or load field vector store with LanceDB caching
@@ -528,11 +631,13 @@ pub async fn build_or_load_field_vector_store(
         log::debug!("  {}: {}", doc.field.name, doc.description);
     }
 
-    // Generate embeddings
-    let field_embeddings = EmbeddingsBuilder::new(embedding_model.clone())
-        .documents(field_docs.clone())?
-        .build()
-        .await?;
+    // Generate embeddings in parallel chunks for better performance
+    let field_embeddings = generate_embeddings_parallel(
+        field_docs.clone(),
+        embedding_model.clone(),
+        50, // Process 50 documents per chunk
+    )
+    .await?;
 
     log::info!(
         "Field metadata embeddings generated in {:.2}s",
@@ -608,7 +713,7 @@ fn strip_markdown_code_blocks(text: &str) -> String {
 
 /// Newtype wrapper around QueryEntry that implements Embed.
 /// Required because QueryEntry is defined in mcc-gaql-common (orphan rule).
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 struct QueryEntryEmbed(QueryEntry);
 
 // use description field from QueryEntry for embedding
