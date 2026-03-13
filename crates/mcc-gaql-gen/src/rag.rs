@@ -1605,21 +1605,22 @@ Respond ONLY with valid JSON:
     ) -> Result<String, anyhow::Error> {
         let mut query = String::new();
 
-        // SELECT clause
-        let select_fields: Vec<&str> = field_selection.select_fields.iter().map(|s| s.as_str()).collect();
+        // SELECT clause - pretty formatted with each field on its own line
+        let mut select_fields: Vec<&str> = field_selection.select_fields.iter().map(|s| s.as_str()).collect();
 
         // Add segments.date if temporal but not present
         let has_date_segment = select_fields.contains(&"segments.date");
         if during.is_some() && !has_date_segment {
-            query.push_str("SELECT ");
-            if !select_fields.is_empty() {
-                query.push_str(&select_fields.join(", "));
-                query.push_str(", ");
+            select_fields.push("segments.date");
+        }
+
+        query.push_str("SELECT\n");
+        for (i, field) in select_fields.iter().enumerate() {
+            query.push_str("  ");
+            query.push_str(field);
+            if i < select_fields.len() - 1 {
+                query.push_str(",");
             }
-            query.push_str("segments.date\n");
-        } else {
-            query.push_str("SELECT ");
-            query.push_str(&select_fields.join(", "));
             query.push('\n');
         }
 
