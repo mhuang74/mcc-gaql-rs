@@ -65,9 +65,7 @@ fn get_git_hash() -> String {
     };
 
     // Check for uncommitted changes
-    let dirty_output = Command::new("git")
-        .args(["status", "--porcelain"])
-        .output();
+    let dirty_output = Command::new("git").args(["status", "--porcelain"]).output();
 
     let is_dirty = match dirty_output {
         Ok(output) => !output.stdout.is_empty(),

@@ -3,8 +3,8 @@
 //! This module locates the proto files from the googleads-rs crate, which contain
 //! authoritative field-level documentation for the Google Ads API.
 
-use std::path::PathBuf;
 use anyhow::Result;
+use std::path::PathBuf;
 
 /// Locates the googleads-rs proto directory containing V23 proto files.
 ///
@@ -64,8 +64,7 @@ fn find_in_cargo_cache() -> Option<PathBuf> {
             // Look for subdirectories within the checkout (the commit hash folders)
             if let Ok(subdirs) = std::fs::read_dir(&crate_dir) {
                 for subdir in subdirs.flatten() {
-                    let proto_path = subdir.path()
-                        .join("proto/google/ads/googleads/v23");
+                    let proto_path = subdir.path().join("proto/google/ads/googleads/v23");
 
                     if proto_path.exists() {
                         return Some(proto_path);
@@ -144,7 +143,10 @@ mod tests {
             .collect();
 
         // Per spec: 182 resources, 360 enums
-        assert!(resource_files.len() > 100, "Should have >100 resource protos");
+        assert!(
+            resource_files.len() > 100,
+            "Should have >100 resource protos"
+        );
         assert!(enum_files.len() > 200, "Should have >200 enum protos");
     }
 }

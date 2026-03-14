@@ -20,8 +20,8 @@ use mcc_gaql_common::field_metadata::{FieldMetadata, FieldMetadataCache, Resourc
 
 use crate::rag::format_llm_request_debug;
 
-use crate::scraper::ScrapedDocs;
 use crate::model_pool::{ModelLease, ModelPool};
+use crate::scraper::ScrapedDocs;
 
 /// LLM-based enricher for Google Ads field metadata
 pub struct MetadataEnricher {
@@ -171,10 +171,7 @@ impl MetadataEnricher {
         }
 
         // Stage 3: Key field selection per resource (run before resource description enrichment)
-        log::info!(
-            "Selecting key fields for {} resources",
-            resources.len()
-        );
+        log::info!("Selecting key fields for {} resources", resources.len());
         for resource in &resources {
             match self.select_key_fields_for_resource(resource, cache).await {
                 Ok((key_attrs, key_mets)) => {
@@ -188,11 +185,7 @@ impl MetadataEnricher {
                     }
                 }
                 Err(e) => {
-                    log::warn!(
-                        "  Key field selection failed for '{}': {}",
-                        resource,
-                        e
-                    );
+                    log::warn!("  Key field selection failed for '{}': {}", resource, e);
                 }
             }
         }
@@ -377,10 +370,7 @@ Use in SELECT to label rows in reports.\",\n\
                         .map(String::as_str)
                         .collect();
                     if !descs.is_empty() {
-                        prompt.push_str(&format!(
-                            "  Enum descriptions: {}\n",
-                            descs.join("; ")
-                        ));
+                        prompt.push_str(&format!("  Enum descriptions: {}\n", descs.join("; ")));
                     }
                 }
             }
@@ -590,7 +580,11 @@ Do NOT include fields that are rarely used or very specialized.";
 
         let llm_start = std::time::Instant::now();
         let response = agent.prompt(&user_prompt).await.map_err(|e| {
-            anyhow::anyhow!("LLM prompt failed for key field selection on {}: {}", resource, e)
+            anyhow::anyhow!(
+                "LLM prompt failed for key field selection on {}: {}",
+                resource,
+                e
+            )
         })?;
         log::debug!(
             "Key field selection LLM (model={}) responded in {}ms",
@@ -600,9 +594,8 @@ Do NOT include fields that are rarely used or very specialized.";
 
         // Parse JSON response (strip markdown fences first)
         let cleaned_response = strip_json_fences(&response);
-        let parsed: serde_json::Value = serde_json::from_str(&cleaned_response).map_err(|e| {
-            anyhow::anyhow!("Failed to parse LLM response as JSON: {}", e)
-        })?;
+        let parsed: serde_json::Value = serde_json::from_str(&cleaned_response)
+            .map_err(|e| anyhow::anyhow!("Failed to parse LLM response as JSON: {}", e))?;
 
         let mut key_attributes: Vec<String> = parsed
             .get("key_attributes")

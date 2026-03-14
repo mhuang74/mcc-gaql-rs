@@ -5,9 +5,8 @@ use std::str::FromStr;
 use std::sync::LazyLock;
 
 /// Version string including git hash (computed lazily at first use)
-static VERSION: LazyLock<String> = LazyLock::new(|| {
-    format!("{} ({})", env!("CARGO_PKG_VERSION"), env!("GIT_HASH"))
-});
+static VERSION: LazyLock<String> =
+    LazyLock::new(|| format!("{} ({})", env!("CARGO_PKG_VERSION"), env!("GIT_HASH")));
 
 /// Output format for query results
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -140,8 +140,7 @@ fn test_validate_succeeds_with_existing_token_cache() {
     use std::io::Write;
 
     // Get the proper token cache path using config_file_path
-    let token_cache_path =
-        config_file_path("tokencache_test_temp.json").expect("token cache path");
+    let token_cache_path = config_file_path("tokencache_test_temp.json").expect("token cache path");
 
     // Ensure config directory exists
     if let Some(parent) = token_cache_path.parent() {

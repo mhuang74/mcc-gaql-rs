@@ -1,9 +1,9 @@
 use serde::{Deserialize, Serialize};
-use toml::Value;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read};
 use std::path::Path;
+use toml::Value;
 
 pub const TOML_CONFIG_FILENAME: &str = "config.toml";
 pub const ENV_VAR_PREFIX: &str = "MCC_GAQL_";
@@ -192,15 +192,14 @@ where
                 }
 
                 // Validate and normalize customer ID
-                let normalized = validate_and_normalize_customer_id(trimmed)
-                    .map_err(|e| {
-                        anyhow::anyhow!(
-                            "Invalid customer ID on line {} in file {}: {}",
-                            line_num + 1,
-                            filename.as_ref().display(),
-                            e
-                        )
-                    })?;
+                let normalized = validate_and_normalize_customer_id(trimmed).map_err(|e| {
+                    anyhow::anyhow!(
+                        "Invalid customer ID on line {} in file {}: {}",
+                        line_num + 1,
+                        filename.as_ref().display(),
+                        e
+                    )
+                })?;
 
                 customer_ids.push(normalized);
             }
