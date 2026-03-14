@@ -5,26 +5,21 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 
-use mcc_gaql_gen::enricher as enricher;
-use mcc_gaql_gen::model_pool as model_pool;
-use mcc_gaql_gen::proto_locator as proto_locator;
-use mcc_gaql_gen::proto_docs_cache as proto_docs_cache;
-use mcc_gaql_gen::r2 as r2;
-use mcc_gaql_gen::rag as rag;
-use mcc_gaql_gen::scraper as scraper;
-use mcc_gaql_gen::vector_store as vector_store;
+use mcc_gaql_gen::enricher;
+use mcc_gaql_gen::model_pool;
+use mcc_gaql_gen::proto_docs_cache;
+use mcc_gaql_gen::proto_locator;
+use mcc_gaql_gen::r2;
+use mcc_gaql_gen::rag;
+use mcc_gaql_gen::scraper;
+use mcc_gaql_gen::vector_store;
 
-use mcc_gaql_common::config::{get_queries_from_file, QueryEntry};
+use mcc_gaql_common::config::{QueryEntry, get_queries_from_file};
 use mcc_gaql_common::field_metadata::FieldMetadataCache;
 use mcc_gaql_common::paths::config_file_path;
 
 /// Core resources for test-run mode
-const TEST_RUN_RESOURCES: &[&str] = &[
-    "campaign",
-    "ad_group",
-    "ad_group_ad",
-    "ad_group_criterion",
-];
+const TEST_RUN_RESOURCES: &[&str] = &["campaign", "ad_group", "ad_group_ad", "ad_group_criterion"];
 
 /// Filter resources for test-run mode
 fn filter_test_resources(resources: Vec<String>) -> Vec<String> {
@@ -127,6 +122,10 @@ enum Commands {
         /// Enable RAG search for query cookbook examples in LLM prompts
         #[arg(long)]
         use_query_cookbook: bool,
+
+        /// Print explanation of the LLM selection process to stdout
+        #[arg(long)]
+        explain_selection_process: bool,
     },
 
     /// Upload enriched metadata to Cloudflare R2
@@ -228,8 +227,18 @@ async fn main() -> Result<()> {
             metadata,
             no_defaults,
             use_query_cookbook,
+            explain_selection_process,
         } => {
-            cmd_generate(prompt, queries, metadata, no_defaults, use_query_cookbook, cli.verbose).await?;
+            cmd_generate(
+                prompt,
+                queries,
+                metadata,
+                no_defaults,
+                use_query_cookbook,
+                explain_selection_process,
+                cli.verbose,
+            )
+            .await?;
         }
 
         Commands::Upload { file, key } => {
@@ -276,7 +285,9 @@ async fn cmd_scrape(
     println!("Loading field metadata from {:?}...", cache_path);
     let cache = FieldMetadataCache::load_from_disk(&cache_path)
         .await
-        .context("Failed to load field metadata cache. Run 'mcc-gaql --refresh-field-cache' first.")?;
+        .context(
+            "Failed to load field metadata cache. Run 'mcc-gaql --refresh-field-cache' first.",
+        )?;
 
     let mut resources = cache.get_resources();
 
@@ -339,7 +350,9 @@ async fn cmd_enrich(
     println!("Loading field metadata from {:?}...", cache_path);
     let mut cache = FieldMetadataCache::load_from_disk(&cache_path)
         .await
-        .context("Failed to load field metadata cache. Run 'mcc-gaql --refresh-field-cache' first.")?;
+        .context(
+            "Failed to load field metadata cache. Run 'mcc-gaql --refresh-field-cache' first.",
+        )?;
 
     // Filter resources in cache for test-run mode BEFORE enrichment
     if test_run {
@@ -440,10 +453,7 @@ async fn cmd_enrich(
 }
 
 /// Proto-based enrichment: use proto documentation instead of LLM
-async fn cmd_enrich_proto(
-    cache: &mut FieldMetadataCache,
-    output: Option<PathBuf>,
-) -> Result<()> {
+async fn cmd_enrich_proto(cache: &mut FieldMetadataCache, output: Option<PathBuf>) -> Result<()> {
     // Stage 1: Load or build proto docs cache
     println!("\nStage 1/2: Loading proto documentation...");
 
@@ -464,9 +474,7 @@ async fn cmd_enrich_proto(
     let proto_stats = proto_cache.stats();
     println!(
         "Loaded proto docs: {} messages, {} fields, {} enums",
-        proto_stats.message_count,
-        proto_stats.field_count,
-        proto_stats.enum_count
+        proto_stats.message_count, proto_stats.field_count, proto_stats.enum_count
     );
 
     // Stage 2: Merge proto docs into field metadata
@@ -477,8 +485,7 @@ async fn cmd_enrich_proto(
     let total_fields = cache.fields.len();
     println!(
         "Proto enrichment complete: {}/{} fields enriched",
-        enriched_count,
-        total_fields
+        enriched_count, total_fields
     );
 
     // Count how many resources got descriptions
@@ -507,8 +514,7 @@ async fn cmd_enrich_proto(
 
     println!(
         "\nEnrichment complete. {}/{} fields enriched.",
-        enriched_count,
-        total_fields
+        enriched_count, total_fields
     );
 
     Ok(())
@@ -521,6 +527,7 @@ async fn cmd_generate(
     metadata: Option<PathBuf>,
     no_defaults: bool,
     use_query_cookbook: bool,
+    explain_selection_process: bool,
     verbose: bool,
 ) -> Result<()> {
     validate_llm_env()?;
@@ -562,13 +569,18 @@ async fn cmd_generate(
     log::info!("Loading field metadata from {:?}...", metadata_path);
     let field_cache = FieldMetadataCache::load_from_disk(&metadata_path)
         .await
-        .context("Failed to load field metadata. Run 'mcc-gaql-gen enrich' first or use --metadata.")?;
+        .context(
+            "Failed to load field metadata. Run 'mcc-gaql-gen enrich' first or use --metadata.",
+        )?;
 
     // Check if metadata is enriched (has resource_metadata with key_fields)
     let is_enriched = field_cache
         .resource_metadata
         .as_ref()
-        .map(|m| m.values().any(|rm| !rm.key_attributes.is_empty() || !rm.key_metrics.is_empty()))
+        .map(|m| {
+            m.values()
+                .any(|rm| !rm.key_attributes.is_empty() || !rm.key_metrics.is_empty())
+        })
         .unwrap_or(false);
 
     if !is_enriched {
@@ -594,12 +606,25 @@ async fn cmd_generate(
     let pipeline_config = rag::PipelineConfig {
         add_defaults: !no_defaults,
         use_query_cookbook,
+        explain_selection_process,
     };
 
     // Generate GAQL using MultiStepRAGAgent
-    let result = rag::convert_to_gaql(example_queries, field_cache, &prompt, &llm_config, pipeline_config).await?;
+    let result = rag::convert_to_gaql(
+        example_queries,
+        field_cache,
+        &prompt,
+        &llm_config,
+        pipeline_config,
+    )
+    .await?;
 
     println!("{}", result.query);
+
+    // Print explanation if flag is set
+    if explain_selection_process {
+        rag::print_selection_explanation(&result.pipeline_trace, &prompt);
+    }
 
     // Log validation errors/warnings if any
     if !result.validation.errors.is_empty() {
@@ -618,14 +643,39 @@ async fn cmd_generate(
     // Log pipeline trace if verbose
     if verbose {
         log::debug!("--- Pipeline Trace ---");
-        log::debug!("Phase 1 - Primary resource: {}", result.pipeline_trace.phase1_primary_resource);
-        log::debug!("Phase 1 - Related resources: {:?}", result.pipeline_trace.phase1_related_resources);
-        log::debug!("Phase 1 - Reasoning: {}", result.pipeline_trace.phase1_reasoning);
-        log::debug!("Phase 2 - Candidates: {} (rejected: {})", result.pipeline_trace.phase2_candidate_count, result.pipeline_trace.phase2_rejected_count);
-        log::debug!("Phase 3 - Selected fields: {:?}", result.pipeline_trace.phase3_selected_fields);
-        log::debug!("Phase 3 - Filter fields: {:?}", result.pipeline_trace.phase3_filter_fields);
-        log::debug!("Phase 3 - Order by: {:?}", result.pipeline_trace.phase3_order_by_fields);
-        log::debug!("Phase 4 - WHERE clauses: {:?}", result.pipeline_trace.phase4_where_clauses);
+        log::debug!(
+            "Phase 1 - Primary resource: {}",
+            result.pipeline_trace.phase1_primary_resource
+        );
+        log::debug!(
+            "Phase 1 - Related resources: {:?}",
+            result.pipeline_trace.phase1_related_resources
+        );
+        log::debug!(
+            "Phase 1 - Reasoning: {}",
+            result.pipeline_trace.phase1_reasoning
+        );
+        log::debug!(
+            "Phase 2 - Candidates: {} (rejected: {})",
+            result.pipeline_trace.phase2_candidate_count,
+            result.pipeline_trace.phase2_rejected_count
+        );
+        log::debug!(
+            "Phase 3 - Selected fields: {:?}",
+            result.pipeline_trace.phase3_selected_fields
+        );
+        log::debug!(
+            "Phase 3 - Filter fields: {:?}",
+            result.pipeline_trace.phase3_filter_fields
+        );
+        log::debug!(
+            "Phase 3 - Order by: {:?}",
+            result.pipeline_trace.phase3_order_by_fields
+        );
+        log::debug!(
+            "Phase 4 - WHERE clauses: {:?}",
+            result.pipeline_trace.phase4_where_clauses
+        );
         if let Some(during) = &result.pipeline_trace.phase4_during {
             log::debug!("Phase 4 - DURING: {}", during);
         }
@@ -633,19 +683,22 @@ async fn cmd_generate(
             log::debug!("Phase 4 - LIMIT: {}", limit);
         }
         if !result.pipeline_trace.phase4_implicit_filters.is_empty() {
-            log::debug!("Phase 4 - Implicit filters: {:?}", result.pipeline_trace.phase4_implicit_filters);
+            log::debug!(
+                "Phase 4 - Implicit filters: {:?}",
+                result.pipeline_trace.phase4_implicit_filters
+            );
         }
-        log::debug!("Generation time: {}ms", result.pipeline_trace.generation_time_ms);
+        log::debug!(
+            "Generation time: {}ms",
+            result.pipeline_trace.generation_time_ms
+        );
     }
 
     Ok(())
 }
 
 /// Index embeddings for fast query generation
-async fn cmd_index(
-    queries: Option<String>,
-    metadata: Option<PathBuf>,
-) -> Result<()> {
+async fn cmd_index(queries: Option<String>, metadata: Option<PathBuf>) -> Result<()> {
     validate_llm_env()?;
 
     let llm_config = rag::LlmConfig::from_env();
@@ -658,7 +711,10 @@ async fn cmd_index(
         let queries_path = config_file_path(&queries_file)
             .with_context(|| format!("Could not find queries file: {}", queries_file))?;
         println!("Loading query cookbook from {:?}...", queries_path);
-        get_queries_from_file(&queries_path).await?.into_values().collect()
+        get_queries_from_file(&queries_path)
+            .await?
+            .into_values()
+            .collect()
     } else if let Some(default_path) = config_file_path("query_cookbook.toml") {
         // Try to auto-discover query_cookbook.toml in config directory
         if default_path.exists() {
@@ -686,7 +742,9 @@ async fn cmd_index(
     println!("Loading field metadata from {:?}...", metadata_path);
     let field_cache = FieldMetadataCache::load_from_disk(&metadata_path)
         .await
-        .context("Failed to load field metadata. Run 'mcc-gaql-gen enrich' first or use --metadata.")?;
+        .context(
+            "Failed to load field metadata. Run 'mcc-gaql-gen enrich' first or use --metadata.",
+        )?;
 
     // Check if cache already exists and is valid
     match rag::validate_cache_for_data(&field_cache, &example_queries)? {
@@ -703,7 +761,8 @@ async fn cmd_index(
 
     // Build embeddings only (no RAG pipeline)
     let start = std::time::Instant::now();
-    rag::build_embeddings(example_queries, &field_cache, &llm_config).await
+    rag::build_embeddings(example_queries, &field_cache, &llm_config)
+        .await
         .context("Failed to build embeddings index")?;
 
     println!("\n--- Indexing Complete ---");
@@ -713,14 +772,22 @@ async fn cmd_index(
     let status = vector_store::check_cache_status()?;
     println!("\nCache Status:");
     println!("  Field metadata: valid: {}", status.field_metadata_valid);
-    println!("  Field metadata: updated: {}", vector_store::format_timestamp(status.field_metadata_updated));
+    println!(
+        "  Field metadata: updated: {}",
+        vector_store::format_timestamp(status.field_metadata_updated)
+    );
     println!("  Query cookbook: valid: {}", status.query_cookbook_valid);
-    println!("  Query cookbook: updated: {}", vector_store::format_timestamp(status.query_cookbook_updated));
+    println!(
+        "  Query cookbook: updated: {}",
+        vector_store::format_timestamp(status.query_cookbook_updated)
+    );
 
     if status.is_valid() {
         println!("\nYou can now run 'mcc-gaql-gen generate' for instant GAQL generation.");
     } else {
-        println!("\nWARNING: Some caches may be incomplete. Run this command again if issues persist.");
+        println!(
+            "\nWARNING: Some caches may be incomplete. Run this command again if issues persist."
+        );
     }
 
     Ok(())
@@ -776,7 +843,10 @@ async fn cmd_parse_protos(output: Option<PathBuf>, force: bool) -> Result<()> {
 
     // Check if we should skip (cache exists and not forced)
     if !force && output_path.exists() {
-        println!("Proto docs cache already exists at {:?}. Use --force to rebuild.", output_path);
+        println!(
+            "Proto docs cache already exists at {:?}. Use --force to rebuild.",
+            output_path
+        );
         let cache = proto_docs_cache::ProtoDocsCache::load_from_disk(&output_path)?;
         let stats = cache.stats();
         println!("{}", stats);
@@ -792,8 +862,14 @@ async fn cmd_parse_protos(output: Option<PathBuf>, force: bool) -> Result<()> {
 
     let stats = cache.stats();
     println!("\nProto parsing complete:");
-    println!("  - {} messages with {} fields", stats.message_count, stats.field_count);
-    println!("  - {} enums with {} values", stats.enum_count, stats.enum_value_count);
+    println!(
+        "  - {} messages with {} fields",
+        stats.message_count, stats.field_count
+    );
+    println!(
+        "  - {} enums with {} values",
+        stats.enum_count, stats.enum_value_count
+    );
     println!("\nCache saved to: {:?}", output_path);
 
     Ok(())
@@ -896,4 +972,3 @@ mod tests {
         assert!(filtered.is_empty());
     }
 }
-

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
-use twox_hash::XxHash64;
 use std::vec;
+use twox_hash::XxHash64;
 
 use futures::stream::{self, StreamExt};
 use log::info;
@@ -13,7 +13,7 @@ use rig::{
     completion::Prompt,
     embeddings::{EmbedError, EmbeddingsBuilder, TextEmbedder, embed::Embed},
     providers::openai::{self, completion::CompletionModel},
-    vector_store::{VectorStoreIndex, VectorSearchRequest},
+    vector_store::{VectorSearchRequest, VectorStoreIndex},
 };
 use rig_fastembed::FastembedModel;
 use rig_lancedb::{LanceDbVectorIndex, SearchParams};
@@ -172,7 +172,8 @@ impl LlmConfig {
 }
 
 /// Create embedding client and model
-fn create_embedding_client() -> Result<(rig_fastembed::Client, rig_fastembed::EmbeddingModel), anyhow::Error> {
+fn create_embedding_client()
+-> Result<(rig_fastembed::Client, rig_fastembed::EmbeddingModel), anyhow::Error> {
     // Set HF_HOME to cache fastembed models in the proper location
     let cache_dir = dirs::cache_dir()
         .ok_or_else(|| anyhow::anyhow!("Failed to get cache directory"))?
@@ -188,7 +189,10 @@ fn create_embedding_client() -> Result<(rig_fastembed::Client, rig_fastembed::Em
     // and the process is single-threaded at this point.
     unsafe { std::env::set_var("HF_HOME", &cache_dir) };
 
-    info!("Loading fastembed model: {:?}", FastembedModel::BGESmallENV15);
+    info!(
+        "Loading fastembed model: {:?}",
+        FastembedModel::BGESmallENV15
+    );
 
     let fastembed_client = rig_fastembed::Client::new();
     let embedding_model = fastembed_client.embedding_model(&FastembedModel::BGESmallENV15);
@@ -360,10 +364,8 @@ pub async fn build_embeddings(
     // Build field vector store (this will use cache if valid)
     let field_start = std::time::Instant::now();
     log::info!("Building field metadata embeddings...");
-    let _field_index = build_or_load_field_vector_store(
-        field_cache,
-        resources.embedding_model.clone(),
-    ).await?;
+    let _field_index =
+        build_or_load_field_vector_store(field_cache, resources.embedding_model.clone()).await?;
     log::info!(
         "Field metadata embeddings ready (took {:.2}s)",
         field_start.elapsed().as_secs_f64()
@@ -372,10 +374,8 @@ pub async fn build_embeddings(
     // Build query vector store (this will use cache if valid)
     let query_start = std::time::Instant::now();
     log::info!("Building query cookbook embeddings...");
-    let _query_index = build_or_load_query_vector_store(
-        example_queries,
-        resources.embedding_model,
-    ).await?;
+    let _query_index =
+        build_or_load_query_vector_store(example_queries, resources.embedding_model).await?;
     log::info!(
         "Query cookbook embeddings ready (took {:.2}s)",
         query_start.elapsed().as_secs_f64()
@@ -410,8 +410,7 @@ pub async fn build_or_load_query_vector_store(
                             table,
                             embedding_model,
                             "id",
-                            SearchParams::default()
-                                .distance_type(DistanceType::Cosine)
+                            SearchParams::default().distance_type(DistanceType::Cosine),
                         )
                         .await
                         .map_err(|e| anyhow::anyhow!("Failed to create vector index: {}", e))?;
@@ -495,8 +494,7 @@ pub async fn build_or_load_query_vector_store(
         table,
         embedding_model,
         "id",
-        SearchParams::default()
-            .distance_type(DistanceType::Cosine)
+        SearchParams::default().distance_type(DistanceType::Cosine),
     )
     .await
     .map_err(|e| anyhow::anyhow!("Failed to create vector index: {}", e))?;
@@ -537,52 +535,53 @@ async fn generate_embeddings_parallel<T: Embed + Clone + Send + Sync + 'static>(
         concurrency
     );
 
-    let chunks: Vec<Vec<T>> = documents
-        .chunks(chunk_size)
-        .map(|c| c.to_vec())
-        .collect();
+    let chunks: Vec<Vec<T>> = documents.chunks(chunk_size).map(|c| c.to_vec()).collect();
 
     // Process chunks concurrently and collect results
-    let results: Vec<Result<Vec<(T, Vec<rig::embeddings::Embedding>)>, anyhow::Error>> = stream::iter(chunks.into_iter().enumerate())
-        .map(|(idx, chunk)| {
-            let model = embedding_model.clone();
-            async move {
-                log::debug!("Processing embedding chunk {}/{}", idx + 1, total_chunks);
-                let chunk_start = std::time::Instant::now();
+    let results: Vec<Result<Vec<(T, Vec<rig::embeddings::Embedding>)>, anyhow::Error>> =
+        stream::iter(chunks.into_iter().enumerate())
+            .map(|(idx, chunk)| {
+                let model = embedding_model.clone();
+                async move {
+                    log::debug!("Processing embedding chunk {}/{}", idx + 1, total_chunks);
+                    let chunk_start = std::time::Instant::now();
 
-                // Build embeddings for this chunk
-                let builder = EmbeddingsBuilder::new(model)
-                    .documents(chunk.clone())
-                    .map_err(|e| anyhow::anyhow!("Failed to create embeddings builder: {}", e))?;
+                    // Build embeddings for this chunk
+                    let builder = EmbeddingsBuilder::new(model)
+                        .documents(chunk.clone())
+                        .map_err(|e| {
+                            anyhow::anyhow!("Failed to create embeddings builder: {}", e)
+                        })?;
 
-                let chunk_embeddings = builder
-                    .build()
-                    .await
-                    .map_err(|e| anyhow::anyhow!("Failed to build embeddings: {}", e))?;
+                    let chunk_embeddings = builder
+                        .build()
+                        .await
+                        .map_err(|e| anyhow::anyhow!("Failed to build embeddings: {}", e))?;
 
-                log::debug!(
-                    "Chunk {}/{} completed ({} docs, {:.2}s)",
-                    idx + 1,
-                    total_chunks,
-                    chunk.len(),
-                    chunk_start.elapsed().as_secs_f64()
-                );
+                    log::debug!(
+                        "Chunk {}/{} completed ({} docs, {:.2}s)",
+                        idx + 1,
+                        total_chunks,
+                        chunk.len(),
+                        chunk_start.elapsed().as_secs_f64()
+                    );
 
-                // Convert OneOrMany<Embedding> to Vec<Embedding>
-                let result: Vec<(T, Vec<rig::embeddings::Embedding>)> = chunk_embeddings
-                    .into_iter()
-                    .map(|(doc, one_or_many)| {
-                        let embeddings: Vec<rig::embeddings::Embedding> = one_or_many.into_iter().collect();
-                        (doc, embeddings)
-                    })
-                    .collect();
+                    // Convert OneOrMany<Embedding> to Vec<Embedding>
+                    let result: Vec<(T, Vec<rig::embeddings::Embedding>)> = chunk_embeddings
+                        .into_iter()
+                        .map(|(doc, one_or_many)| {
+                            let embeddings: Vec<rig::embeddings::Embedding> =
+                                one_or_many.into_iter().collect();
+                            (doc, embeddings)
+                        })
+                        .collect();
 
-                Ok(result)
-            }
-        })
-        .buffer_unordered(concurrency)
-        .collect::<Vec<_>>()
-        .await;
+                    Ok(result)
+                }
+            })
+            .buffer_unordered(concurrency)
+            .collect::<Vec<_>>()
+            .await;
 
     // Flatten results and handle errors
     let mut all_embeddings = Vec::with_capacity(total_docs);
@@ -623,30 +622,27 @@ pub async fn build_or_load_field_vector_store(
         log::info!("Field metadata cache valid, loading from LanceDB...");
 
         match lancedb_utils::get_lancedb_connection().await {
-            Ok(db) => {
-                match lancedb_utils::open_table(&db, "field_metadata").await {
-                    Ok(table) => {
-                        let index = LanceDbVectorIndex::new(
-                            table,
-                            embedding_model,
-                            "id",
-                            SearchParams::default()
-                                .distance_type(DistanceType::Cosine)
-                        )
-                        .await
-                        .map_err(|e| anyhow::anyhow!("Failed to create vector index: {}", e))?;
+            Ok(db) => match lancedb_utils::open_table(&db, "field_metadata").await {
+                Ok(table) => {
+                    let index = LanceDbVectorIndex::new(
+                        table,
+                        embedding_model,
+                        "id",
+                        SearchParams::default().distance_type(DistanceType::Cosine),
+                    )
+                    .await
+                    .map_err(|e| anyhow::anyhow!("Failed to create vector index: {}", e))?;
 
-                        log::info!(
-                            "Successfully loaded field metadata from cache ({:.2}s)",
-                            total_start.elapsed().as_secs_f64()
-                        );
-                        return Ok(index);
-                    }
-                    Err(e) => {
-                        log::warn!("Failed to open cached table: {}, rebuilding...", e);
-                    }
+                    log::info!(
+                        "Successfully loaded field metadata from cache ({:.2}s)",
+                        total_start.elapsed().as_secs_f64()
+                    );
+                    return Ok(index);
                 }
-            }
+                Err(e) => {
+                    log::warn!("Failed to open cached table: {}, rebuilding...", e);
+                }
+            },
             Err(e) => {
                 log::warn!("Failed to connect to LanceDB: {}, rebuilding...", e);
             }
@@ -716,8 +712,7 @@ pub async fn build_or_load_field_vector_store(
         table,
         embedding_model,
         "id",
-        SearchParams::default()
-            .distance_type(DistanceType::Cosine)
+        SearchParams::default().distance_type(DistanceType::Cosine),
     )
     .await
     .map_err(|e| anyhow::anyhow!("Failed to create vector index: {}", e))?;
@@ -927,6 +922,8 @@ pub struct PipelineConfig {
     pub add_defaults: bool,
     /// Whether to use RAG search for query cookbook examples in LLM prompts
     pub use_query_cookbook: bool,
+    /// Whether to print explanation of the LLM selection process
+    pub explain_selection_process: bool,
 }
 
 impl Default for PipelineConfig {
@@ -934,6 +931,7 @@ impl Default for PipelineConfig {
         Self {
             add_defaults: true,
             use_query_cookbook: false,
+            explain_selection_process: false,
         }
     }
 }
@@ -971,16 +969,13 @@ impl MultiStepRAGAgent {
         let resources = init_llm_resources(config)?;
 
         // Build or load field vector store
-        let field_index = build_or_load_field_vector_store(
-            &field_cache,
-            resources.embedding_model.clone(),
-        )
-        .await?;
+        let field_index =
+            build_or_load_field_vector_store(&field_cache, resources.embedding_model.clone())
+                .await?;
 
         // Build or load query vector store
         let query_index =
-            build_or_load_query_vector_store(example_queries, resources.embedding_model)
-                .await?;
+            build_or_load_query_vector_store(example_queries, resources.embedding_model).await?;
 
         Ok(Self {
             llm_config: config.clone(),
@@ -993,7 +988,10 @@ impl MultiStepRAGAgent {
     }
 
     /// Main entry point: generate GAQL query from user prompt
-    pub async fn generate(&self, user_query: &str) -> Result<mcc_gaql_common::field_metadata::GAQLResult, anyhow::Error> {
+    pub async fn generate(
+        &self,
+        user_query: &str,
+    ) -> Result<mcc_gaql_common::field_metadata::GAQLResult, anyhow::Error> {
         let start = std::time::Instant::now();
 
         // Phase 1: Resource selection
@@ -1004,25 +1002,30 @@ impl MultiStepRAGAgent {
         let phase1_time_ms = phase1_start.elapsed().as_millis() as u64;
         log::info!(
             "Phase 1 complete: {} ({}ms)",
-            primary_resource, phase1_time_ms
+            primary_resource,
+            phase1_time_ms
         );
 
         // Phase 2: Field candidate retrieval
         let phase2_start = std::time::Instant::now();
         log::info!("Phase 2: Retrieving field candidates...");
-        let (candidates, candidate_count, rejected_count) =
-            self.retrieve_field_candidates(user_query, &primary_resource, &related_resources)
-                .await?;
+        let (candidates, candidate_count, rejected_count) = self
+            .retrieve_field_candidates(user_query, &primary_resource, &related_resources)
+            .await?;
         let phase2_time_ms = phase2_start.elapsed().as_millis() as u64;
         log::info!(
             "Phase 2 complete: {} candidates ({}ms)",
-            candidates.len(), phase2_time_ms
+            candidates.len(),
+            phase2_time_ms
         );
 
         // Phase 2.5: Pre-scan for filter keywords
         let phase25_start = std::time::Instant::now();
         let filter_enums = self.prescan_filters(user_query, &candidates);
-        log::debug!("Phase 2.5: Pre-scan filters ({}ms)", phase25_start.elapsed().as_millis());
+        log::debug!(
+            "Phase 2.5: Pre-scan filters ({}ms)",
+            phase25_start.elapsed().as_millis()
+        );
 
         // Phase 3: Field selection via LLM
         let phase3_start = std::time::Instant::now();
@@ -1033,17 +1036,18 @@ impl MultiStepRAGAgent {
         let phase3_time_ms = phase3_start.elapsed().as_millis() as u64;
         log::info!(
             "Phase 3 complete: {} fields selected ({}ms)",
-            field_selection.select_fields.len(), phase3_time_ms
+            field_selection.select_fields.len(),
+            phase3_time_ms
         );
 
         // Phase 4: Assemble WHERE, ORDER BY, LIMIT, DURING
         let phase4_start = std::time::Instant::now();
-        let (where_clauses, during, limit, implicit_filters) = self.assemble_criteria(
-            user_query,
-            &field_selection,
-            &primary_resource,
+        let (where_clauses, during, limit, implicit_filters) =
+            self.assemble_criteria(user_query, &field_selection, &primary_resource);
+        log::debug!(
+            "Phase 4: Criteria assembly ({}ms)",
+            phase4_start.elapsed().as_millis()
         );
-        log::debug!("Phase 4: Criteria assembly ({}ms)", phase4_start.elapsed().as_millis());
 
         // Phase 5: Generate final GAQL query
         let phase5_start = std::time::Instant::now();
@@ -1056,25 +1060,40 @@ impl MultiStepRAGAgent {
                 limit,
             )
             .await?;
-        log::debug!("Phase 5: GAQL generation ({}ms)", phase5_start.elapsed().as_millis());
+        log::debug!(
+            "Phase 5: GAQL generation ({}ms)",
+            phase5_start.elapsed().as_millis()
+        );
 
         let generation_time_ms = start.elapsed().as_millis() as u64;
         log::info!(
             "GAQL generation complete: total={}ms (Phase1={}ms, Phase2={}ms, Phase3={}ms)",
-            generation_time_ms, phase1_time_ms, phase2_time_ms, phase3_time_ms
+            generation_time_ms,
+            phase1_time_ms,
+            phase2_time_ms,
+            phase3_time_ms
         );
 
         // Build pipeline trace
+        let phase1_model = self.llm_config.preferred_model().to_string();
+        let phase3_model = self.llm_config.preferred_model().to_string();
         let pipeline_trace = mcc_gaql_common::field_metadata::PipelineTrace {
             phase1_primary_resource: primary_resource.clone(),
             phase1_related_resources: related_resources,
             phase1_dropped_resources: dropped_resources,
             phase1_reasoning: reasoning,
+            phase1_model_used: phase1_model,
+            phase1_timing_ms: phase1_time_ms,
             phase2_candidate_count: candidate_count,
             phase2_rejected_count: rejected_count,
+            phase2_timing_ms: phase2_time_ms,
+            phase25_pre_scan_filters: filter_enums.clone(),
             phase3_selected_fields: field_selection.select_fields.clone(),
             phase3_filter_fields: field_selection.filter_fields.clone(),
             phase3_order_by_fields: field_selection.order_by_fields.clone(),
+            phase3_reasoning: field_selection.reasoning.clone(),
+            phase3_model_used: phase3_model,
+            phase3_timing_ms: phase3_time_ms,
             phase4_where_clauses: where_clauses,
             phase4_during: during,
             phase4_limit: limit,
@@ -1083,11 +1102,15 @@ impl MultiStepRAGAgent {
         };
 
         // Validate the field selection against the primary resource
-        let all_fields: Vec<String> = field_selection.select_fields.iter()
+        let all_fields: Vec<String> = field_selection
+            .select_fields
+            .iter()
             .chain(field_selection.filter_fields.iter().map(|f| &f.field_name))
             .cloned()
             .collect();
-        let validation = self.field_cache.validate_field_selection_for_resource(&all_fields, &primary_resource);
+        let validation = self
+            .field_cache
+            .validate_field_selection_for_resource(&all_fields, &primary_resource);
 
         Ok(mcc_gaql_common::field_metadata::GAQLResult {
             query: result,
@@ -1110,14 +1133,18 @@ impl MultiStepRAGAgent {
         let resource_list: Vec<String> = resources
             .iter()
             .map(|r| {
-                let rm = self.field_cache.resource_metadata.as_ref()
+                let rm = self
+                    .field_cache
+                    .resource_metadata
+                    .as_ref()
                     .and_then(|m| m.get(r));
                 let desc = rm.and_then(|m| m.description.as_deref()).unwrap_or("");
                 format!("- {}: {}", r, desc)
             })
             .collect();
 
-        let system_prompt = r#"You are a Google Ads Query Language (GAQL) expert. Given a user query, determine:
+        let system_prompt =
+            r#"You are a Google Ads Query Language (GAQL) expert. Given a user query, determine:
 1. The primary resource to query FROM (e.g., campaign, ad_group, keyword_view)
 2. Any related resources that might be needed (for JOINs or attributes)
 
@@ -1129,14 +1156,15 @@ Respond ONLY with valid JSON:
   "reasoning": "brief explanation"
 }
 
-Choose from: "#.to_string() + &resource_list.join(", ");
+Choose from: "#
+                .to_string()
+                + &resource_list.join(", ");
 
         let user_prompt = format!("User query: {}", user_query);
 
-        let agent = self.llm_config.create_agent_for_model(
-            self.llm_config.preferred_model(),
-            &system_prompt,
-        )?;
+        let agent = self
+            .llm_config
+            .create_agent_for_model(self.llm_config.preferred_model(), &system_prompt)?;
         log::debug!(
             "Phase 1: Calling LLM (model={}, temp={}) for resource selection...",
             self.llm_config.preferred_model(),
@@ -1173,10 +1201,7 @@ Choose from: "#.to_string() + &resource_list.join(", ");
             })
             .unwrap_or_default();
 
-        let reasoning = parsed["reasoning"]
-            .as_str()
-            .unwrap_or("")
-            .to_string();
+        let reasoning = parsed["reasoning"].as_str().unwrap_or("").to_string();
 
         // Validate related_resources against primary's selectable_with
         let selectable_with = self.field_cache.get_resource_selectable_with(&primary);
@@ -1217,34 +1242,47 @@ Choose from: "#.to_string() + &resource_list.join(", ");
         // =========================================================================
 
         // Get primary resource's key fields from ResourceMetadata
-        if let Some(rm) = self.field_cache.resource_metadata.as_ref().and_then(|m| m.get(primary)) {
+        if let Some(rm) = self
+            .field_cache
+            .resource_metadata
+            .as_ref()
+            .and_then(|m| m.get(primary))
+        {
             // Add key_attributes
             for attr in &rm.key_attributes {
                 if let Some(field) = self.field_cache.fields.get(attr)
-                    && seen.insert(field.name.clone()) {
-                        candidates.push(field.clone());
-                    }
+                    && seen.insert(field.name.clone())
+                {
+                    candidates.push(field.clone());
+                }
             }
             // Add key_metrics
             for metric in &rm.key_metrics {
                 if let Some(field) = self.field_cache.fields.get(metric)
-                    && seen.insert(field.name.clone()) {
-                        candidates.push(field.clone());
-                    }
+                    && seen.insert(field.name.clone())
+                {
+                    candidates.push(field.clone());
+                }
             }
         }
 
         // Add key_attributes from related resources
         for rel in related {
-            if let Some(rm) = self.field_cache.resource_metadata.as_ref().and_then(|m| m.get(rel)) {
+            if let Some(rm) = self
+                .field_cache
+                .resource_metadata
+                .as_ref()
+                .and_then(|m| m.get(rel))
+            {
                 for attr in &rm.key_attributes {
                     if let Some(field) = self.field_cache.fields.get(attr) {
                         // Only add if compatible with primary resource
                         if let Some(resource) = field.get_resource() {
                             if (resource == primary || selectable_with.contains(&resource))
-                                && seen.insert(field.name.clone()) {
-                                    candidates.push(field.clone());
-                                }
+                                && seen.insert(field.name.clone())
+                            {
+                                candidates.push(field.clone());
+                            }
                         }
                     }
                 }
@@ -1302,7 +1340,10 @@ Choose from: "#.to_string() + &resource_list.join(", ");
         let search_start = std::time::Instant::now();
         let (attr_results, metric_results, segment_results) =
             tokio::join!(attr_search, metric_search, segment_search);
-        log::debug!("Phase 2: Vector searches complete in {}ms", search_start.elapsed().as_millis());
+        log::debug!(
+            "Phase 2: Vector searches complete in {}ms",
+            search_start.elapsed().as_millis()
+        );
 
         // Process attribute results: filter to fields starting with "{primary}."
         let prefix = format!("{}.", primary);
@@ -1312,9 +1353,10 @@ Choose from: "#.to_string() + &resource_list.join(", ");
                 // Filter strictly to attributes for the primary resource by name prefix
                 if doc.id.starts_with(&prefix)
                     && let Some(field) = self.field_cache.fields.get(&doc.id)
-                        && seen.insert(field.name.clone()) {
-                            candidates.push(field.clone());
-                        }
+                    && seen.insert(field.name.clone())
+                {
+                    candidates.push(field.clone());
+                }
             }
         }
 
@@ -1323,12 +1365,13 @@ Choose from: "#.to_string() + &resource_list.join(", ");
             for result in results {
                 let doc = &result.2;
                 if (doc.category == "METRIC" || doc.id.starts_with("metrics."))
-                    && let Some(field) = self.field_cache.fields.get(&doc.id) {
-                        // Metrics are compatible if their field name is in the resource's selectable_with
-                        if selectable_with.contains(&field.name) && seen.insert(field.name.clone()) {
-                            candidates.push(field.clone());
-                        }
+                    && let Some(field) = self.field_cache.fields.get(&doc.id)
+                {
+                    // Metrics are compatible if their field name is in the resource's selectable_with
+                    if selectable_with.contains(&field.name) && seen.insert(field.name.clone()) {
+                        candidates.push(field.clone());
                     }
+                }
             }
         }
 
@@ -1337,12 +1380,13 @@ Choose from: "#.to_string() + &resource_list.join(", ");
             for result in results {
                 let doc = &result.2;
                 if (doc.category == "SEGMENT" || doc.id.starts_with("segments."))
-                    && let Some(field) = self.field_cache.fields.get(&doc.id) {
-                        // Segments are compatible if their field name is in the resource's selectable_with
-                        if selectable_with.contains(&field.name) && seen.insert(field.name.clone()) {
-                            candidates.push(field.clone());
-                        }
+                    && let Some(field) = self.field_cache.fields.get(&doc.id)
+                {
+                    // Segments are compatible if their field name is in the resource's selectable_with
+                    if selectable_with.contains(&field.name) && seen.insert(field.name.clone()) {
+                        candidates.push(field.clone());
                     }
+                }
             }
         }
 
@@ -1387,27 +1431,30 @@ Choose from: "#.to_string() + &resource_list.join(", ");
         for (keyword, field_name) in keyword_map {
             if query_lower.contains(keyword) {
                 // Find matching candidate field - use ends_with to match qualified names like "campaign.status"
-                if let Some(field) = candidates.iter().find(|f| f.name.ends_with(&format!(".{}", field_name)))
-                    && !field.enum_values.is_empty() {
-                        // Find enum values that match the keyword
-                        let matching_enums: Vec<String> = field
-                            .enum_values
-                            .iter()
-                            .filter(|e| {
-                                let e_lower = e.to_lowercase();
-                                e_lower.contains(keyword)
-                                    || (keyword == "enabled" && e.as_str() == "ENABLED")
-                                    || (keyword == "paused" && e.as_str() == "PAUSED")
-                                    || (keyword == "active" && e.as_str() == "ENABLED")
-                            })
-                            .cloned()
-                            .collect();
+                if let Some(field) = candidates
+                    .iter()
+                    .find(|f| f.name.ends_with(&format!(".{}", field_name)))
+                    && !field.enum_values.is_empty()
+                {
+                    // Find enum values that match the keyword
+                    let matching_enums: Vec<String> = field
+                        .enum_values
+                        .iter()
+                        .filter(|e| {
+                            let e_lower = e.to_lowercase();
+                            e_lower.contains(keyword)
+                                || (keyword == "enabled" && e.as_str() == "ENABLED")
+                                || (keyword == "paused" && e.as_str() == "PAUSED")
+                                || (keyword == "active" && e.as_str() == "ENABLED")
+                        })
+                        .cloned()
+                        .collect();
 
-                        if !matching_enums.is_empty() {
-                            // Use the actual qualified field name (e.g., "campaign.status")
-                            filter_enums.push((field.name.clone(), matching_enums));
-                        }
+                    if !matching_enums.is_empty() {
+                        // Use the actual qualified field name (e.g., "campaign.status")
+                        filter_enums.push((field.name.clone(), matching_enums));
                     }
+                }
             }
         }
 
@@ -1430,7 +1477,10 @@ Choose from: "#.to_string() + &resource_list.join(", ");
             log::debug!("Phase 3: Retrieving cookbook examples...");
             let cookbook_start = std::time::Instant::now();
             let ex = self.retrieve_cookbook_examples(user_query, 3).await?;
-            log::debug!("Phase 3: Cookbook examples retrieved in {}ms", cookbook_start.elapsed().as_millis());
+            log::debug!(
+                "Phase 3: Cookbook examples retrieved in {}ms",
+                cookbook_start.elapsed().as_millis()
+            );
             ex
         } else {
             log::debug!("Phase 3: Skipping cookbook examples (use_query_cookbook=false)");
@@ -1442,7 +1492,9 @@ Choose from: "#.to_string() + &resource_list.join(", ");
         let mut categories = std::collections::HashMap::new();
 
         for field in candidates {
-            let category = categories.entry(field.category.clone()).or_insert_with(Vec::new);
+            let category = categories
+                .entry(field.category.clone())
+                .or_insert_with(Vec::new);
             category.push(field);
         }
 
@@ -1524,10 +1576,9 @@ Respond ONLY with valid JSON:
             (sys, user)
         };
 
-        let agent = self.llm_config.create_agent_for_model(
-            self.llm_config.preferred_model(),
-            &system_prompt,
-        )?;
+        let agent = self
+            .llm_config
+            .create_agent_for_model(self.llm_config.preferred_model(), &system_prompt)?;
         log::debug!(
             "Phase 3: Calling LLM (model={}, temp={}) for field selection...",
             self.llm_config.preferred_model(),
@@ -1562,9 +1613,17 @@ Respond ONLY with valid JSON:
 
         // Fallback: If all LLM fields fail validation, use key_attributes + key_metrics
         let final_select_fields = if select_fields.is_empty() {
-            log::warn!("No valid select_fields from LLM, falling back to key fields for resource '{}'", primary);
+            log::warn!(
+                "No valid select_fields from LLM, falling back to key fields for resource '{}'",
+                primary
+            );
             let mut fallback = Vec::new();
-            if let Some(rm) = self.field_cache.resource_metadata.as_ref().and_then(|m| m.get(primary)) {
+            if let Some(rm) = self
+                .field_cache
+                .resource_metadata
+                .as_ref()
+                .and_then(|m| m.get(primary))
+            {
                 // Add first 3 key_attributes
                 for attr in rm.key_attributes.iter().take(3) {
                     if self.field_cache.fields.contains_key(attr) {
@@ -1583,19 +1642,32 @@ Respond ONLY with valid JSON:
             select_fields
         };
 
-        let filter_fields: Vec<mcc_gaql_common::field_metadata::FilterField> = parsed["filter_fields"]
-            .as_array()
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|f| {
-                        let field = f.get("field")?.as_str()?.to_string();
-                        let operator = f.get("operator").and_then(|v| v.as_str()).unwrap_or("=").to_string();
-                        let value = f.get("value").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                        Some(mcc_gaql_common::field_metadata::FilterField { field_name: field, operator, value })
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
+        let filter_fields: Vec<mcc_gaql_common::field_metadata::FilterField> =
+            parsed["filter_fields"]
+                .as_array()
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|f| {
+                            let field = f.get("field")?.as_str()?.to_string();
+                            let operator = f
+                                .get("operator")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("=")
+                                .to_string();
+                            let value = f
+                                .get("value")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            Some(mcc_gaql_common::field_metadata::FilterField {
+                                field_name: field,
+                                operator,
+                                value,
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
 
         let order_by_fields: Vec<(String, String)> = parsed["order_by_fields"]
             .as_array()
@@ -1603,21 +1675,35 @@ Respond ONLY with valid JSON:
                 arr.iter()
                     .filter_map(|f| {
                         let field = f.get("field").and_then(|v| v.as_str())?;
-                        let direction = f.get("direction").and_then(|v| v.as_str()).unwrap_or("DESC");
+                        let direction = f
+                            .get("direction")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("DESC");
                         Some((field.to_string(), direction.to_string()))
                     })
                     .collect()
             })
             .unwrap_or_default();
 
+        // Extract reasoning from LLM response
+        let reasoning = parsed["reasoning"]
+            .as_str()
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+
         Ok(FieldSelectionResult {
             select_fields: final_select_fields,
             filter_fields,
             order_by_fields,
+            reasoning,
         })
     }
 
-    async fn retrieve_cookbook_examples(&self, query: &str, limit: usize) -> Result<String, anyhow::Error> {
+    async fn retrieve_cookbook_examples(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<String, anyhow::Error> {
         let search_request = VectorSearchRequest::builder()
             .query(query)
             .samples(limit as u64)
@@ -1632,7 +1718,10 @@ Respond ONLY with valid JSON:
 
         let mut examples = String::new();
         for result in results {
-            examples.push_str(&format!("- {}\n  GAQL: {}\n", result.2.0.description, result.2.0.query));
+            examples.push_str(&format!(
+                "- {}\n  GAQL: {}\n",
+                result.2.0.description, result.2.0.query
+            ));
         }
 
         Ok(examples)
@@ -1653,24 +1742,44 @@ Respond ONLY with valid JSON:
 
         // Valid GAQL operators
         const VALID_OPERATORS: &[&str] = &[
-            "=", "!=", "<", ">", "<=", ">=", "IN", "NOT IN", "LIKE", "NOT LIKE",
-            "CONTAINS ANY", "CONTAINS ALL", "CONTAINS NONE", "IS NULL", "IS NOT NULL",
-            "BETWEEN", "REGEXP_MATCH", "NOT REGEXP_MATCH", "DURING",
+            "=",
+            "!=",
+            "<",
+            ">",
+            "<=",
+            ">=",
+            "IN",
+            "NOT IN",
+            "LIKE",
+            "NOT LIKE",
+            "CONTAINS ANY",
+            "CONTAINS ALL",
+            "CONTAINS NONE",
+            "IS NULL",
+            "IS NOT NULL",
+            "BETWEEN",
+            "REGEXP_MATCH",
+            "NOT REGEXP_MATCH",
+            "DURING",
         ];
 
         // Add explicit filter fields from LLM
         for ff in &field_selection.filter_fields {
             let op = ff.operator.to_uppercase();
             if !VALID_OPERATORS.contains(&op.as_str()) {
-                log::warn!("Invalid operator '{}' for field '{}', skipping", ff.operator, ff.field_name);
+                log::warn!(
+                    "Invalid operator '{}' for field '{}', skipping",
+                    ff.operator,
+                    ff.field_name
+                );
                 continue;
             }
             // Escape single quotes in values
             let escaped_value = ff.value.replace('\'', "\\'");
             let clause = match op.as_str() {
                 "IS NULL" | "IS NOT NULL" => format!("{} {}", ff.field_name, op),
-                "DURING" => format!("{} {} {}", ff.field_name, op, escaped_value),  // No quotes for DURING
-                _ => format!("{} {} '{}'", ff.field_name, op, escaped_value),       // Quoted for other operators
+                "DURING" => format!("{} {} {}", ff.field_name, op, escaped_value), // No quotes for DURING
+                _ => format!("{} {} '{}'", ff.field_name, op, escaped_value), // Quoted for other operators
             };
             where_clauses.push(clause);
         }
@@ -1825,7 +1934,8 @@ impl GaqlBuilder {
         // ORDER BY clause
         if !self.order_by_fields.is_empty() {
             query.push_str("ORDER BY ");
-            let order_by_parts: Vec<String> = self.order_by_fields
+            let order_by_parts: Vec<String> = self
+                .order_by_fields
                 .iter()
                 .map(|(field, direction)| format!("{} {}", field, direction))
                 .collect();
@@ -1847,6 +1957,7 @@ struct FieldSelectionResult {
     select_fields: Vec<String>,
     filter_fields: Vec<mcc_gaql_common::field_metadata::FilterField>,
     order_by_fields: Vec<(String, String)>, // (field_name, direction)
+    reasoning: String,
 }
 
 /// Public entry point for GAQL generation
@@ -1857,8 +1968,157 @@ pub async fn convert_to_gaql(
     config: &LlmConfig,
     pipeline_config: PipelineConfig,
 ) -> Result<mcc_gaql_common::field_metadata::GAQLResult, anyhow::Error> {
-    let agent = MultiStepRAGAgent::init(example_queries, field_cache, config, pipeline_config).await?;
+    let agent =
+        MultiStepRAGAgent::init(example_queries, field_cache, config, pipeline_config).await?;
     agent.generate(prompt).await
+}
+
+/// Print explanation of the LLM selection process to stdout
+pub fn print_selection_explanation(
+    trace: &mcc_gaql_common::field_metadata::PipelineTrace,
+    user_query: &str,
+) {
+    println!();
+    println!("═══════════════════════════════════════════════════════════════");
+    println!("               RAG SELECTION EXPLANATION");
+    println!("═══════════════════════════════════════════════════════════════");
+    println!();
+    println!("User Query: {}", user_query);
+    println!();
+
+    // Phase 1: Resource Selection
+    println!(
+        "## Phase 1: Resource Selection ({}ms)",
+        trace.phase1_timing_ms
+    );
+    println!();
+    println!("Model: {}", trace.phase1_model_used);
+    println!();
+
+    if !trace.phase1_reasoning.is_empty() {
+        println!("LLM Reasoning:");
+        for line in trace.phase1_reasoning.lines() {
+            println!("  {}", line);
+        }
+        println!();
+    }
+
+    println!(
+        "Selected Primary Resource: {}",
+        trace.phase1_primary_resource
+    );
+    if !trace.phase1_related_resources.is_empty() {
+        println!("Related Resources: {:?}", trace.phase1_related_resources);
+    } else {
+        println!("Related Resources: []");
+    }
+    if !trace.phase1_dropped_resources.is_empty() {
+        println!("Dropped Resources: {:?}", trace.phase1_dropped_resources);
+    }
+    println!();
+
+    // Phase 2: Field Candidate Retrieval
+    println!(
+        "## Phase 2: Field Candidate Retrieval ({}ms)",
+        trace.phase2_timing_ms
+    );
+    println!();
+    println!(
+        "Compatible Candidates: {} fields",
+        trace.phase2_candidate_count
+    );
+    println!(
+        "Filtered Out (incompatible): {} fields",
+        trace.phase2_rejected_count
+    );
+    println!();
+
+    // Phase 2.5: Pre-scan Filters
+    if !trace.phase25_pre_scan_filters.is_empty() {
+        println!("## Phase 2.5: Pre-scan Filters");
+        println!();
+        println!("Detected Keywords:");
+        for (field, values) in &trace.phase25_pre_scan_filters {
+            println!("  - {}: {:?}", field, values);
+        }
+        println!();
+    }
+
+    // Phase 3: Field Selection
+    println!("## Phase 3: Field Selection ({}ms)", trace.phase3_timing_ms);
+    println!();
+    println!("Model: {}", trace.phase3_model_used);
+    println!();
+
+    if !trace.phase3_reasoning.is_empty() {
+        println!("LLM Reasoning:");
+        for line in trace.phase3_reasoning.lines() {
+            println!("  {}", line);
+        }
+        println!();
+    }
+
+    println!("Selected Fields:");
+    for field in &trace.phase3_selected_fields {
+        println!("  - {}", field);
+    }
+    if trace.phase3_selected_fields.is_empty() {
+        println!("  (none)");
+    }
+    println!();
+
+    if !trace.phase3_filter_fields.is_empty() {
+        println!("Filter Fields:");
+        for filter in &trace.phase3_filter_fields {
+            println!(
+                "  - {} {} {}",
+                filter.field_name, filter.operator, filter.value
+            );
+        }
+        println!();
+    }
+
+    if !trace.phase3_order_by_fields.is_empty() {
+        println!("Order By Fields:");
+        for (field, direction) in &trace.phase3_order_by_fields {
+            println!("  - {} ({})", field, direction);
+        }
+        println!();
+    }
+
+    // Phase 4: Criteria Assembly
+    println!("## Phase 4: Criteria Assembly");
+    println!();
+
+    if !trace.phase4_where_clauses.is_empty() {
+        println!("WHERE Clauses:");
+        for clause in &trace.phase4_where_clauses {
+            println!("  - {}", clause);
+        }
+        println!();
+    }
+
+    if let Some(during) = &trace.phase4_during {
+        println!("DURING: {}", during);
+        println!();
+    }
+
+    if let Some(limit) = trace.phase4_limit {
+        println!("LIMIT: {}", limit);
+        println!();
+    }
+
+    if !trace.phase4_implicit_filters.is_empty() {
+        println!("Implicit Filters:");
+        for filter in &trace.phase4_implicit_filters {
+            println!("  - {}", filter);
+        }
+        println!();
+    }
+
+    println!("═══════════════════════════════════════════════════════════════");
+    println!("Total Generation Time: {}ms", trace.generation_time_ms);
+    println!("═══════════════════════════════════════════════════════════════");
 }
 
 /// Helper function for detect_temporal_period - extracted for testing
@@ -1876,7 +2136,8 @@ fn detect_temporal_period_impl(query: &str) -> Option<String> {
         ("yesterday", "YESTERDAY"),
         ("last 14 days", "LAST_14_DAYS"),
         ("last 90 days", "LAST_90_DAYS"),
-    ].to_vec();
+    ]
+    .to_vec();
 
     for (pattern, period) in period_map {
         if query_lower.contains(pattern) {
@@ -1995,7 +2256,10 @@ mod tests {
 
         let hash1 = compute_query_cookbook_hash(&queries);
         let hash2 = compute_query_cookbook_hash(&queries);
-        assert_eq!(hash1, hash2, "Hash should be consistent across repeated calls");
+        assert_eq!(
+            hash1, hash2,
+            "Hash should be consistent across repeated calls"
+        );
     }
 
     #[test]
@@ -2123,7 +2387,11 @@ mod tests {
             metrics_compatible: false,
             resource_name: Some("campaign".to_string()),
             selectable_with: vec![],
-            enum_values: vec!["ENABLED".to_string(), "PAUSED".to_string(), "REMOVED".to_string()],
+            enum_values: vec![
+                "ENABLED".to_string(),
+                "PAUSED".to_string(),
+                "REMOVED".to_string(),
+            ],
             attribute_resources: vec![],
             description: None,
             usage_notes: None,
@@ -2135,15 +2403,22 @@ mod tests {
         let keyword = "enabled";
         let field_name = "status";
 
-        let found = candidates.iter().find(|f| f.name.ends_with(&format!(".{}", field_name)));
+        let found = candidates
+            .iter()
+            .find(|f| f.name.ends_with(&format!(".{}", field_name)));
         assert!(found.is_some(), "Should find campaign.status via ends_with");
 
         let field = found.unwrap();
-        let matching: Vec<&String> = field.enum_values.iter()
+        let matching: Vec<&String> = field
+            .enum_values
+            .iter()
             .filter(|e| e.as_str() == "ENABLED" || e.to_lowercase().contains(keyword))
             .collect();
         assert!(!matching.is_empty(), "Should match ENABLED enum value");
-        assert!(query_lower.contains(keyword), "Query should contain keyword");
+        assert!(
+            query_lower.contains(keyword),
+            "Query should contain keyword"
+        );
     }
 
     #[tokio::test]
@@ -2160,6 +2435,7 @@ mod tests {
                 value: "ENABLED".to_string(),
             }],
             order_by_fields: vec![("metrics.clicks".to_string(), "DESC".to_string())],
+            reasoning: String::new(),
         };
 
         let where_clauses = vec!["campaign.status = 'ENABLED'".to_string()];
@@ -2169,7 +2445,11 @@ mod tests {
         // Manually replicate the generate_gaql assembly logic
         let mut query = String::new();
         // SELECT with segments.date appended (during is Some)
-        let select_fields: Vec<&str> = field_selection.select_fields.iter().map(|s| s.as_str()).collect();
+        let select_fields: Vec<&str> = field_selection
+            .select_fields
+            .iter()
+            .map(|s| s.as_str())
+            .collect();
         query.push_str("SELECT ");
         query.push_str(&select_fields.join(", "));
         query.push_str(", segments.date\n");
@@ -2205,13 +2485,32 @@ mod tests {
 
         // The operator should be recognized as valid
         const VALID_OPERATORS: &[&str] = &[
-            "=", "!=", "<", ">", "<=", ">=", "IN", "NOT IN", "LIKE", "NOT LIKE",
-            "CONTAINS ANY", "CONTAINS ALL", "CONTAINS NONE", "IS NULL", "IS NOT NULL",
-            "BETWEEN", "REGEXP_MATCH", "NOT REGEXP_MATCH", "DURING",
+            "=",
+            "!=",
+            "<",
+            ">",
+            "<=",
+            ">=",
+            "IN",
+            "NOT IN",
+            "LIKE",
+            "NOT LIKE",
+            "CONTAINS ANY",
+            "CONTAINS ALL",
+            "CONTAINS NONE",
+            "IS NULL",
+            "IS NOT NULL",
+            "BETWEEN",
+            "REGEXP_MATCH",
+            "NOT REGEXP_MATCH",
+            "DURING",
         ];
 
         let op = filter.operator.to_uppercase();
-        assert!(VALID_OPERATORS.contains(&op.as_str()), "DURING should be a valid operator");
+        assert!(
+            VALID_OPERATORS.contains(&op.as_str()),
+            "DURING should be a valid operator"
+        );
 
         // Verify formatting (DURING should not have quotes)
         let clause = format!("{} {} {}", filter.field_name, op, filter.value);
@@ -2221,7 +2520,10 @@ mod tests {
     #[test]
     fn test_gaql_builder_basic() {
         let query = GaqlBuilder::new("campaign")
-            .select(vec!["campaign.name".to_string(), "metrics.clicks".to_string()])
+            .select(vec![
+                "campaign.name".to_string(),
+                "metrics.clicks".to_string(),
+            ])
             .where_clause("campaign.status = 'ENABLED'".to_string())
             .during(Some("LAST_30_DAYS".to_string()))
             .order_by(vec![("metrics.clicks".to_string(), "DESC".to_string())])
@@ -2257,14 +2559,20 @@ mod tests {
     fn test_gaql_builder_during_already_in_select() {
         // If segments.date is already in select, don't add it twice
         let query = GaqlBuilder::new("campaign")
-            .select(vec!["campaign.name".to_string(), "segments.date".to_string()])
+            .select(vec![
+                "campaign.name".to_string(),
+                "segments.date".to_string(),
+            ])
             .during(Some("LAST_7_DAYS".to_string()))
             .build();
 
         // Count occurrences of segments.date - should be exactly 1 in SELECT
         let select_part = query.split("FROM").next().unwrap_or("");
         let count = select_part.matches("segments.date").count();
-        assert_eq!(count, 1, "segments.date should appear exactly once in SELECT");
+        assert_eq!(
+            count, 1,
+            "segments.date should appear exactly once in SELECT"
+        );
     }
 
     #[test]
