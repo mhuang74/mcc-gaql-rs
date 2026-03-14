@@ -43,6 +43,10 @@ struct Cli {
     #[arg(short, long)]
     verbose: bool,
 
+    /// Enable trace logging (includes full LLM prompts)
+    #[arg(long)]
+    trace: bool,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -182,7 +186,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // Initialize logging
-    init_logger(cli.verbose);
+    init_logger(cli.verbose, cli.trace);
 
     match cli.command {
         Commands::Scrape {
@@ -812,10 +816,12 @@ fn validate_llm_env() -> Result<()> {
 }
 
 /// Initialize logging based on verbosity and environment variables
-fn init_logger(verbose: bool) {
+fn init_logger(verbose: bool, trace: bool) {
     use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
 
-    let base_level = if verbose {
+    let base_level = if trace {
+        "trace".to_string()
+    } else if verbose {
         "debug".to_string()
     } else {
         env::var("MCC_GAQL_LOG_LEVEL").unwrap_or_else(|_| "warn".to_string())
