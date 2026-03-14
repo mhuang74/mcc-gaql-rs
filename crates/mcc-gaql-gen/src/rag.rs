@@ -3,6 +3,8 @@ use std::hash::{Hash, Hasher};
 use std::vec;
 use twox_hash::XxHash64;
 
+use chrono::Datelike;
+
 use futures::stream::{self, StreamExt};
 use log::info;
 
@@ -1522,53 +1524,124 @@ Choose from: "#
             }
         }
 
+        // Get today's date for temporal calculations
+        let today = chrono::Local::now().date_naive();
+        let yesterday = today - chrono::Duration::days(1);
+        let last_7_start = today - chrono::Duration::days(7);
+        let last_30_start = today - chrono::Duration::days(30);
+        let last_60_start = today - chrono::Duration::days(60);
+        let last_90_start = today - chrono::Duration::days(90);
+        let _last_365_start = today - chrono::Duration::days(365);
+
+        // Calculate this/previous period start dates
+        let this_month_start = today.with_day(1).unwrap_or(today);
+        let prev_month_end = this_month_start - chrono::Duration::days(1);
+        let prev_month_start = prev_month_end.with_day(1).unwrap_or(prev_month_end);
+
+        // Quarter calculations (months 1,4,7,10 are quarter starts)
+        let month = today.month();
+        let quarter_start_month = ((month - 1) / 3) * 3 + 1;
+        let this_quarter_start = chrono::NaiveDate::from_ymd_opt(today.year(), quarter_start_month, 1)
+            .unwrap_or(today);
+        let prev_quarter_end = this_quarter_start - chrono::Duration::days(1);
+        let prev_quarter_month = ((prev_quarter_end.month() - 1) / 3) * 3 + 1;
+        let prev_quarter_start = chrono::NaiveDate::from_ymd_opt(prev_quarter_end.year(), prev_quarter_month, 1)
+            .unwrap_or(prev_quarter_end);
+
+        // Year calculations
+        let this_year_start = chrono::NaiveDate::from_ymd_opt(today.year(), 1, 1).unwrap_or(today);
+        let prev_year_end = this_year_start - chrono::Duration::days(1);
+        let prev_year_start = chrono::NaiveDate::from_ymd_opt(prev_year_end.year(), 1, 1).unwrap_or(prev_year_end);
+
+        // Week calculations (Monday start)
+        let weekday = today.weekday().num_days_from_monday();
+        let this_week_start = today - chrono::Duration::days(weekday as i64);
+        let prev_week_end = this_week_start - chrono::Duration::days(1);
+        let prev_week_start = prev_week_end - chrono::Duration::days(6);
+
         // Build prompt conditionally based on whether cookbook is enabled
         let (system_prompt, user_prompt) = if self.pipeline_config.use_query_cookbook {
-            let sys = r#"You are a Google Ads Query Language (GAQL) expert. Given:
+            let sys = format!(r#"You are a Google Ads Query Language (GAQL) expert. Given:
 1. A user query
 2. Cookbook examples
 3. Available fields categorized by type
 
+Today's date: {today}
+
 Select the appropriate fields and build WHERE filters.
 
 Respond ONLY with valid JSON:
-{
+{{
   "select_fields": ["field1", "field2", ...],
-  "filter_fields": [{"field": "field_name", "operator": "=", "value": "value"}],
-  "order_by_fields": [{"field": "field_name", "direction": "DESC"}],
+  "filter_fields": [{{"field": "field_name", "operator": "=", "value": "value"}}],
+  "order_by_fields": [{{"field": "field_name", "direction": "DESC"}}],
   "reasoning": "brief explanation"
-}
+}}
 
 - Use ONLY fields from the provided list
 - Add filter_fields for any WHERE clauses
 - Add order_by_fields for sorting (use DESC for "top", "best", "worst"; ASC for "first" if ascending)
 - Include segments.date if temporal period is specified
-"#.to_string();
+- For date ranges, ALWAYS use BETWEEN with explicit ISO dates: segments.date BETWEEN 'YYYY-MM-DD' AND 'YYYY-MM-DD'
+- Examples using today's date ({today}):
+  - "last 90 days" / "past quarter" → BETWEEN '{last_90_start}' AND '{today}'
+  - "last 60 days" → BETWEEN '{last_60_start}' AND '{today}'
+  - "last 30 days" → BETWEEN '{last_30_start}' AND '{today}'
+  - "last 7 days" → BETWEEN '{last_7_start}' AND '{today}'
+  - "yesterday" → BETWEEN '{yesterday}' AND '{yesterday}'
+  - "this year" → BETWEEN '{this_year_start}' AND '{today}'
+  - "this quarter" → BETWEEN '{this_quarter_start}' AND '{today}'
+  - "this month" → BETWEEN '{this_month_start}' AND '{today}'
+  - "this week" → BETWEEN '{this_week_start}' AND '{today}'
+  - "previous year" / "last year" → BETWEEN '{prev_year_start}' AND '{prev_year_end}'
+  - "previous quarter" / "last quarter" → BETWEEN '{prev_quarter_start}' AND '{prev_quarter_end}'
+  - "previous month" / "last month" → BETWEEN '{prev_month_start}' AND '{prev_month_end}'
+  - "previous week" / "last week" → BETWEEN '{prev_week_start}' AND '{prev_week_end}'
+- DO NOT use relative date literals like LAST_7_DAYS, TODAY, YESTERDAY
+"#);
             let user = format!(
                 "User query: {}\n\nCookbook examples:\n{}\n\nAvailable fields:{}",
                 user_query, examples, candidate_text
             );
             (sys, user)
         } else {
-            let sys = r#"You are a Google Ads Query Language (GAQL) expert. Given:
+            let sys = format!(r#"You are a Google Ads Query Language (GAQL) expert. Given:
 1. A user query
 2. Available fields categorized by type
+
+Today's date: {today}
 
 Select the appropriate fields and build WHERE filters.
 
 Respond ONLY with valid JSON:
-{
+{{
   "select_fields": ["field1", "field2", ...],
-  "filter_fields": [{"field": "field_name", "operator": "=", "value": "value"}],
-  "order_by_fields": [{"field": "field_name", "direction": "DESC"}],
+  "filter_fields": [{{"field": "field_name", "operator": "=", "value": "value"}}],
+  "order_by_fields": [{{"field": "field_name", "direction": "DESC"}}],
   "reasoning": "brief explanation"
-}
+}}
 
 - Use ONLY fields from the provided list
 - Add filter_fields for any WHERE clauses
 - Add order_by_fields for sorting (use DESC for "top", "best", "worst"; ASC for "first" if ascending)
 - Include segments.date if temporal period is specified
-"#.to_string();
+- For date ranges, ALWAYS use BETWEEN with explicit ISO dates: segments.date BETWEEN 'YYYY-MM-DD' AND 'YYYY-MM-DD'
+- Examples using today's date ({today}):
+  - "last 90 days" / "past quarter" → BETWEEN '{last_90_start}' AND '{today}'
+  - "last 60 days" → BETWEEN '{last_60_start}' AND '{today}'
+  - "last 30 days" → BETWEEN '{last_30_start}' AND '{today}'
+  - "last 7 days" → BETWEEN '{last_7_start}' AND '{today}'
+  - "yesterday" → BETWEEN '{yesterday}' AND '{yesterday}'
+  - "this year" → BETWEEN '{this_year_start}' AND '{today}'
+  - "this quarter" → BETWEEN '{this_quarter_start}' AND '{today}'
+  - "this month" → BETWEEN '{this_month_start}' AND '{today}'
+  - "this week" → BETWEEN '{this_week_start}' AND '{today}'
+  - "previous year" / "last year" → BETWEEN '{prev_year_start}' AND '{prev_year_end}'
+  - "previous quarter" / "last quarter" → BETWEEN '{prev_quarter_start}' AND '{prev_quarter_end}'
+  - "previous month" / "last month" → BETWEEN '{prev_month_start}' AND '{prev_month_end}'
+  - "previous week" / "last week" → BETWEEN '{prev_week_start}' AND '{prev_week_end}'
+- DO NOT use relative date literals like LAST_7_DAYS, TODAY, YESTERDAY
+"#);
             let user = format!(
                 "User query: {}\n\nAvailable fields:{}",
                 user_query, candidate_text
