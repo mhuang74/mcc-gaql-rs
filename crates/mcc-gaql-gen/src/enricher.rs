@@ -18,6 +18,8 @@ use std::sync::Arc;
 
 use mcc_gaql_common::field_metadata::{FieldMetadata, FieldMetadataCache, ResourceMetadata};
 
+use crate::rag::format_llm_request_debug;
+
 use crate::scraper::ScrapedDocs;
 use crate::model_pool::{ModelLease, ModelPool};
 
@@ -265,14 +267,31 @@ Use in SELECT to label rows in reports.\",\n\
 
         let user_prompt = Self::build_batch_prompt_static(resource, fields, scraped);
 
+        log::debug!(
+            "Enriching {} fields (model={}, temp={})",
+            fields.len(),
+            lease.model_name(),
+            lease.temperature()
+        );
+        log::trace!(
+            "{}",
+            format_llm_request_debug(&Some(system_prompt.to_string()), &user_prompt)
+        );
+
         let agent = lease
             .create_agent(system_prompt)
             .context("Failed to create LLM agent for enrichment")?;
 
+        let llm_start = std::time::Instant::now();
         let response = agent
             .prompt(&user_prompt)
             .await
             .map_err(|e| anyhow::anyhow!("LLM prompt failed: {}", e))?;
+        log::debug!(
+            "Enrichment LLM (model={}) responded in {}ms",
+            lease.model_name(),
+            llm_start.elapsed().as_millis()
+        );
 
         Self::parse_enrichment_response_static(&response)
     }
@@ -463,13 +482,30 @@ used to query. Return ONLY the sentence, no formatting.";
         }
 
         let lease = self.model_pool.acquire_preferred().await;
+        log::debug!(
+            "Enriching resource {} (model={}, temp={})",
+            resource_name,
+            lease.model_name(),
+            lease.temperature()
+        );
+        log::trace!(
+            "{}",
+            format_llm_request_debug(&Some(system_prompt.to_string()), &user_prompt)
+        );
+
         let agent = lease
             .create_agent(system_prompt)
             .context("Failed to create LLM agent for resource enrichment")?;
 
+        let llm_start = std::time::Instant::now();
         let response = agent.prompt(&user_prompt).await.map_err(|e| {
             anyhow::anyhow!("LLM prompt failed for resource {}: {}", resource_name, e)
         })?;
+        log::debug!(
+            "Resource enrichment LLM (model={}) responded in {}ms",
+            lease.model_name(),
+            llm_start.elapsed().as_millis()
+        );
 
         Ok(response.trim().to_string())
     }
@@ -537,13 +573,30 @@ Do NOT include fields that are rarely used or very specialized.";
         user_prompt.push_str("Return JSON: {\"key_attributes\": [...], \"key_metrics\": [...]}");
 
         let lease = self.model_pool.acquire_preferred().await;
+        log::debug!(
+            "Selecting key fields for {} (model={}, temp={})",
+            resource,
+            lease.model_name(),
+            lease.temperature()
+        );
+        log::trace!(
+            "{}",
+            format_llm_request_debug(&Some(system_prompt.to_string()), &user_prompt)
+        );
+
         let agent = lease
             .create_agent(system_prompt)
             .context("Failed to create LLM agent for key field selection")?;
 
+        let llm_start = std::time::Instant::now();
         let response = agent.prompt(&user_prompt).await.map_err(|e| {
             anyhow::anyhow!("LLM prompt failed for key field selection on {}: {}", resource, e)
         })?;
+        log::debug!(
+            "Key field selection LLM (model={}) responded in {}ms",
+            lease.model_name(),
+            llm_start.elapsed().as_millis()
+        );
 
         // Parse JSON response (strip markdown fences first)
         let cleaned_response = strip_json_fences(&response);
