@@ -148,6 +148,11 @@ impl ModelLease {
         self.model_index
     }
 
+    /// Returns the temperature setting from the config.
+    pub fn temperature(&self) -> f32 {
+        self.config.temperature()
+    }
+
     /// Create an LLM agent for this model with the given system prompt.
     pub fn create_agent(
         &self,

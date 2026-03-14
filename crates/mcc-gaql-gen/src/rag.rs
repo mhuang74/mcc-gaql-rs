@@ -128,6 +128,11 @@ impl LlmConfig {
     pub fn model_count(&self) -> usize {
         self.models.len()
     }
+
+    /// Returns the temperature setting.
+    pub fn temperature(&self) -> f32 {
+        self.temperature
+    }
 }
 
 impl LlmConfig {
@@ -213,8 +218,7 @@ fn init_llm_resources(config: &LlmConfig) -> Result<AgentResources, anyhow::Erro
 }
 
 /// Format LLM request for debug logging with human-friendly formatting
-#[allow(dead_code)]
-fn format_llm_request_debug(preamble: &Option<String>, prompt: &str) -> String {
+pub fn format_llm_request_debug(preamble: &Option<String>, prompt: &str) -> String {
     let mut output = String::new();
     output.push('\n');
     output.push_str("═══════════════════════════════════════════════════════════════════\n");
@@ -949,10 +953,14 @@ impl MultiStepRAGAgent {
         pipeline_config: PipelineConfig,
     ) -> Result<Self, anyhow::Error> {
         log::info!(
-            "Initializing MultiStepRAGAgent with LLM: {} via {}",
+            "Initializing MultiStepRAGAgent with LLM: {} (temperature={}) via {}",
             config.preferred_model(),
+            config.temperature,
             config.base_url
         );
+        if config.models.len() > 1 {
+            log::info!("  Additional fallback models: {:?}", &config.models[1..]);
+        }
 
         // Initialize shared LLM resources
         let resources = init_llm_resources(config)?;
@@ -1124,10 +1132,22 @@ Choose from: "#.to_string() + &resource_list.join(", ");
             self.llm_config.preferred_model(),
             &system_prompt,
         )?;
-        log::debug!("Phase 1: Calling LLM for resource selection...");
+        log::debug!(
+            "Phase 1: Calling LLM (model={}, temp={}) for resource selection...",
+            self.llm_config.preferred_model(),
+            self.llm_config.temperature
+        );
+        log::trace!(
+            "{}",
+            format_llm_request_debug(&Some(system_prompt.clone()), &user_prompt)
+        );
         let llm_start = std::time::Instant::now();
         let response = agent.prompt(&user_prompt).await?;
-        log::debug!("Phase 1: LLM responded in {}ms", llm_start.elapsed().as_millis());
+        log::debug!(
+            "Phase 1: LLM (model={}) responded in {}ms",
+            self.llm_config.preferred_model(),
+            llm_start.elapsed().as_millis()
+        );
 
         // Parse JSON response (strip markdown fences first)
         let cleaned_response = strip_markdown_code_blocks(&response);
@@ -1469,10 +1489,22 @@ Respond ONLY with valid JSON:
             self.llm_config.preferred_model(),
             &system_prompt,
         )?;
-        log::debug!("Phase 3: Calling LLM for field selection...");
+        log::debug!(
+            "Phase 3: Calling LLM (model={}, temp={}) for field selection...",
+            self.llm_config.preferred_model(),
+            self.llm_config.temperature
+        );
+        log::trace!(
+            "{}",
+            format_llm_request_debug(&Some(system_prompt.clone()), &user_prompt)
+        );
         let llm_start = std::time::Instant::now();
         let response = agent.prompt(&user_prompt).await?;
-        log::debug!("Phase 3: LLM responded in {}ms", llm_start.elapsed().as_millis());
+        log::debug!(
+            "Phase 3: LLM (model={}) responded in {}ms",
+            self.llm_config.preferred_model(),
+            llm_start.elapsed().as_millis()
+        );
 
         // Parse JSON response (strip markdown fences first)
         let cleaned_response = strip_markdown_code_blocks(&response);
