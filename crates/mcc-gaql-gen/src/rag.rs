@@ -1584,7 +1584,7 @@ Respond ONLY with valid JSON:
         const VALID_OPERATORS: &[&str] = &[
             "=", "!=", "<", ">", "<=", ">=", "IN", "NOT IN", "LIKE", "NOT LIKE",
             "CONTAINS ANY", "CONTAINS ALL", "CONTAINS NONE", "IS NULL", "IS NOT NULL",
-            "BETWEEN", "REGEXP_MATCH", "NOT REGEXP_MATCH",
+            "BETWEEN", "REGEXP_MATCH", "NOT REGEXP_MATCH", "DURING",
         ];
 
         // Add explicit filter fields from LLM
@@ -1596,7 +1596,11 @@ Respond ONLY with valid JSON:
             }
             // Escape single quotes in values
             let escaped_value = ff.value.replace('\'', "\\'");
-            let clause = format!("{} {} '{}'", ff.field_name, op, escaped_value);
+            let clause = match op.as_str() {
+                "IS NULL" | "IS NOT NULL" => format!("{} {}", ff.field_name, op),
+                "DURING" => format!("{} {} {}", ff.field_name, op, escaped_value),  // No quotes for DURING
+                _ => format!("{} {} '{}'", ff.field_name, op, escaped_value),       // Quoted for other operators
+            };
             where_clauses.push(clause);
         }
 
@@ -1642,17 +1646,86 @@ Respond ONLY with valid JSON:
         during: Option<&str>,
         limit: Option<u32>,
     ) -> Result<String, anyhow::Error> {
-        let mut query = String::new();
+        let query = GaqlBuilder::new(primary)
+            .select(field_selection.select_fields.clone())
+            .where_clauses(where_clauses.to_vec())
+            .during(during.map(|s| s.to_string()))
+            .order_by(field_selection.order_by_fields.clone())
+            .limit(limit)
+            .build();
 
-        // SELECT clause - pretty formatted with each field on its own line
-        let mut select_fields: Vec<&str> = field_selection.select_fields.iter().map(|s| s.as_str()).collect();
+        Ok(query)
+    }
+}
 
-        // Add segments.date if temporal but not present
-        let has_date_segment = select_fields.contains(&"segments.date");
-        if during.is_some() && !has_date_segment {
-            select_fields.push("segments.date");
+/// Builder for constructing GAQL queries
+pub struct GaqlBuilder {
+    select_fields: Vec<String>,
+    from_resource: String,
+    where_clauses: Vec<String>,
+    order_by_fields: Vec<(String, String)>,
+    during: Option<String>,
+    limit: Option<u32>,
+}
+
+impl GaqlBuilder {
+    pub fn new(from_resource: &str) -> Self {
+        Self {
+            select_fields: Vec::new(),
+            from_resource: from_resource.to_string(),
+            where_clauses: Vec::new(),
+            order_by_fields: Vec::new(),
+            during: None,
+            limit: None,
+        }
+    }
+
+    pub fn select(mut self, fields: Vec<String>) -> Self {
+        self.select_fields = fields;
+        self
+    }
+
+    pub fn from_resource(mut self, resource: &str) -> Self {
+        self.from_resource = resource.to_string();
+        self
+    }
+
+    pub fn where_clause(mut self, clause: String) -> Self {
+        self.where_clauses.push(clause);
+        self
+    }
+
+    pub fn where_clauses(mut self, clauses: Vec<String>) -> Self {
+        self.where_clauses = clauses;
+        self
+    }
+
+    pub fn during(mut self, period: Option<String>) -> Self {
+        self.during = period;
+        self
+    }
+
+    pub fn order_by(mut self, fields: Vec<(String, String)>) -> Self {
+        self.order_by_fields = fields;
+        self
+    }
+
+    pub fn limit(mut self, limit: Option<u32>) -> Self {
+        self.limit = limit;
+        self
+    }
+
+    pub fn build(self) -> String {
+        // Add segments.date to select if during is set
+        let mut select_fields = self.select_fields;
+        if self.during.is_some() && !select_fields.iter().any(|f| f == "segments.date") {
+            select_fields.push("segments.date".to_string());
         }
 
+        // Build query
+        let mut query = String::new();
+
+        // SELECT clause
         query.push_str("SELECT\n");
         for (i, field) in select_fields.iter().enumerate() {
             query.push_str("  ");
@@ -1664,24 +1737,24 @@ Respond ONLY with valid JSON:
         }
 
         // FROM clause
-        query.push_str(&format!("FROM {}\n", primary));
+        query.push_str(&format!("FROM {}\n", self.from_resource));
 
-        // WHERE clause
-        if !where_clauses.is_empty() {
+        // WHERE clause - combine where_clauses with DURING
+        let mut where_parts = self.where_clauses;
+        if let Some(during) = self.during {
+            where_parts.push(format!("segments.date DURING {}", during));
+        }
+
+        if !where_parts.is_empty() {
             query.push_str("WHERE ");
-            query.push_str(&where_clauses.join(" AND "));
+            query.push_str(&where_parts.join(" AND "));
             query.push('\n');
         }
 
-        // DURING clause
-        if let Some(period) = during {
-            query.push_str(&format!("DURING {}\n", period));
-        }
-
         // ORDER BY clause
-        if !field_selection.order_by_fields.is_empty() {
+        if !self.order_by_fields.is_empty() {
             query.push_str("ORDER BY ");
-            let order_by_parts: Vec<String> = field_selection.order_by_fields
+            let order_by_parts: Vec<String> = self.order_by_fields
                 .iter()
                 .map(|(field, direction)| format!("{} {}", field, direction))
                 .collect();
@@ -1690,11 +1763,11 @@ Respond ONLY with valid JSON:
         }
 
         // LIMIT clause
-        if let Some(n) = limit {
+        if let Some(n) = self.limit {
             query.push_str(&format!("LIMIT {}\n", n));
         }
 
-        Ok(query.trim().to_string())
+        query.trim().to_string()
     }
 }
 
@@ -2046,6 +2119,81 @@ mod tests {
         assert!(result.contains("LIMIT 10"));
         let _ = during;
         let _ = limit;
+    }
+
+    #[test]
+    fn test_during_operator_accepted() {
+        use mcc_gaql_common::field_metadata::FilterField;
+
+        // Test that DURING operator is not rejected
+        let filter = FilterField {
+            field_name: "segments.date".to_string(),
+            operator: "DURING".to_string(),
+            value: "LAST_30_DAYS".to_string(),
+        };
+
+        // The operator should be recognized as valid
+        const VALID_OPERATORS: &[&str] = &[
+            "=", "!=", "<", ">", "<=", ">=", "IN", "NOT IN", "LIKE", "NOT LIKE",
+            "CONTAINS ANY", "CONTAINS ALL", "CONTAINS NONE", "IS NULL", "IS NOT NULL",
+            "BETWEEN", "REGEXP_MATCH", "NOT REGEXP_MATCH", "DURING",
+        ];
+
+        let op = filter.operator.to_uppercase();
+        assert!(VALID_OPERATORS.contains(&op.as_str()), "DURING should be a valid operator");
+
+        // Verify formatting (DURING should not have quotes)
+        let clause = format!("{} {} {}", filter.field_name, op, filter.value);
+        assert_eq!(clause, "segments.date DURING LAST_30_DAYS");
+    }
+
+    #[test]
+    fn test_gaql_builder_basic() {
+        let query = GaqlBuilder::new("campaign")
+            .select(vec!["campaign.name".to_string(), "metrics.clicks".to_string()])
+            .where_clause("campaign.status = 'ENABLED'".to_string())
+            .during(Some("LAST_30_DAYS".to_string()))
+            .order_by(vec![("metrics.clicks".to_string(), "DESC".to_string())])
+            .limit(Some(10))
+            .build();
+
+        assert!(query.contains("SELECT"));
+        assert!(query.contains("campaign.name"));
+        assert!(query.contains("metrics.clicks"));
+        assert!(query.contains("segments.date")); // Auto-added due to DURING
+        assert!(query.contains("FROM campaign"));
+        assert!(query.contains("WHERE campaign.status = 'ENABLED'"));
+        assert!(query.contains("segments.date DURING LAST_30_DAYS"));
+        assert!(query.contains("ORDER BY metrics.clicks DESC"));
+        assert!(query.contains("LIMIT 10"));
+    }
+
+    #[test]
+    fn test_gaql_builder_no_during() {
+        let query = GaqlBuilder::new("ad_group")
+            .select(vec!["ad_group.name".to_string()])
+            .where_clause("ad_group.status = 'ENABLED'".to_string())
+            .build();
+
+        assert!(query.contains("SELECT"));
+        assert!(query.contains("ad_group.name"));
+        assert!(!query.contains("segments.date")); // Not added without DURING
+        assert!(query.contains("FROM ad_group"));
+        assert!(query.contains("WHERE ad_group.status = 'ENABLED'"));
+    }
+
+    #[test]
+    fn test_gaql_builder_during_already_in_select() {
+        // If segments.date is already in select, don't add it twice
+        let query = GaqlBuilder::new("campaign")
+            .select(vec!["campaign.name".to_string(), "segments.date".to_string()])
+            .during(Some("LAST_7_DAYS".to_string()))
+            .build();
+
+        // Count occurrences of segments.date - should be exactly 1 in SELECT
+        let select_part = query.split("FROM").next().unwrap_or("");
+        let count = select_part.matches("segments.date").count();
+        assert_eq!(count, 1, "segments.date should appear exactly once in SELECT");
     }
 
     #[test]
