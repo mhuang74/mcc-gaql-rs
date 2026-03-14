@@ -61,10 +61,7 @@ impl FieldMetadata {
     /// Get the resource name for this field (e.g., "campaign" from "campaign.name")
     pub fn get_resource(&self) -> Option<String> {
         if let Some(_idx) = self.name.find('.') {
-            self.name
-                .split('.')
-                .next()
-                .map(|s| s.to_string())
+            self.name.split('.').next().map(|s| s.to_string())
         } else {
             None
         }
@@ -319,7 +316,8 @@ impl FieldMetadataCache {
 
         // Filter fields - only keep fields belonging to retained resources
         self.fields.retain(|_, field| {
-            field.get_resource()
+            field
+                .get_resource()
                 .map(|r| keep_set.contains(&r))
                 .unwrap_or(false)
         });
@@ -520,9 +518,11 @@ impl FieldMetadataCache {
         if resource_selectable_with.is_empty() {
             // No RESOURCE field found for this resource - compatibility check skipped
             // This could indicate metadata is not fully enriched
-            result.warnings.push(ValidationWarning::MissingResourceSelectableWith {
-                resource: from_resource.to_string(),
-            });
+            result
+                .warnings
+                .push(ValidationWarning::MissingResourceSelectableWith {
+                    resource: from_resource.to_string(),
+                });
             return result;
         }
 
@@ -638,7 +638,10 @@ pub struct ValidationResult {
 pub enum ValidationError {
     UnknownFields(Vec<String>),
     NonSelectableFields(Vec<String>),
-    IncompatibleFields { fields: Vec<String>, resource: String },
+    IncompatibleFields {
+        fields: Vec<String>,
+        resource: String,
+    },
 }
 
 impl std::fmt::Display for ValidationError {
@@ -704,11 +707,18 @@ pub struct PipelineTrace {
     pub phase1_related_resources: Vec<String>,
     pub phase1_dropped_resources: Vec<String>,
     pub phase1_reasoning: String,
+    pub phase1_model_used: String,
+    pub phase1_timing_ms: u64,
     pub phase2_candidate_count: usize,
     pub phase2_rejected_count: usize,
+    pub phase2_timing_ms: u64,
+    pub phase25_pre_scan_filters: Vec<(String, Vec<String>)>, // (field_name, detected_enum_values)
     pub phase3_selected_fields: Vec<String>,
     pub phase3_filter_fields: Vec<FilterField>,
     pub phase3_order_by_fields: Vec<(String, String)>, // (field_name, direction)
+    pub phase3_reasoning: String,
+    pub phase3_model_used: String,
+    pub phase3_timing_ms: u64,
     pub phase4_where_clauses: Vec<String>,
     pub phase4_during: Option<String>,
     pub phase4_limit: Option<u32>,
@@ -857,10 +867,7 @@ mod tests {
             "campaign".to_string(),
             vec!["campaign.id".to_string(), "campaign.name".to_string()],
         );
-        resources.insert(
-            "ad_group".to_string(),
-            vec!["ad_group.id".to_string()],
-        );
+        resources.insert("ad_group".to_string(), vec!["ad_group.id".to_string()]);
         resources.insert("customer".to_string(), vec!["customer.id".to_string()]);
         cache.resources = Some(resources);
 
@@ -1066,10 +1073,7 @@ mod tests {
                 sortable: false,
                 metrics_compatible: true,
                 resource_name: None,
-                selectable_with: vec![
-                    "campaign".to_string(),
-                    "metrics.clicks".to_string(),
-                ],
+                selectable_with: vec!["campaign".to_string(), "metrics.clicks".to_string()],
                 enum_values: vec![],
                 attribute_resources: vec![],
                 description: None,
@@ -1104,10 +1108,12 @@ mod tests {
         );
 
         assert!(result.is_valid);
-        assert!(!result.errors.iter().any(|e| matches!(
-            e,
-            ValidationError::IncompatibleFields { .. }
-        )));
+        assert!(
+            !result
+                .errors
+                .iter()
+                .any(|e| matches!(e, ValidationError::IncompatibleFields { .. }))
+        );
     }
 
     #[test]
