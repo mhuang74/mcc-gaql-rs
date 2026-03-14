@@ -123,6 +123,10 @@ enum Commands {
         /// Skip implicit default filters (e.g., status = ENABLED)
         #[arg(long)]
         no_defaults: bool,
+
+        /// Enable RAG search for query cookbook examples in LLM prompts
+        #[arg(long)]
+        use_query_cookbook: bool,
     },
 
     /// Upload enriched metadata to Cloudflare R2
@@ -223,8 +227,9 @@ async fn main() -> Result<()> {
             queries,
             metadata,
             no_defaults,
+            use_query_cookbook,
         } => {
-            cmd_generate(prompt, queries, metadata, no_defaults, cli.verbose).await?;
+            cmd_generate(prompt, queries, metadata, no_defaults, use_query_cookbook, cli.verbose).await?;
         }
 
         Commands::Upload { file, key } => {
@@ -515,6 +520,7 @@ async fn cmd_generate(
     queries: Option<String>,
     metadata: Option<PathBuf>,
     no_defaults: bool,
+    use_query_cookbook: bool,
     verbose: bool,
 ) -> Result<()> {
     validate_llm_env()?;
@@ -587,6 +593,7 @@ async fn cmd_generate(
     // Build pipeline config
     let pipeline_config = rag::PipelineConfig {
         add_defaults: !no_defaults,
+        use_query_cookbook,
     };
 
     // Generate GAQL using MultiStepRAGAgent
