@@ -925,11 +925,16 @@ impl Embed for FieldDocument {
 pub struct PipelineConfig {
     /// Whether to add implicit default filters (e.g., status = ENABLED)
     pub add_defaults: bool,
+    /// Whether to use RAG search for query cookbook examples in LLM prompts
+    pub use_query_cookbook: bool,
 }
 
 impl Default for PipelineConfig {
     fn default() -> Self {
-        Self { add_defaults: true }
+        Self {
+            add_defaults: true,
+            use_query_cookbook: false,
+        }
     }
 }
 
@@ -1420,11 +1425,17 @@ Choose from: "#.to_string() + &resource_list.join(", ");
         candidates: &[FieldMetadata],
         filter_enums: &[(String, Vec<String>)],
     ) -> Result<FieldSelectionResult, anyhow::Error> {
-        // Retrieve top cookbook examples
-        log::debug!("Phase 3: Retrieving cookbook examples...");
-        let cookbook_start = std::time::Instant::now();
-        let examples = self.retrieve_cookbook_examples(user_query, 3).await?;
-        log::debug!("Phase 3: Cookbook examples retrieved in {}ms", cookbook_start.elapsed().as_millis());
+        // Retrieve top cookbook examples only if enabled
+        let examples = if self.pipeline_config.use_query_cookbook {
+            log::debug!("Phase 3: Retrieving cookbook examples...");
+            let cookbook_start = std::time::Instant::now();
+            let ex = self.retrieve_cookbook_examples(user_query, 3).await?;
+            log::debug!("Phase 3: Cookbook examples retrieved in {}ms", cookbook_start.elapsed().as_millis());
+            ex
+        } else {
+            log::debug!("Phase 3: Skipping cookbook examples (use_query_cookbook=false)");
+            String::new()
+        };
 
         // Build candidate list for LLM
         let mut candidate_text = String::new();
@@ -1459,7 +1470,9 @@ Choose from: "#.to_string() + &resource_list.join(", ");
             }
         }
 
-        let system_prompt = r#"You are a Google Ads Query Language (GAQL) expert. Given:
+        // Build prompt conditionally based on whether cookbook is enabled
+        let (system_prompt, user_prompt) = if self.pipeline_config.use_query_cookbook {
+            let sys = r#"You are a Google Ads Query Language (GAQL) expert. Given:
 1. A user query
 2. Cookbook examples
 3. Available fields categorized by type
@@ -1479,11 +1492,37 @@ Respond ONLY with valid JSON:
 - Add order_by_fields for sorting (use DESC for "top", "best", "worst"; ASC for "first" if ascending)
 - Include segments.date if temporal period is specified
 "#.to_string();
+            let user = format!(
+                "User query: {}\n\nCookbook examples:\n{}\n\nAvailable fields:{}",
+                user_query, examples, candidate_text
+            );
+            (sys, user)
+        } else {
+            let sys = r#"You are a Google Ads Query Language (GAQL) expert. Given:
+1. A user query
+2. Available fields categorized by type
 
-        let user_prompt = format!(
-            "User query: {}\n\nCookbook examples:\n{}\n\nAvailable fields:{}",
-            user_query, examples, candidate_text
-        );
+Select the appropriate fields and build WHERE filters.
+
+Respond ONLY with valid JSON:
+{
+  "select_fields": ["field1", "field2", ...],
+  "filter_fields": [{"field": "field_name", "operator": "=", "value": "value"}],
+  "order_by_fields": [{"field": "field_name", "direction": "DESC"}],
+  "reasoning": "brief explanation"
+}
+
+- Use ONLY fields from the provided list
+- Add filter_fields for any WHERE clauses
+- Add order_by_fields for sorting (use DESC for "top", "best", "worst"; ASC for "first" if ascending)
+- Include segments.date if temporal period is specified
+"#.to_string();
+            let user = format!(
+                "User query: {}\n\nAvailable fields:{}",
+                user_query, candidate_text
+            );
+            (sys, user)
+        };
 
         let agent = self.llm_config.create_agent_for_model(
             self.llm_config.preferred_model(),
