@@ -3,11 +3,11 @@
 //! This module parses proto files from googleads-rs to extract documentation
 //! comments for fields, messages, and enums.
 
-use std::collections::HashMap;
-use std::path::Path;
 use anyhow::Result;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::path::Path;
 use walkdir::WalkDir;
 
 /// Field behavior annotations (google.api.field_behavior)
@@ -122,8 +122,9 @@ impl ProtoParser {
             // Match field definitions: type name = number;
             // Captures: type, name, number
             field_pattern: Regex::new(
-                r#"(?m)^\s*((?:\w+\.)*\w+)\s+(\w+)\s*=\s*(\d+)(?:\s*\[([^\]]*)\])?;"#
-            ).unwrap(),
+                r#"(?m)^\s*((?:\w+\.)*\w+)\s+(\w+)\s*=\s*(\d+)(?:\s*\[([^\]]*)\])?;"#,
+            )
+            .unwrap(),
             // Match enum definitions: enum EnumName {
             enum_pattern: Regex::new(r"(?m)^\s*enum\s+(\w+)\s*\{").unwrap(),
             // Match enum values: NAME = number;
@@ -131,8 +132,9 @@ impl ProtoParser {
             enum_value_pattern: Regex::new(r"(?m)^\s*(\w+)\s*=\s*(-?\d+)\s*;").unwrap(),
             // Match field behavior: (google.api.field_behavior) = BEHAVIOR
             field_behavior_pattern: Regex::new(
-                r#"(?m)\(google\.api\.field_behavior\)\s*=\s*(\w+)"#
-            ).unwrap(),
+                r#"(?m)\(google\.api\.field_behavior\)\s*=\s*(\w+)"#,
+            )
+            .unwrap(),
         }
     }
 
@@ -175,7 +177,8 @@ impl ProtoParser {
             let enum_start = caps.get(0).unwrap().start();
 
             // Get the enclosing message name
-            let container_name = self.find_container_message(content, enum_start)
+            let container_name = self
+                .find_container_message(content, enum_start)
                 .unwrap_or_else(|| format!("{}Enum", enum_name));
 
             // Extract enum-level comment
@@ -214,7 +217,12 @@ impl ProtoParser {
     }
 
     /// Extract fields within a message block.
-    fn extract_message_fields(&self, content: &str, msg_start: usize, _message_name: &str) -> Vec<ProtoFieldDoc> {
+    fn extract_message_fields(
+        &self,
+        content: &str,
+        msg_start: usize,
+        _message_name: &str,
+    ) -> Vec<ProtoFieldDoc> {
         // Find message end (matching brace)
         let mut brace_count = 0;
         let mut msg_end = msg_start;
@@ -356,7 +364,12 @@ impl Default for ProtoParser {
 }
 
 /// Parse all proto files in a directory and return combined documentation.
-pub fn parse_all_protos(proto_dir: &Path) -> Result<(HashMap<String, ProtoMessageDoc>, HashMap<String, ProtoEnumDoc>)> {
+pub fn parse_all_protos(
+    proto_dir: &Path,
+) -> Result<(
+    HashMap<String, ProtoMessageDoc>,
+    HashMap<String, ProtoEnumDoc>,
+)> {
     let parser = ProtoParser::new();
     let mut messages = HashMap::new();
     let mut enums = HashMap::new();
@@ -384,10 +397,7 @@ pub fn parse_all_protos(proto_dir: &Path) -> Result<(HashMap<String, ProtoMessag
 
     // Parse enum proto files
     if enums_dir.exists() {
-        for entry in WalkDir::new(&enums_dir)
-            .into_iter()
-            .filter_map(|e| e.ok())
-        {
+        for entry in WalkDir::new(&enums_dir).into_iter().filter_map(|e| e.ok()) {
             let path = entry.path();
             if path.extension().map_or(false, |ext| ext == "proto") {
                 let content = std::fs::read_to_string(path)?;
@@ -473,7 +483,11 @@ message Campaign {
         assert_eq!(status_field.field_number, 2);
         assert!(status_field.description.contains("status"));
         assert!(status_field.description.contains("ENABLED"));
-        assert!(status_field.field_behavior.contains(&FieldBehavior::OutputOnly));
+        assert!(
+            status_field
+                .field_behavior
+                .contains(&FieldBehavior::OutputOnly)
+        );
     }
 
     #[test]
@@ -486,6 +500,9 @@ message Campaign {
     #[test]
     fn test_proto_to_gaql_field() {
         assert_eq!(proto_to_gaql_field("Campaign", "name"), "campaign.name");
-        assert_eq!(proto_to_gaql_field("AdGroup", "campaign"), "ad_group.campaign");
+        assert_eq!(
+            proto_to_gaql_field("AdGroup", "campaign"),
+            "ad_group.campaign"
+        );
     }
 }

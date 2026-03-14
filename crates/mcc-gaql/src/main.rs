@@ -65,25 +65,24 @@ async fn main() -> Result<()> {
         log::debug!("Handle Field Metadata command. Resolved configuration: {resolved_config:?}");
 
         // Obtain API access for field metadata operations that require it
-        let api_context = if args.refresh_field_cache
-            || args.export_field_metadata
-            || args.show_fields.is_some()
-        {
-            resolved_config.validate_for_operation(&args)?;
-            Some(
-                googleads::get_api_access(&googleads::ApiAccessConfig {
-                    mcc_customer_id: resolved_config.mcc_customer_id.clone(),
-                    token_cache_filename: resolved_config.token_cache_filename.clone(),
-                    user_email: resolved_config.user_email.clone(),
-                    dev_token: resolved_config.dev_token.clone(),
-                    use_remote_auth: resolved_config.remote_auth,
-                })
-                .await
-                .context("Authentication required for field metadata operations")?,
-            )
-        } else {
-            None
-        };
+        let api_context =
+            if args.refresh_field_cache || args.export_field_metadata || args.show_fields.is_some()
+            {
+                resolved_config.validate_for_operation(&args)?;
+                Some(
+                    googleads::get_api_access(&googleads::ApiAccessConfig {
+                        mcc_customer_id: resolved_config.mcc_customer_id.clone(),
+                        token_cache_filename: resolved_config.token_cache_filename.clone(),
+                        user_email: resolved_config.user_email.clone(),
+                        dev_token: resolved_config.dev_token.clone(),
+                        use_remote_auth: resolved_config.remote_auth,
+                    })
+                    .await
+                    .context("Authentication required for field metadata operations")?,
+                )
+            } else {
+                None
+            };
 
         let cache_path = std::path::PathBuf::from(&resolved_config.field_metadata_cache);
 
@@ -251,9 +250,8 @@ async fn main() -> Result<()> {
             );
 
             // remove cached token to force re-auth and try again
-            let token_cache_path =
-                config_file_path(&resolved_config.token_cache_filename)
-                    .context("Failed to determine token cache file path")?;
+            let token_cache_path = config_file_path(&resolved_config.token_cache_filename)
+                .context("Failed to determine token cache file path")?;
 
             fs::remove_file(&token_cache_path).context(format!(
                 "Failed to remove invalid token cache at: {}",
@@ -315,34 +313,43 @@ async fn main() -> Result<()> {
         googleads::fields_query(api_context, query).await;
     } else if args.gaql_query.is_some() {
         // figure out which customerids to query for
-        let customer_ids: Option<Vec<String>> =
-            if customer_id.is_some() & args.all_linked_child_accounts {
-                let cid = customer_id.expect("Valid customer_id required.");
-                log::debug!("Querying child accounts under MCC: {}", &cid);
-                (googleads::get_child_account_ids(api_context.clone(), cid.to_string()).await).ok()
-            } else if customer_id.is_some() & !args.all_linked_child_accounts {
-                let cid = customer_id.expect("Valid customer_id required.");
-                log::debug!("Querying account: {cid}");
-                Some(vec![cid.to_string()])
-            } else if customer_id.is_none() & args.all_linked_child_accounts {
-                let cid = mcc_customer_id.to_string();
-                log::debug!("Querying all linked child accounts under MCC: {}", &cid);
-                (googleads::get_child_account_ids(api_context.clone(), cid).await).ok()
-            } else if customer_id.is_none() & !args.all_linked_child_accounts {
-                if let Some(customerids_filename) = resolved_config.customerids_filename.as_deref() {
-                    let customerids_path =
-                        config_file_path(customerids_filename).unwrap();
-                    log::debug!("Querying accounts listed in file: {}", customerids_path.display());
+        let customer_ids: Option<Vec<String>> = if customer_id.is_some()
+            & args.all_linked_child_accounts
+        {
+            let cid = customer_id.expect("Valid customer_id required.");
+            log::debug!("Querying child accounts under MCC: {}", &cid);
+            (googleads::get_child_account_ids(api_context.clone(), cid.to_string()).await).ok()
+        } else if customer_id.is_some() & !args.all_linked_child_accounts {
+            let cid = customer_id.expect("Valid customer_id required.");
+            log::debug!("Querying account: {cid}");
+            Some(vec![cid.to_string()])
+        } else if customer_id.is_none() & args.all_linked_child_accounts {
+            let cid = mcc_customer_id.to_string();
+            log::debug!("Querying all linked child accounts under MCC: {}", &cid);
+            (googleads::get_child_account_ids(api_context.clone(), cid).await).ok()
+        } else if customer_id.is_none() & !args.all_linked_child_accounts {
+            if let Some(customerids_filename) = resolved_config.customerids_filename.as_deref() {
+                let customerids_path = config_file_path(customerids_filename).unwrap();
+                log::debug!(
+                    "Querying accounts listed in file: {}",
+                    customerids_path.display()
+                );
 
-                    (mcc_gaql_common::config::get_child_account_ids_from_file(customerids_path.as_path()).await).ok()
-                } else {
-                    log::warn!("No customerids file specified. Use --customer-id or --all-linked-child-accounts");
-                    None
-                }
+                (mcc_gaql_common::config::get_child_account_ids_from_file(
+                    customerids_path.as_path(),
+                )
+                .await)
+                    .ok()
             } else {
-                log::warn!("Not supposed to get here.");
+                log::warn!(
+                    "No customerids file specified. Use --customer-id or --all-linked-child-accounts"
+                );
                 None
-            };
+            }
+        } else {
+            log::warn!("Not supposed to get here.");
+            None
+        };
 
         // apply query to all customer_ids
         if let Some(customer_ids_vector) = customer_ids {
@@ -477,18 +484,16 @@ async fn gaql_query_async(
     let groupby_start = Instant::now();
     while let Some(result) = groupby_handles.next().await {
         match result {
-            Ok(future) => {
-                match future.await {
-                    Ok(df) => {
-                        if !df.is_empty() {
-                            dataframes.push(df);
-                        }
-                    }
-                    Err(e) => {
-                        log::error!("GROUPBY Error: {e}");
+            Ok(future) => match future.await {
+                Ok(df) => {
+                    if !df.is_empty() {
+                        dataframes.push(df);
                     }
                 }
-            }
+                Err(e) => {
+                    log::error!("GROUPBY Error: {e}");
+                }
+            },
             Err(e) => {
                 log::error!("Thread JOIN Error: {e}");
             }
@@ -737,17 +742,15 @@ fn output_dataframe(
     let resolved_format = resolve_output_format(format, &outfile)?;
 
     match outfile {
-        Some(path) => {
-            match resolved_format {
-                OutputFormat::Csv => write_csv(df, &path)?,
-                OutputFormat::Json => write_json(df, &path)?,
-                OutputFormat::Table => {
-                    log::warn!("Writing table format to file, consider using csv or json");
-                    let mut f = File::create(path)?;
-                    write!(f, "{}", df)?;
-                }
+        Some(path) => match resolved_format {
+            OutputFormat::Csv => write_csv(df, &path)?,
+            OutputFormat::Json => write_json(df, &path)?,
+            OutputFormat::Table => {
+                log::warn!("Writing table format to file, consider using csv or json");
+                let mut f = File::create(path)?;
+                write!(f, "{}", df)?;
             }
-        }
+        },
         None => match resolved_format {
             OutputFormat::Csv => write_csv_to_stdout(df)?,
             OutputFormat::Json => write_json_to_stdout(df)?,

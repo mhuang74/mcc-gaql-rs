@@ -4,14 +4,14 @@
 //! on every run. The cache is keyed by googleads-rs version/commit.
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
 use std::fs;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::proto_parser::{ProtoMessageDoc, ProtoEnumDoc};
+use crate::proto_parser::{ProtoEnumDoc, ProtoMessageDoc};
 
 /// Convert snake_case to PascalCase.
 /// e.g., "ad_group" -> "AdGroup", "campaign_budget" -> "CampaignBudget"
@@ -78,7 +78,11 @@ impl ProtoDocsCache {
     }
 
     /// Get field documentation for a specific message and field.
-    pub fn get_field_doc(&self, message_name: &str, field_name: &str) -> Option<&crate::proto_parser::ProtoFieldDoc> {
+    pub fn get_field_doc(
+        &self,
+        message_name: &str,
+        field_name: &str,
+    ) -> Option<&crate::proto_parser::ProtoFieldDoc> {
         self.messages
             .get(message_name)
             .and_then(|msg| msg.fields.iter().find(|f| f.field_name == field_name))
@@ -109,8 +113,8 @@ impl ProtoDocsCache {
     /// This allows the LLM enrichment to use proto documentation instead of web-scraped docs.
     /// Preserves all proto information including field behaviors, types, and enum descriptions.
     pub fn to_scraped_docs(&self) -> crate::scraper::ScrapedDocs {
-        use crate::scraper::{ScrapedDocs, ScrapedFieldDoc};
         use crate::proto_parser::FieldBehavior;
+        use crate::scraper::{ScrapedDocs, ScrapedFieldDoc};
         use std::collections::HashMap;
 
         let mut docs: HashMap<String, ScrapedFieldDoc> = HashMap::new();
@@ -123,27 +127,36 @@ impl ProtoDocsCache {
                 let field_key = format!("{}.{}", gaql_resource, field.field_name);
 
                 // Convert field behaviors to strings
-                let field_behavior: Vec<String> = field.field_behavior.iter().map(|b| {
-                    match b {
+                let field_behavior: Vec<String> = field
+                    .field_behavior
+                    .iter()
+                    .map(|b| match b {
                         FieldBehavior::Immutable => "IMMUTABLE".to_string(),
                         FieldBehavior::OutputOnly => "OUTPUT_ONLY".to_string(),
                         FieldBehavior::Required => "REQUIRED".to_string(),
                         FieldBehavior::Optional => "OPTIONAL".to_string(),
-                    }
-                }).collect();
+                    })
+                    .collect();
 
                 // Get enum values and their descriptions if this is an enum field
                 let (enum_values, enum_value_descriptions) = if field.is_enum {
-                    field.enum_type.as_ref().and_then(|enum_type| {
-                        self.enums.get(enum_type).map(|e| {
-                            let values: Vec<String> = e.values.iter().map(|v| v.name.clone()).collect();
-                            let descriptions: Vec<String> = e.values.iter()
-                                .filter(|v| !v.description.is_empty())
-                                .map(|v| format!("{}: {}", v.name, v.description))
-                                .collect();
-                            (values, descriptions)
+                    field
+                        .enum_type
+                        .as_ref()
+                        .and_then(|enum_type| {
+                            self.enums.get(enum_type).map(|e| {
+                                let values: Vec<String> =
+                                    e.values.iter().map(|v| v.name.clone()).collect();
+                                let descriptions: Vec<String> = e
+                                    .values
+                                    .iter()
+                                    .filter(|v| !v.description.is_empty())
+                                    .map(|v| format!("{}: {}", v.name, v.description))
+                                    .collect();
+                                (values, descriptions)
+                            })
                         })
-                    }).unwrap_or_default()
+                        .unwrap_or_default()
                 } else {
                     (Vec::new(), Vec::new())
                 };
@@ -201,7 +214,8 @@ impl ProtoDocsCache {
     /// Load cache from disk.
     pub fn load_from_disk(path: &PathBuf) -> Result<Self> {
         let content = fs::read_to_string(path).context("Failed to read cache file")?;
-        let cache: ProtoDocsCache = serde_json::from_str(&content).context("Failed to parse cache JSON")?;
+        let cache: ProtoDocsCache =
+            serde_json::from_str(&content).context("Failed to parse cache JSON")?;
 
         Ok(cache)
     }
@@ -306,7 +320,6 @@ pub fn load_or_build_cache(proto_dir: &PathBuf) -> Result<ProtoDocsCache> {
     Ok(cache)
 }
 
-
 /// Merge proto documentation into a FieldMetadataCache.
 /// For each field in the cache, look up the proto documentation and populate description.
 pub fn merge_into_field_metadata_cache(
@@ -343,7 +356,9 @@ pub fn merge_into_field_metadata_cache(
             let message_name = snake_to_pascal_case(resource_name);
 
             if let Some(proto_desc) = proto_cache.get_resource_description(&message_name) {
-                if res_meta.description.is_none() || res_meta.description.as_ref().map_or(true, |d| d.is_empty()) {
+                if res_meta.description.is_none()
+                    || res_meta.description.as_ref().map_or(true, |d| d.is_empty())
+                {
                     res_meta.description = Some(proto_desc.to_string());
                 }
             }
@@ -408,13 +423,28 @@ mod tests {
     #[test]
     fn test_gaql_to_proto() {
         // Test basic resource name conversion
-        assert_eq!(gaql_to_proto("campaign.name"), Some(("Campaign".to_string(), "name".to_string())));
-        assert_eq!(gaql_to_proto("ad_group.status"), Some(("AdGroup".to_string(), "status".to_string())));
-        assert_eq!(gaql_to_proto("ad_group_ad.ad_group"), Some(("AdGroupAd".to_string(), "ad_group".to_string())));
+        assert_eq!(
+            gaql_to_proto("campaign.name"),
+            Some(("Campaign".to_string(), "name".to_string()))
+        );
+        assert_eq!(
+            gaql_to_proto("ad_group.status"),
+            Some(("AdGroup".to_string(), "status".to_string()))
+        );
+        assert_eq!(
+            gaql_to_proto("ad_group_ad.ad_group"),
+            Some(("AdGroupAd".to_string(), "ad_group".to_string()))
+        );
 
         // Test metrics and segments
-        assert_eq!(gaql_to_proto("metrics.clicks"), Some(("Metrics".to_string(), "clicks".to_string())));
-        assert_eq!(gaql_to_proto("segments.device"), Some(("Segments".to_string(), "device".to_string())));
+        assert_eq!(
+            gaql_to_proto("metrics.clicks"),
+            Some(("Metrics".to_string(), "clicks".to_string()))
+        );
+        assert_eq!(
+            gaql_to_proto("segments.device"),
+            Some(("Segments".to_string(), "device".to_string()))
+        );
 
         // Test invalid inputs
         assert_eq!(gaql_to_proto("campaign"), None); // No dot
@@ -426,7 +456,10 @@ mod tests {
         assert_eq!(snake_to_pascal_case("campaign"), "Campaign");
         assert_eq!(snake_to_pascal_case("ad_group"), "AdGroup");
         assert_eq!(snake_to_pascal_case("campaign_budget"), "CampaignBudget");
-        assert_eq!(snake_to_pascal_case("ad_group_criterion"), "AdGroupCriterion");
+        assert_eq!(
+            snake_to_pascal_case("ad_group_criterion"),
+            "AdGroupCriterion"
+        );
         assert_eq!(snake_to_pascal_case(""), "");
     }
 }

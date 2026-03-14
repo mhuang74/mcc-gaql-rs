@@ -19,14 +19,12 @@ struct R2Config {
 impl R2Config {
     /// Load R2 configuration from environment variables
     fn from_env() -> Result<Self> {
-        let account_id = std::env::var("R2_ACCOUNT_ID")
-            .context("R2_ACCOUNT_ID must be set")?;
-        let bucket = std::env::var("R2_BUCKET")
-            .unwrap_or_else(|_| "mcc-gaql".to_string());
-        let access_key = std::env::var("R2_ACCESS_KEY")
-            .context("R2_ACCESS_KEY must be set for upload")?;
-        let secret_key = std::env::var("R2_SECRET_KEY")
-            .context("R2_SECRET_KEY must be set for upload")?;
+        let account_id = std::env::var("R2_ACCOUNT_ID").context("R2_ACCOUNT_ID must be set")?;
+        let bucket = std::env::var("R2_BUCKET").unwrap_or_else(|_| "mcc-gaql".to_string());
+        let access_key =
+            std::env::var("R2_ACCESS_KEY").context("R2_ACCESS_KEY must be set for upload")?;
+        let secret_key =
+            std::env::var("R2_SECRET_KEY").context("R2_SECRET_KEY must be set for upload")?;
 
         Ok(Self {
             account_id,
@@ -38,10 +36,7 @@ impl R2Config {
 
     /// Returns the S3 endpoint URL for this R2 bucket
     fn endpoint(&self) -> String {
-        format!(
-            "https://{}.r2.cloudflarestorage.com",
-            self.account_id
-        )
+        format!("https://{}.r2.cloudflarestorage.com", self.account_id)
     }
 }
 
@@ -66,11 +61,7 @@ pub async fn download(public_base_url: &str, object_key: &str, dest_path: &Path)
         .with_context(|| format!("GET {} failed", url))?;
 
     if !response.status().is_success() {
-        anyhow::bail!(
-            "Download failed: HTTP {} for {}",
-            response.status(),
-            url
-        );
+        anyhow::bail!("Download failed: HTTP {} for {}", response.status(), url);
     }
 
     let bytes = response
@@ -89,11 +80,7 @@ pub async fn download(public_base_url: &str, object_key: &str, dest_path: &Path)
         .await
         .with_context(|| format!("Failed to write to {:?}", dest_path))?;
 
-    log::info!(
-        "Downloaded {} bytes to {:?}",
-        bytes.len(),
-        dest_path
-    );
+    log::info!("Downloaded {} bytes to {:?}", bytes.len(), dest_path);
     Ok(())
 }
 
@@ -113,14 +100,14 @@ pub async fn upload(object_key: &str, source_path: &Path) -> Result<()> {
         "application/octet-stream"
     };
 
-    let url = format!(
-        "{}/{}/{}",
-        config.endpoint(),
-        config.bucket,
-        object_key
-    );
+    let url = format!("{}/{}/{}", config.endpoint(), config.bucket, object_key);
 
-    log::info!("Uploading {:?} ({} bytes) to {}", source_path, contents.len(), url);
+    log::info!(
+        "Uploading {:?} ({} bytes) to {}",
+        source_path,
+        contents.len(),
+        url
+    );
 
     // Build AWS Signature Version 4 signed request
     let signed_request = sign_s3_request(
@@ -208,11 +195,7 @@ fn sign_s3_request(
     // Canonical request
     let canonical_request = format!(
         "{}\n{}\n\n{}\n{}\n{}",
-        method,
-        canonical_uri,
-        canonical_headers,
-        signed_headers,
-        payload_hash
+        method, canonical_uri, canonical_headers, signed_headers, payload_hash
     );
 
     // String to sign
@@ -237,8 +220,7 @@ fn sign_s3_request(
     let k_service = sign_key(&k_region, "s3");
     let k_signing = sign_key(&k_service, "aws4_request");
 
-    let mut mac =
-        HmacSha256::new_from_slice(&k_signing).expect("HMAC can take key of any size");
+    let mut mac = HmacSha256::new_from_slice(&k_signing).expect("HMAC can take key of any size");
     mac.update(string_to_sign.as_bytes());
     let signature = hex::encode(mac.finalize().into_bytes());
 
@@ -259,7 +241,9 @@ fn sign_s3_request(
         host.parse().context("Invalid host header")?,
     );
     headers.insert(
-        "x-amz-content-sha256".parse::<reqwest::header::HeaderName>().unwrap(),
+        "x-amz-content-sha256"
+            .parse::<reqwest::header::HeaderName>()
+            .unwrap(),
         payload_hash.parse().context("Invalid payload hash")?,
     );
     headers.insert(
@@ -268,7 +252,9 @@ fn sign_s3_request(
     );
     headers.insert(
         reqwest::header::AUTHORIZATION,
-        authorization.parse().context("Invalid authorization header")?,
+        authorization
+            .parse()
+            .context("Invalid authorization header")?,
     );
 
     Ok(SignedRequest { headers })

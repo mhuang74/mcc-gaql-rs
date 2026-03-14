@@ -1,13 +1,15 @@
-
+use arrow_array::{
+    ArrayRef, BooleanArray, FixedSizeListArray, Float64Array, RecordBatch, RecordBatchIterator,
+    StringArray,
+};
+use arrow_schema::{DataType, Field, Schema};
+use lancedb::DistanceType;
 use mcc_gaql_common::field_metadata::{FieldMetadata, FieldMetadataCache};
 use mcc_gaql_gen::rag::{FieldDocument, FieldDocumentFlat};
 use rig::embeddings::EmbeddingsBuilder;
 use rig::vector_store::{VectorSearchRequest, VectorStoreIndex};
 use rig_fastembed::{Client as FastembedClient, FastembedModel};
 use rig_lancedb::{LanceDbVectorIndex, SearchParams};
-use lancedb::DistanceType;
-use arrow_array::{ArrayRef, BooleanArray, FixedSizeListArray, Float64Array, RecordBatch, RecordBatchIterator, StringArray};
-use arrow_schema::{DataType, Field, Schema};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, OnceLock};
 
@@ -300,12 +302,21 @@ async fn get_test_field_vector_store()
     // Convert documents to Arrow arrays
     let ids: StringArray =
         StringArray::from_iter_values(docs_with_embeddings.iter().map(|(d, _)| d.id.as_str()));
-    let descriptions: StringArray =
-        StringArray::from_iter_values(docs_with_embeddings.iter().map(|(d, _)| d.description.as_str()));
-    let categories: StringArray =
-        StringArray::from_iter_values(docs_with_embeddings.iter().map(|(d, _)| d.field.category.as_str()));
-    let data_types: StringArray =
-        StringArray::from_iter_values(docs_with_embeddings.iter().map(|(d, _)| d.field.data_type.as_str()));
+    let descriptions: StringArray = StringArray::from_iter_values(
+        docs_with_embeddings
+            .iter()
+            .map(|(d, _)| d.description.as_str()),
+    );
+    let categories: StringArray = StringArray::from_iter_values(
+        docs_with_embeddings
+            .iter()
+            .map(|(d, _)| d.field.category.as_str()),
+    );
+    let data_types: StringArray = StringArray::from_iter_values(
+        docs_with_embeddings
+            .iter()
+            .map(|(d, _)| d.field.data_type.as_str()),
+    );
     let selectable: BooleanArray = docs_with_embeddings
         .iter()
         .map(|(d, _)| Some(d.field.selectable))

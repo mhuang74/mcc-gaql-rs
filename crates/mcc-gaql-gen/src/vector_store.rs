@@ -8,8 +8,8 @@ use rig::embeddings::Embedding;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use mcc_gaql_common::config::QueryEntry;
 use crate::rag::FieldDocument;
+use mcc_gaql_common::config::QueryEntry;
 
 /// Embedding dimension for BGESmallENV15 model
 pub const EMBEDDING_DIM: i32 = 384;
@@ -82,10 +82,7 @@ pub async fn clear_lancedb_tables_only() -> Result<()> {
 
     if cache_dir.exists() {
         std::fs::remove_dir_all(&cache_dir)?;
-        println!(
-            "Removed LanceDB cache directory: {}",
-            cache_dir.display()
-        );
+        println!("Removed LanceDB cache directory: {}", cache_dir.display());
     }
 
     Ok(())
@@ -474,8 +471,8 @@ pub async fn build_or_load_field_vector_store(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mcc_gaql_common::field_metadata::FieldMetadata;
     use crate::rag::FieldDocument;
+    use mcc_gaql_common::field_metadata::FieldMetadata;
 
     #[test]
     fn test_query_cookbook_schema() {

@@ -223,4 +223,3 @@ fn build_resource_metadata_from_fields(
 
     resource_metadata
 }
-

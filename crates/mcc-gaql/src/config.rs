@@ -5,7 +5,9 @@ use figment::{
 use serde::{Deserialize, Serialize};
 use std::fs;
 
-use mcc_gaql_common::config::{MyConfig, TOML_CONFIG_FILENAME, ENV_VAR_PREFIX, validate_and_normalize_customer_id};
+use mcc_gaql_common::config::{
+    ENV_VAR_PREFIX, MyConfig, TOML_CONFIG_FILENAME, validate_and_normalize_customer_id,
+};
 use mcc_gaql_common::paths::config_file_path;
 
 const CRATE_NAME: &str = "mcc-gaql";
@@ -479,8 +481,14 @@ mod tests {
         assert_eq!(config.customer_id, deserialized.customer_id);
         assert_eq!(config.format, deserialized.format);
         assert_eq!(config.keep_going, deserialized.keep_going);
-        assert_eq!(config.token_cache_filename, deserialized.token_cache_filename);
-        assert_eq!(config.customerids_filename, deserialized.customerids_filename);
+        assert_eq!(
+            config.token_cache_filename,
+            deserialized.token_cache_filename
+        );
+        assert_eq!(
+            config.customerids_filename,
+            deserialized.customerids_filename
+        );
         assert_eq!(config.queries_filename, deserialized.queries_filename);
     }
 
@@ -510,9 +518,15 @@ mod tests {
         assert_eq!(config.customer_id, deserialized.customer_id);
         assert_eq!(config.format, deserialized.format);
         assert_eq!(config.keep_going, deserialized.keep_going);
-        assert_eq!(config.token_cache_filename, deserialized.token_cache_filename);
+        assert_eq!(
+            config.token_cache_filename,
+            deserialized.token_cache_filename
+        );
         assert_eq!(config.queries_filename, deserialized.queries_filename);
-        assert_eq!(config.customerids_filename, deserialized.customerids_filename);
+        assert_eq!(
+            config.customerids_filename,
+            deserialized.customerids_filename
+        );
     }
 
     #[test]
