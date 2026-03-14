@@ -39,3 +39,20 @@ cargo clippy --workspace
 ## Workspace
 
 3 crates: `mcc-gaql` (~15 MB, query tool), `mcc-gaql-gen` (~400 MB, LLM/RAG), `mcc-gaql-common` (shared)
+
+## File Locations
+
+Used by `mcc-gaql-common/src/paths.rs`:
+
+| File/Directory | macOS Path | Linux Path |
+|----------------|------------|------------|
+| Config dir | `~/Library/Application Support/mcc-gaql/` | `~/.config/mcc-gaql/` |
+| Cache dir | `~/Library/Caches/mcc-gaql/` | `~/.cache/mcc-gaql/` |
+| Config file | `~/Library/Application Support/mcc-gaql/config.toml` | `~/.config/mcc-gaql/config.toml` |
+| Token cache | `~/Library/Application Support/mcc-gaql/tokencache_*.json` | `~/.config/mcc-gaql/tokencache_*.json` |
+| Field metadata | `~/Library/Caches/mcc-gaql/field_metadata.json` | `~/.cache/mcc-gaql/field_metadata.json` |
+| Enriched metadata | `~/Library/Caches/mcc-gaql/field_metadata_enriched.json` | `~/.cache/mcc-gaql/field_metadata_enriched.json` |
+| Proto docs | `~/Library/Caches/mcc-gaql/proto_docs_v23.json` | `~/.cache/mcc-gaql/proto_docs_v23.json` |
+| Scraped docs | `~/Library/Caches/mcc-gaql/scraped_docs.json` | `~/.cache/mcc-gaql/scraped_docs.json` |
+| LanceDB | `~/Library/Caches/mcc-gaql/lancedb/` | `~/.cache/mcc-gaql/lancedb/` |
+| FastEmbed models | `~/Library/Caches/mcc-gaql/fastembed-models/` | `~/.cache/mcc-gaql/fastembed-models/` |

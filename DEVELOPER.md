@@ -233,9 +233,11 @@ Configuration and data files are stored in:
 
 | File/Directory | Location |
 |----------------|----------|
-| Config file | `~/.config/mcc-gaql/config.toml` (Linux/macOS)<br>`%APPDATA%\mcc-gaql\config.toml` (Windows) |
-| Proto docs cache | `~/.cache/mcc-gaql/proto_docs_v23.json` |
-| Field metadata cache | `~/.config/mcc-gaql/field_metadata.json` |
-| LanceDB vector store | `~/.cache/mcc-gaql/lancedb/` |
-| Scraped docs cache | `~/.config/mcc-gaql/scraped_docs.json` |
+| Config file | `~/Library/Application Support/mcc-gaql/config.toml` (macOS)<br>`~/.config/mcc-gaql/config.toml` (Linux)<br>`%APPDATA%\mcc-gaql\config.toml` (Windows) |
+| Proto docs cache | `~/Library/Caches/mcc-gaql/proto_docs_v23.json` (macOS)<br>`~/.cache/mcc-gaql/proto_docs_v23.json` (Linux) |
+| Field metadata cache | `~/Library/Caches/mcc-gaql/field_metadata.json` (macOS)<br>`~/.cache/mcc-gaql/field_metadata.json` (Linux) |
+| Enriched metadata | `~/Library/Caches/mcc-gaql/field_metadata_enriched.json` (macOS)<br>`~/.cache/mcc-gaql/field_metadata_enriched.json` (Linux) |
+| LanceDB vector store | `~/Library/Caches/mcc-gaql/lancedb/` (macOS)<br>`~/.cache/mcc-gaql/lancedb/` (Linux) |
+| Scraped docs cache | `~/Library/Caches/mcc-gaql/scraped_docs.json` (macOS)<br>`~/.cache/mcc-gaql/scraped_docs.json` (Linux) |
 | Token cache | Same directory as config, named by user email hash |
+| FastEmbed models | `~/Library/Caches/mcc-gaql/fastembed-models/` (macOS)<br>`~/.cache/mcc-gaql/fastembed-models/` (Linux) |
