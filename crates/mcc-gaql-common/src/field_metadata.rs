@@ -503,6 +503,51 @@ impl FieldMetadataCache {
             .unwrap_or_default()
     }
 
+    /// Validate that all resources have properly populated selectable_with
+    /// Returns error with list of resources that have empty selectable_with
+    pub fn validate_selectable_with(&self) -> Result<(), Vec<String>> {
+        let mut empty_resources: Vec<String> = Vec::new();
+
+        // Only validate resources that need selectable_with for metrics compatibility
+        // Skip resources that:
+        // - Have no ATTRIBUTE fields (constants/namespaces like metrics, segments)
+        // - Have no METRIC fields at all (dimension-only metadata resources like life_event)
+        for resource_name in self.get_resources() {
+            // Get all fields for this resource
+            let resource_fields = self.get_resource_fields(&resource_name);
+
+            // Skip if this resource has no ATTRIBUTE fields - it's a constant
+            // or namespace, not a queryable resource
+            let has_attributes = resource_fields.iter().any(|f| f.is_attribute());
+            if !has_attributes {
+                continue;
+            }
+
+            // Skip if this resource has no METRIC fields at all
+            // These are dimension-only resources that don't support metrics
+            let has_metrics = resource_fields.iter().any(|f| f.is_metric());
+            if !has_metrics {
+                continue;
+            }
+
+            let selectable_with = self.get_resource_selectable_with(&resource_name);
+            if selectable_with.is_empty() {
+                empty_resources.push(resource_name);
+            }
+        }
+
+        if empty_resources.is_empty() {
+            Ok(())
+        } else {
+            Err(empty_resources)
+        }
+    }
+
+    /// Check if a specific resource has populated selectable_with
+    pub fn has_selectable_with(&self, resource: &str) -> bool {
+        !self.get_resource_selectable_with(resource).is_empty()
+    }
+
     /// Validate field selection against a FROM resource's compatibility list
     pub fn validate_field_selection_for_resource(
         &self,

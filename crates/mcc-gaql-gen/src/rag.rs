@@ -23,6 +23,7 @@ use serde::{Deserialize, Serialize};
 
 use mcc_gaql_common::config::QueryEntry;
 use mcc_gaql_common::field_metadata::{FieldMetadata, FieldMetadataCache};
+use mcc_gaql_common::paths;
 
 use crate::vector_store as lancedb_utils;
 
@@ -1349,6 +1350,20 @@ Choose from: "#
 
         // Get selectable_with for compatibility check
         let selectable_with = self.field_cache.get_resource_selectable_with(primary);
+
+        // Fail fast if selectable_with is empty - indicates metadata corruption
+        if selectable_with.is_empty() {
+            let cache_path = paths::field_metadata_cache_path()
+                .map(|p| format!("{:?}", p))
+                .unwrap_or_else(|_| "cache directory".to_string());
+            return Err(anyhow::anyhow!(
+                "Resource '{}' has empty selectable_with. \
+                 This indicates the field metadata cache was not properly populated. \
+                 Please regenerate the cache by deleting {} and re-running.",
+                primary,
+                cache_path
+            ));
+        }
 
         // =========================================================================
         // Tier 1: Key fields from ResourceMetadata (curated high-value fields)
