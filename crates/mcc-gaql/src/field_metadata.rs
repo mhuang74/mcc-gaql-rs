@@ -164,13 +164,31 @@ pub async fn fetch_from_api(api_context: &GoogleAdsAPIAccess) -> Result<FieldMet
     // Build resource metadata from fetched fields
     let resource_metadata = build_resource_metadata_from_fields(&fields, &resources);
 
-    Ok(FieldMetadataCache {
+    let cache = FieldMetadataCache {
         last_updated: Utc::now(),
         api_version: "v23".to_string(),
         fields,
         resources: Some(resources),
         resource_metadata: Some(resource_metadata),
-    })
+    };
+
+    // Validate that selectable_with is populated for all resources
+    if let Err(empty_resources) = cache.validate_selectable_with() {
+        log::error!(
+            "CRITICAL: {} resources have empty selectable_with: {:?}",
+            empty_resources.len(),
+            empty_resources
+        );
+        return Err(anyhow::anyhow!(
+            "Field metadata cache has {} resources with empty selectable_with. \
+             This will break field compatibility validation. \
+             Resources affected: {:?}",
+            empty_resources.len(),
+            empty_resources
+        ));
+    }
+
+    Ok(cache)
 }
 
 /// Build ResourceMetadata entries from the fetched fields
@@ -193,20 +211,58 @@ fn build_resource_metadata_from_fields(
             .collect();
         key_attributes.sort();
 
-        // Collect key metrics (selectable)
-        let mut key_metrics: Vec<String> = resource_fields
-            .iter()
-            .filter(|f| f.is_metric() && f.selectable)
-            .take(10)
-            .map(|f| f.name.clone())
-            .collect();
-        key_metrics.sort();
-
         // Get selectable_with from the RESOURCE-category field if present
         let selectable_with = fields
             .get(resource_name.as_str())
             .map(|f| f.selectable_with.clone())
             .unwrap_or_default();
+
+        // Collect key metrics (selectable)
+        // For views and other resources without own metrics, use metrics from selectable_with
+        let own_metrics: Vec<String> = resource_fields
+            .iter()
+            .filter(|f| f.is_metric() && f.selectable)
+            .map(|f| f.name.clone())
+            .collect();
+
+        let mut key_metrics = if own_metrics.is_empty() && !selectable_with.is_empty() {
+            // For views with no own metrics, use metrics from selectable_with
+            // Prioritize common metrics
+            let priority_metrics = [
+                "metrics.clicks",
+                "metrics.impressions",
+                "metrics.cost_micros",
+                "metrics.conversions",
+                "metrics.conversion_value",
+                "metrics.all_conversions",
+                "metrics.average_cpc",
+                "metrics.ctr",
+                "metrics.roas",
+                "metrics.cost_per_conversion",
+            ];
+
+            let mut prioritized: Vec<String> = priority_metrics
+                .iter()
+                .filter(|m| selectable_with.contains(&m.to_string()))
+                .map(|s| s.to_string())
+                .collect();
+
+            // Add any remaining selectable metrics alphabetically
+            let mut remaining: Vec<String> = selectable_with
+                .iter()
+                .filter(|f| f.starts_with("metrics.") && !prioritized.contains(f))
+                .cloned()
+                .collect();
+            remaining.sort();
+
+            // Combine and limit
+            prioritized.extend(remaining);
+            prioritized.into_iter().take(10).collect()
+        } else {
+            own_metrics
+        };
+
+        key_metrics.sort();
 
         resource_metadata.insert(
             resource_name.clone(),
