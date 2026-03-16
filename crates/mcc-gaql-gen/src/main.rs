@@ -125,7 +125,7 @@ enum Commands {
 
         /// Print explanation of the LLM selection process to stdout
         #[arg(long)]
-        explain_selection_process: bool,
+        explain: bool,
     },
 
     /// Upload enriched metadata to Cloudflare R2
@@ -227,7 +227,7 @@ async fn main() -> Result<()> {
             metadata,
             no_defaults,
             use_query_cookbook,
-            explain_selection_process,
+            explain,
         } => {
             cmd_generate(
                 prompt,
@@ -235,7 +235,7 @@ async fn main() -> Result<()> {
                 metadata,
                 no_defaults,
                 use_query_cookbook,
-                explain_selection_process,
+                explain,
                 cli.verbose,
             )
             .await?;
@@ -527,7 +527,7 @@ async fn cmd_generate(
     metadata: Option<PathBuf>,
     no_defaults: bool,
     use_query_cookbook: bool,
-    explain_selection_process: bool,
+    explain: bool,
     verbose: bool,
 ) -> Result<()> {
     validate_llm_env()?;
@@ -606,7 +606,7 @@ async fn cmd_generate(
     let pipeline_config = rag::PipelineConfig {
         add_defaults: !no_defaults,
         use_query_cookbook,
-        explain_selection_process,
+        explain,
     };
 
     // Generate GAQL using MultiStepRAGAgent
@@ -622,7 +622,7 @@ async fn cmd_generate(
     println!("{}", result.query);
 
     // Print explanation if flag is set
-    if explain_selection_process {
+    if explain {
         rag::print_selection_explanation(&result.pipeline_trace, &prompt);
     }
 
@@ -676,9 +676,6 @@ async fn cmd_generate(
             "Phase 4 - WHERE clauses: {:?}",
             result.pipeline_trace.phase4_where_clauses
         );
-        if let Some(during) = &result.pipeline_trace.phase4_during {
-            log::debug!("Phase 4 - DURING: {}", during);
-        }
         if let Some(limit) = result.pipeline_trace.phase4_limit {
             log::debug!("Phase 4 - LIMIT: {}", limit);
         }
