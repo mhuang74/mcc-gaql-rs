@@ -747,6 +747,101 @@ fn strip_markdown_code_blocks(text: &str) -> String {
     trimmed.to_string()
 }
 
+/// Create a sample of 5 resources to show in the explanation.
+/// Prioritizes keyword matches from the user query, then fills randomly.
+fn create_resource_sample(
+    user_query: &str,
+    resources: &[(String, String)], // (resource_name, description)
+) -> Vec<(String, String)> {
+    // Stop words to filter out
+    const STOP_WORDS: &[&str] = &[
+        "the", "from", "in", "and", "to", "of", "a", "an", "is", "are", "or", "with",
+        "on", "at", "by", "for", "that", "this", "these", "those", "it", "they",
+    ];
+
+    // Extract keywords from user query
+    let query_lower = user_query.to_lowercase();
+    let keywords: Vec<&str> = query_lower
+        .split_whitespace()
+        .filter(|word| word.len() > 2 && !STOP_WORDS.contains(word))
+        .collect();
+
+    // Find resources that match any keyword
+    let mut matched: Vec<(String, String)> = Vec::new();
+    let mut unmatched: Vec<(String, String)> = Vec::new();
+
+    for (name, desc) in resources {
+        let name_lower = name.to_lowercase();
+
+        // Clean up description - remove common prefixes and normalize whitespace
+        let clean_desc = desc
+            .trim()
+            .trim_start_matches("**Resource Description:**")
+            .trim_start_matches("**Description:**")
+            .trim()
+            .to_string();
+
+        let desc_lower = clean_desc.to_lowercase();
+
+        let is_match = keywords.iter().any(|kw| {
+            name_lower.contains(kw) || desc_lower.contains(kw)
+        });
+
+        let entry = (name.clone(), clean_desc);
+        if is_match {
+            matched.push(entry);
+        } else {
+            unmatched.push(entry);
+        }
+    }
+
+    // Take up to 5 matched resources, then fill from unmatched
+    let mut sample = Vec::new();
+    let rng_seed: u64 = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos() as u64;
+
+    // Use keyword-matched resources first (up to 5)
+    for resource in matched.into_iter().take(5) {
+        sample.push(resource);
+    }
+
+    // Fill remaining slots with randomly selected unmatched resources
+    let needed = 5usize.saturating_sub(sample.len());
+    if needed > 0 && !unmatched.is_empty() {
+        // Simple deterministic pseudo-random using hash
+        let mut remaining: Vec<(String, String)> = unmatched;
+        let mut shuffled = Vec::new();
+
+        while !remaining.is_empty() && shuffled.len() < 5 {
+            let hash_val = {
+                let mut hasher = XxHash64::with_seed(rng_seed);
+                remaining[0].0.hash(&mut hasher);
+                hasher.finish()
+            };
+            let index = (hash_val as usize) % remaining.len();
+            shuffled.push(remaining.remove(index));
+        }
+
+        sample.extend(shuffled.into_iter().take(needed));
+    }
+
+    // Shuffle the final sample to mix matched and random entries
+    let mut final_sample = Vec::new();
+    while !sample.is_empty() {
+        let hash_val = {
+            let mut hasher = XxHash64::with_seed(rng_seed);
+            sample[0].0.hash(&mut hasher);
+            hasher.finish()
+        };
+        let index = (hash_val as usize) % sample.len();
+        final_sample.push(sample.remove(index));
+    }
+
+    final_sample
+}
+
 /// Newtype wrapper around QueryEntry that implements Embed.
 /// Required because QueryEntry is defined in mcc-gaql-common (orphan rule).
 #[derive(Clone, Deserialize)]
@@ -925,7 +1020,7 @@ pub struct PipelineConfig {
     /// Whether to use RAG search for query cookbook examples in LLM prompts
     pub use_query_cookbook: bool,
     /// Whether to print explanation of the LLM selection process
-    pub explain_selection_process: bool,
+    pub explain: bool,
 }
 
 impl Default for PipelineConfig {
@@ -933,7 +1028,7 @@ impl Default for PipelineConfig {
         Self {
             add_defaults: true,
             use_query_cookbook: false,
-            explain_selection_process: false,
+            explain: false,
         }
     }
 }
@@ -999,7 +1094,7 @@ impl MultiStepRAGAgent {
         // Phase 1: Resource selection
         let phase1_start = std::time::Instant::now();
         log::info!("Phase 1: Resource selection...");
-        let (primary_resource, related_resources, dropped_resources, reasoning) =
+        let (primary_resource, related_resources, dropped_resources, reasoning, resource_sample) =
             self.select_resource(user_query).await?;
         let phase1_time_ms = phase1_start.elapsed().as_millis() as u64;
         log::info!(
@@ -1042,9 +1137,9 @@ impl MultiStepRAGAgent {
             phase3_time_ms
         );
 
-        // Phase 4: Assemble WHERE, ORDER BY, LIMIT, DURING
+        // Phase 4: Assemble WHERE, ORDER BY, LIMIT
         let phase4_start = std::time::Instant::now();
-        let (where_clauses, during, limit, implicit_filters) =
+        let (where_clauses, limit, implicit_filters) =
             self.assemble_criteria(user_query, &field_selection, &primary_resource);
         log::debug!(
             "Phase 4: Criteria assembly ({}ms)",
@@ -1058,7 +1153,6 @@ impl MultiStepRAGAgent {
                 &primary_resource,
                 &field_selection,
                 &where_clauses,
-                during.as_deref(),
                 limit,
             )
             .await?;
@@ -1086,6 +1180,7 @@ impl MultiStepRAGAgent {
             phase1_reasoning: reasoning,
             phase1_model_used: phase1_model,
             phase1_timing_ms: phase1_time_ms,
+            phase1_resource_sample: resource_sample,
             phase2_candidate_count: candidate_count,
             phase2_rejected_count: rejected_count,
             phase2_timing_ms: phase2_time_ms,
@@ -1097,7 +1192,6 @@ impl MultiStepRAGAgent {
             phase3_model_used: phase3_model,
             phase3_timing_ms: phase3_time_ms,
             phase4_where_clauses: where_clauses,
-            phase4_during: during,
             phase4_limit: limit,
             phase4_implicit_filters: implicit_filters,
             generation_time_ms,
@@ -1128,11 +1222,11 @@ impl MultiStepRAGAgent {
     async fn select_resource(
         &self,
         user_query: &str,
-    ) -> Result<(String, Vec<String>, Vec<String>, String), anyhow::Error> {
+    ) -> Result<(String, Vec<String>, Vec<String>, String, Vec<(String, String)>), anyhow::Error> {
         let resources = self.field_cache.get_resources();
 
-        // Build compact resource list for LLM
-        let resource_list: Vec<String> = resources
+        // Build resource information for sampling
+        let resource_info: Vec<(String, String)> = resources
             .iter()
             .map(|r| {
                 let rm = self
@@ -1141,7 +1235,24 @@ impl MultiStepRAGAgent {
                     .as_ref()
                     .and_then(|m| m.get(r));
                 let desc = rm.and_then(|m| m.description.as_deref()).unwrap_or("");
-                format!("- {}: {}", r, desc)
+                (r.clone(), desc.to_string())
+            })
+            .collect();
+
+        // Generate sample of 5 resources (prioritizing keyword matches)
+        let resource_sample = create_resource_sample(user_query, &resource_info);
+
+        // Build compact resource list for LLM
+        let resource_list: Vec<String> = resources
+            .iter()
+            .map(|r| {
+                format!("- {}: {}", r,
+                    self.field_cache
+                        .resource_metadata
+                        .as_ref()
+                        .and_then(|m| m.get(r))
+                        .and_then(|m| m.description.as_deref())
+                        .unwrap_or(""))
             })
             .collect();
 
@@ -1220,7 +1331,7 @@ Choose from: "#
             })
             .collect();
 
-        Ok((primary, validated_related, dropped, reasoning))
+        Ok((primary, validated_related, dropped, reasoning, resource_sample))
     }
 
     // =========================================================================
@@ -1265,6 +1376,35 @@ Choose from: "#
                 {
                     candidates.push(field.clone());
                 }
+            }
+
+            // Fallback: If key_metrics is empty (common for views), use metrics from selectable_with
+            if rm.key_metrics.is_empty() {
+                log::debug!(
+                    "Phase 2: key_metrics empty, falling back to metrics from selectable_with"
+                );
+                let metric_count = selectable_with
+                    .iter()
+                    .filter(|f| f.starts_with("metrics."))
+                    .take(15)
+                    .filter_map(|m| self.field_cache.fields.get(m))
+                    .filter(|f| seen.insert(f.name.clone()))
+                    .map(|f| candidates.push(f.clone()))
+                    .count();
+                log::debug!("Phase 2: Added {} metrics from selectable_with", metric_count);
+            }
+
+            // Fallback: If no segments in key_attributes, add segments from selectable_with
+            let has_segments = candidates.iter().any(|f| f.is_segment());
+            if !has_segments {
+                let _segment_count = selectable_with
+                    .iter()
+                    .filter(|f| f.starts_with("segments."))
+                    .take(10)
+                    .filter_map(|s| self.field_cache.fields.get(s))
+                    .filter(|f| seen.insert(f.name.clone()))
+                    .map(|f| candidates.push(f.clone()))
+                    .count();
             }
         }
 
@@ -1526,9 +1666,9 @@ Choose from: "#
 
         // Get today's date for temporal calculations
         let today = chrono::Local::now().date_naive();
-        let yesterday = today - chrono::Duration::days(1);
-        let last_7_start = today - chrono::Duration::days(7);
-        let last_30_start = today - chrono::Duration::days(30);
+        let _yesterday = today - chrono::Duration::days(1);
+        let _last_7_start = today - chrono::Duration::days(7);
+        let _last_30_start = today - chrono::Duration::days(30);
         let last_60_start = today - chrono::Duration::days(60);
         let last_90_start = today - chrono::Duration::days(90);
         let _last_365_start = today - chrono::Duration::days(365);
@@ -1536,7 +1676,7 @@ Choose from: "#
         // Calculate this/previous period start dates
         let this_month_start = today.with_day(1).unwrap_or(today);
         let prev_month_end = this_month_start - chrono::Duration::days(1);
-        let prev_month_start = prev_month_end.with_day(1).unwrap_or(prev_month_end);
+        let _prev_month_start = prev_month_end.with_day(1).unwrap_or(prev_month_end);
 
         // Quarter calculations (months 1,4,7,10 are quarter starts)
         let month = today.month();
@@ -1556,8 +1696,53 @@ Choose from: "#
         // Week calculations (Monday start)
         let weekday = today.weekday().num_days_from_monday();
         let this_week_start = today - chrono::Duration::days(weekday as i64);
-        let prev_week_end = this_week_start - chrono::Duration::days(1);
-        let prev_week_start = prev_week_end - chrono::Duration::days(6);
+        let _prev_week_end = this_week_start - chrono::Duration::days(1);
+        let _prev_week_start = this_week_start - chrono::Duration::days(6);
+
+        // Season calculations (fixed dates)
+        let year = today.year();
+        let (this_summer_start, this_summer_end) = (
+            format!("{year}-06-01"),
+            format!("{year}-08-31")
+        );
+        let (last_summer_start, last_summer_end) = (
+            format!("{}-06-01", year - 1),
+            format!("{}-08-31", year - 1)
+        );
+        let (this_winter_start, this_winter_end) = (
+            format!("{year}-12-01"),
+            format!("{year}-02-28")
+        );
+        let (last_winter_start, last_winter_end) = (
+            format!("{}-12-01", year - 1),
+            format!("{year}-02-28")
+        );
+        let (this_spring_start, this_spring_end) = (
+            format!("{year}-03-01"),
+            format!("{year}-05-31")
+        );
+        let (last_spring_start, last_spring_end) = (
+            format!("{}-03-01", year - 1),
+            format!("{}-05-31", year - 1)
+        );
+        let (this_fall_start, this_fall_end) = (
+            format!("{year}-09-01"),
+            format!("{year}-11-30")
+        );
+        let (last_fall_start, last_fall_end) = (
+            format!("{}-09-01", year - 1),
+            format!("{}-11-30", year - 1)
+        );
+
+        // Christmas holiday period (Dec 20-31)
+        let this_christmas_start = format!("{year}-12-20");
+        let this_christmas_end = format!("{year}-12-31");
+        let _last_christmas_start = format!("{}-12-20", year - 1);
+        let _last_christmas_end = format!("{}-12-31", year - 1);
+
+        // Fixed-date holidays
+        let _valentines = format!("{year}-02-14");
+        let _halloween = format!("{year}-10-31");
 
         // Build prompt conditionally based on whether cookbook is enabled
         let (system_prompt, user_prompt) = if self.pipeline_config.use_query_cookbook {
@@ -1582,22 +1767,56 @@ Respond ONLY with valid JSON:
 - Add filter_fields for any WHERE clauses
 - Add order_by_fields for sorting (use DESC for "top", "best", "worst"; ASC for "first" if ascending)
 - Include segments.date if temporal period is specified
-- For date ranges, ALWAYS use BETWEEN with explicit ISO dates: segments.date BETWEEN 'YYYY-MM-DD' AND 'YYYY-MM-DD'
-- Examples using today's date ({today}):
-  - "last 90 days" / "past quarter" → BETWEEN '{last_90_start}' AND '{today}'
-  - "last 60 days" → BETWEEN '{last_60_start}' AND '{today}'
-  - "last 30 days" → BETWEEN '{last_30_start}' AND '{today}'
-  - "last 7 days" → BETWEEN '{last_7_start}' AND '{today}'
-  - "yesterday" → BETWEEN '{yesterday}' AND '{yesterday}'
-  - "this year" → BETWEEN '{this_year_start}' AND '{today}'
-  - "this quarter" → BETWEEN '{this_quarter_start}' AND '{today}'
-  - "this month" → BETWEEN '{this_month_start}' AND '{today}'
-  - "this week" → BETWEEN '{this_week_start}' AND '{today}'
-  - "previous year" / "last year" → BETWEEN '{prev_year_start}' AND '{prev_year_end}'
-  - "previous quarter" / "last quarter" → BETWEEN '{prev_quarter_start}' AND '{prev_quarter_end}'
-  - "previous month" / "last month" → BETWEEN '{prev_month_start}' AND '{prev_month_end}'
-  - "previous week" / "last week" → BETWEEN '{prev_week_start}' AND '{prev_week_end}'
-- DO NOT use relative date literals like LAST_7_DAYS, TODAY, YESTERDAY
+- For date ranges, use the APPROPRIATE method based on the period:
+
+  **Use DURING with date literals** (NO quotes around value) for these standard periods.
+  Valid Google Ads date literals: TODAY, YESTERDAY, LAST_7_DAYS, LAST_14_DAYS,
+  LAST_30_DAYS, LAST_BUSINESS_WEEK, LAST_WEEK_MON_SUN,
+  LAST_WEEK_SUN_SAT, THIS_WEEK_SUN_TODAY, THIS_WEEK_MON_TODAY, THIS_MONTH, LAST_MONTH
+
+  Common mappings:
+  - "yesterday" → operator: "DURING", value: "YESTERDAY"
+  - "today" → operator: "DURING", value: "TODAY"
+  - "last 7 days" → operator: "DURING", value: "LAST_7_DAYS"
+  - "last 14 days" → operator: "DURING", value: "LAST_14_DAYS"
+  - "last 30 days" → operator: "DURING", value: "LAST_30_DAYS"
+  - "this month" → operator: "DURING", value: "THIS_MONTH"
+  - "last month" → operator: "DURING", value: "LAST_MONTH"
+  - "last week" → operator: "DURING", value: "LAST_WEEK"
+  - "last business week" → operator: "DURING", value: "LAST_BUSINESS_WEEK"
+
+  **Use BETWEEN with computed dates** (value format: "YYYY-MM-DD AND YYYY-MM-DD") for:
+  - Quarters (NOT valid date literals): "this quarter", "last quarter"
+  - Years (NOT valid date literals): "this year", "last year"
+  - Holiday periods and seasonal ranges:
+    - "this summer" / "last summer" → Jun 1 to Aug 31
+    - "this winter" / "last winter" → Dec 1 to Feb 28/29
+    - "this spring" / "last spring" → Mar 1 to May 31
+    - "this fall" / "this autumn" / "last fall" → Sep 1 to Nov 30
+    - "christmas holiday" → Dec 20 to Dec 31
+    - "thanksgiving" / "thanksgiving week"
+    - "easter" / "easter week"
+    - "black friday", "cyber monday"
+    - "new years", "valentines day", "mothers day", "fathers day", "halloween"
+    - "last 60 days"
+    - "last 90 days"
+
+  Example computed date ranges (today: {today}):
+  - "this year" → operator: "BETWEEN", value: '{this_year_start} AND {today}'
+  - "last year" → operator: "BETWEEN", value: '{prev_year_start} AND {prev_year_end}'
+  - "this quarter" → operator: "BETWEEN", value: '{this_quarter_start} AND {today}'
+  - "last quarter" → operator: "BETWEEN", value: '{prev_quarter_start} AND {prev_quarter_end}'
+  - "this summer" → operator: "BETWEEN", value: '{this_summer_start} AND {this_summer_end}'
+  - "last summer" → operator: "BETWEEN", value: '{last_summer_start} AND {last_summer_end}'
+  - "this winter" → operator: "BETWEEN", value: '{this_winter_start} AND {this_winter_end}'
+  - "last winter" → operator: "BETWEEN", value: '{last_winter_start} AND {last_winter_end}'
+  - "this spring" → operator: "BETWEEN", value: '{this_spring_start} AND {this_spring_end}'
+  - "last spring" → operator: "BETWEEN", value: '{last_spring_start} AND {last_spring_end}'
+  - "this fall" / "this autumn" → operator: "BETWEEN", value: '{this_fall_start} AND {this_fall_end}'
+  - "last fall" → operator: "BETWEEN", value: '{last_fall_start} AND {last_fall_end}'
+  - "christmas holiday" → operator: "BETWEEN", value: '{this_christmas_start} AND {this_christmas_end}'
+  - "last 60 days" → operator: "BETWEEN", value: '{last_60_start} AND {today}'
+  - "last 90 days" → operator: "BETWEEN", value: '{last_90_start} AND {today}'
 "#);
             let user = format!(
                 "User query: {}\n\nCookbook examples:\n{}\n\nAvailable fields:{}",
@@ -1625,22 +1844,56 @@ Respond ONLY with valid JSON:
 - Add filter_fields for any WHERE clauses
 - Add order_by_fields for sorting (use DESC for "top", "best", "worst"; ASC for "first" if ascending)
 - Include segments.date if temporal period is specified
-- For date ranges, ALWAYS use BETWEEN with explicit ISO dates: segments.date BETWEEN 'YYYY-MM-DD' AND 'YYYY-MM-DD'
-- Examples using today's date ({today}):
-  - "last 90 days" / "past quarter" → BETWEEN '{last_90_start}' AND '{today}'
-  - "last 60 days" → BETWEEN '{last_60_start}' AND '{today}'
-  - "last 30 days" → BETWEEN '{last_30_start}' AND '{today}'
-  - "last 7 days" → BETWEEN '{last_7_start}' AND '{today}'
-  - "yesterday" → BETWEEN '{yesterday}' AND '{yesterday}'
-  - "this year" → BETWEEN '{this_year_start}' AND '{today}'
-  - "this quarter" → BETWEEN '{this_quarter_start}' AND '{today}'
-  - "this month" → BETWEEN '{this_month_start}' AND '{today}'
-  - "this week" → BETWEEN '{this_week_start}' AND '{today}'
-  - "previous year" / "last year" → BETWEEN '{prev_year_start}' AND '{prev_year_end}'
-  - "previous quarter" / "last quarter" → BETWEEN '{prev_quarter_start}' AND '{prev_quarter_end}'
-  - "previous month" / "last month" → BETWEEN '{prev_month_start}' AND '{prev_month_end}'
-  - "previous week" / "last week" → BETWEEN '{prev_week_start}' AND '{prev_week_end}'
-- DO NOT use relative date literals like LAST_7_DAYS, TODAY, YESTERDAY
+- For date ranges, use the APPROPRIATE method based on the period:
+
+  **Use DURING with date literals** (NO quotes around value) for these standard periods.
+  Valid Google Ads date literals: TODAY, YESTERDAY, LAST_7_DAYS, LAST_14_DAYS,
+  LAST_30_DAYS, LAST_BUSINESS_WEEK, LAST_WEEK_MON_SUN,
+  LAST_WEEK_SUN_SAT, THIS_WEEK_SUN_TODAY, THIS_WEEK_MON_TODAY, THIS_MONTH, LAST_MONTH
+
+  Common mappings:
+  - "yesterday" → operator: "DURING", value: "YESTERDAY"
+  - "today" → operator: "DURING", value: "TODAY"
+  - "last 7 days" → operator: "DURING", value: "LAST_7_DAYS"
+  - "last 14 days" → operator: "DURING", value: "LAST_14_DAYS"
+  - "last 30 days" → operator: "DURING", value: "LAST_30_DAYS"
+  - "this month" → operator: "DURING", value: "THIS_MONTH"
+  - "last month" → operator: "DURING", value: "LAST_MONTH"
+  - "last week" → operator: "DURING", value: "LAST_WEEK"
+  - "last business week" → operator: "DURING", value: "LAST_BUSINESS_WEEK"
+
+  **Use BETWEEN with computed dates** (value format: "YYYY-MM-DD AND YYYY-MM-DD") for:
+  - Quarters (NOT valid date literals): "this quarter", "last quarter"
+  - Years (NOT valid date literals): "this year", "last year"
+  - Holiday periods and seasonal ranges:
+    - "this summer" / "last summer" → Jun 1 to Aug 31
+    - "this winter" / "last winter" → Dec 1 to Feb 28/29
+    - "this spring" / "last spring" → Mar 1 to May 31
+    - "this fall" / "this autumn" / "last fall" → Sep 1 to Nov 30
+    - "christmas holiday" → Dec 20 to Dec 31
+    - "thanksgiving" / "thanksgiving week"
+    - "easter" / "easter week"
+    - "black friday", "cyber monday"
+    - "new years", "valentines day", "mothers day", "fathers day", "halloween"
+    - "last 60 days"
+    - "last 90 days"
+
+  Example computed date ranges (today: {today}):
+  - "this year" → operator: "BETWEEN", value: '{this_year_start} AND {today}'
+  - "last year" → operator: "BETWEEN", value: '{prev_year_start} AND {prev_year_end}'
+  - "this quarter" → operator: "BETWEEN", value: '{this_quarter_start} AND {today}'
+  - "last quarter" → operator: "BETWEEN", value: '{prev_quarter_start} AND {prev_quarter_end}'
+  - "this summer" → operator: "BETWEEN", value: '{this_summer_start} AND {this_summer_end}'
+  - "last summer" → operator: "BETWEEN", value: '{last_summer_start} AND {last_summer_end}'
+  - "this winter" → operator: "BETWEEN", value: '{this_winter_start} AND {this_winter_end}'
+  - "last winter" → operator: "BETWEEN", value: '{last_winter_start} AND {last_winter_end}'
+  - "this spring" → operator: "BETWEEN", value: '{this_spring_start} AND {this_spring_end}'
+  - "last spring" → operator: "BETWEEN", value: '{last_spring_start} AND {last_spring_end}'
+  - "this fall" / "this autumn" → operator: "BETWEEN", value: '{this_fall_start} AND {this_fall_end}'
+  - "last fall" → operator: "BETWEEN", value: '{last_fall_start} AND {last_fall_end}'
+  - "christmas holiday" → operator: "BETWEEN", value: '{this_christmas_start} AND {this_christmas_end}'
+  - "last 60 days" → operator: "BETWEEN", value: '{last_60_start} AND {today}'
+  - "last 90 days" → operator: "BETWEEN", value: '{last_90_start} AND {today}'
 "#);
             let user = format!(
                 "User query: {}\n\nAvailable fields:{}",
@@ -1809,7 +2062,7 @@ Respond ONLY with valid JSON:
         user_query: &str,
         field_selection: &FieldSelectionResult,
         primary: &str,
-    ) -> (Vec<String>, Option<String>, Option<u32>, Vec<String>) {
+    ) -> (Vec<String>, Option<u32>, Vec<String>) {
         let mut where_clauses = Vec::new();
         let mut implicit_filters = Vec::new();
 
@@ -1852,13 +2105,34 @@ Respond ONLY with valid JSON:
             let clause = match op.as_str() {
                 "IS NULL" | "IS NOT NULL" => format!("{} {}", ff.field_name, op),
                 "DURING" => format!("{} {} {}", ff.field_name, op, escaped_value), // No quotes for DURING
+                "BETWEEN" => {
+                    // BETWEEN value should be "start AND end" without the field name
+                    if let Some((start, end)) = escaped_value.split_once(" AND ") {
+                        let start_clean = start.trim();
+                        let end_clean = end.trim();
+                        // Validate that neither part contains the field name or nested BETWEEN
+                        if start_clean.contains("segments.date") || start_clean.contains("BETWEEN")
+                            || end_clean.contains("segments.date") || end_clean.contains("BETWEEN") {
+                            log::error!("Malformed BETWEEN value contains field name or nested BETWEEN: '{}'", escaped_value);
+                            // Attempt to extract just the dates
+                            let fixed = escaped_value.replace("segments.date", "").replace("BETWEEN", "").replace("'", "");
+                            if let Some((s, e)) = fixed.split_once(" AND ") {
+                                format!("{} BETWEEN '{}' AND '{}'", ff.field_name, s.trim(), e.trim())
+                            } else {
+                                format!("{} BETWEEN '{}' AND '{}'", ff.field_name, start_clean, end_clean)
+                            }
+                        } else {
+                            format!("{} BETWEEN '{}' AND '{}'", ff.field_name, start_clean, end_clean)
+                        }
+                    } else {
+                        log::error!("Invalid BETWEEN format for '{}': expected 'start AND end', got '{}'", ff.field_name, escaped_value);
+                        format!("{} BETWEEN '{}' AND '{}'", ff.field_name, escaped_value, escaped_value)
+                    }
+                }
                 _ => format!("{} {} '{}'", ff.field_name, op, escaped_value), // Quoted for other operators
             };
             where_clauses.push(clause);
         }
-
-        // Temporal detection
-        let during = self.detect_temporal_period(user_query);
 
         // Limit detection
         let limit = self.detect_limit(user_query);
@@ -1872,11 +2146,7 @@ Respond ONLY with valid JSON:
             }
         }
 
-        (where_clauses, during, limit, implicit_filters)
-    }
-
-    fn detect_temporal_period(&self, query: &str) -> Option<String> {
-        detect_temporal_period_impl(query)
+        (where_clauses, limit, implicit_filters)
     }
 
     fn detect_limit(&self, query: &str) -> Option<u32> {
@@ -1896,13 +2166,11 @@ Respond ONLY with valid JSON:
         primary: &str,
         field_selection: &FieldSelectionResult,
         where_clauses: &[String],
-        during: Option<&str>,
         limit: Option<u32>,
     ) -> Result<String, anyhow::Error> {
         let query = GaqlBuilder::new(primary)
             .select(field_selection.select_fields.clone())
             .where_clauses(where_clauses.to_vec())
-            .during(during.map(|s| s.to_string()))
             .order_by(field_selection.order_by_fields.clone())
             .limit(limit)
             .build();
@@ -1917,7 +2185,6 @@ pub struct GaqlBuilder {
     from_resource: String,
     where_clauses: Vec<String>,
     order_by_fields: Vec<(String, String)>,
-    during: Option<String>,
     limit: Option<u32>,
 }
 
@@ -1928,7 +2195,6 @@ impl GaqlBuilder {
             from_resource: from_resource.to_string(),
             where_clauses: Vec::new(),
             order_by_fields: Vec::new(),
-            during: None,
             limit: None,
         }
     }
@@ -1953,11 +2219,6 @@ impl GaqlBuilder {
         self
     }
 
-    pub fn during(mut self, period: Option<String>) -> Self {
-        self.during = period;
-        self
-    }
-
     pub fn order_by(mut self, fields: Vec<(String, String)>) -> Self {
         self.order_by_fields = fields;
         self
@@ -1969,21 +2230,15 @@ impl GaqlBuilder {
     }
 
     pub fn build(self) -> String {
-        // Add segments.date to select if during is set
-        let mut select_fields = self.select_fields;
-        if self.during.is_some() && !select_fields.iter().any(|f| f == "segments.date") {
-            select_fields.push("segments.date".to_string());
-        }
-
         // Build query
         let mut query = String::new();
 
         // SELECT clause
         query.push_str("SELECT\n");
-        for (i, field) in select_fields.iter().enumerate() {
+        for (i, field) in self.select_fields.iter().enumerate() {
             query.push_str("  ");
             query.push_str(field);
-            if i < select_fields.len() - 1 {
+            if i < self.select_fields.len() - 1 {
                 query.push_str(",");
             }
             query.push('\n');
@@ -1992,15 +2247,10 @@ impl GaqlBuilder {
         // FROM clause
         query.push_str(&format!("FROM {}\n", self.from_resource));
 
-        // WHERE clause - combine where_clauses with DURING
-        let mut where_parts = self.where_clauses;
-        if let Some(during) = self.during {
-            where_parts.push(format!("segments.date DURING {}", during));
-        }
-
-        if !where_parts.is_empty() {
+        // WHERE clause
+        if !self.where_clauses.is_empty() {
             query.push_str("WHERE ");
-            query.push_str(&where_parts.join(" AND "));
+            query.push_str(&self.where_clauses.join(" AND "));
             query.push('\n');
         }
 
@@ -2067,6 +2317,14 @@ pub fn print_selection_explanation(
     println!();
     println!("Model: {}", trace.phase1_model_used);
     println!();
+
+    if !trace.phase1_resource_sample.is_empty() {
+        println!("Sample of Available Resources:");
+        for (name, desc) in &trace.phase1_resource_sample {
+            println!("  - {}: {}", name, desc);
+        }
+        println!();
+    }
 
     if !trace.phase1_reasoning.is_empty() {
         println!("LLM Reasoning:");
@@ -2171,11 +2429,6 @@ pub fn print_selection_explanation(
         println!();
     }
 
-    if let Some(during) = &trace.phase4_during {
-        println!("DURING: {}", during);
-        println!();
-    }
-
     if let Some(limit) = trace.phase4_limit {
         println!("LIMIT: {}", limit);
         println!();
@@ -2192,32 +2445,6 @@ pub fn print_selection_explanation(
     println!("═══════════════════════════════════════════════════════════════");
     println!("Total Generation Time: {}ms", trace.generation_time_ms);
     println!("═══════════════════════════════════════════════════════════════");
-}
-
-/// Helper function for detect_temporal_period - extracted for testing
-fn detect_temporal_period_impl(query: &str) -> Option<String> {
-    let query_lower = query.to_lowercase();
-
-    let period_map: Vec<(&str, &str)> = [
-        ("last 7 days", "LAST_7_DAYS"),
-        ("last week", "LAST_7_DAYS"),
-        ("last 30 days", "LAST_30_DAYS"),
-        ("last 30d", "LAST_30_DAYS"),
-        ("last month", "LAST_MONTH"),
-        ("this month", "THIS_MONTH"),
-        ("today", "TODAY"),
-        ("yesterday", "YESTERDAY"),
-        ("last 14 days", "LAST_14_DAYS"),
-        ("last 90 days", "LAST_90_DAYS"),
-    ]
-    .to_vec();
-
-    for (pattern, period) in period_map {
-        if query_lower.contains(pattern) {
-            return Some(period.to_string());
-        }
-    }
-    None
 }
 
 /// Helper function for get_implicit_defaults - extracted for testing
@@ -2374,30 +2601,6 @@ mod tests {
     // Tests for fixup issues - these test helper functions directly
 
     #[test]
-    fn test_detect_temporal_period_last_7_days() {
-        let period = detect_temporal_period_impl("show me performance last 7 days");
-        assert_eq!(period, Some("LAST_7_DAYS".to_string()));
-    }
-
-    #[test]
-    fn test_detect_temporal_period_last_30_days() {
-        let period = detect_temporal_period_impl("campaign performance for last 30 days");
-        assert_eq!(period, Some("LAST_30_DAYS".to_string()));
-    }
-
-    #[test]
-    fn test_detect_temporal_period_yesterday() {
-        let period = detect_temporal_period_impl("yesterday's metrics");
-        assert_eq!(period, Some("YESTERDAY".to_string()));
-    }
-
-    #[test]
-    fn test_detect_temporal_period_no_match() {
-        let period = detect_temporal_period_impl("show all campaigns");
-        assert_eq!(period, None);
-    }
-
-    #[test]
     fn test_detect_limit_top_10() {
         let limit = detect_limit_impl("show top 10 campaigns");
         assert_eq!(limit, Some(10));
@@ -2494,57 +2697,6 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn test_generate_gaql_assembles_correctly() {
-        use mcc_gaql_common::field_metadata::FilterField;
-
-        // Build a minimal MultiStepRAGAgent-like scenario by testing generate_gaql directly
-        // We test the assembly logic via a dummy agent (no LLM calls needed)
-        let field_selection = FieldSelectionResult {
-            select_fields: vec!["campaign.name".to_string(), "metrics.clicks".to_string()],
-            filter_fields: vec![FilterField {
-                field_name: "campaign.status".to_string(),
-                operator: "=".to_string(),
-                value: "ENABLED".to_string(),
-            }],
-            order_by_fields: vec![("metrics.clicks".to_string(), "DESC".to_string())],
-            reasoning: String::new(),
-        };
-
-        let where_clauses = vec!["campaign.status = 'ENABLED'".to_string()];
-        let during = Some("LAST_30_DAYS");
-        let limit = Some(10u32);
-
-        // Manually replicate the generate_gaql assembly logic
-        let mut query = String::new();
-        // SELECT with segments.date appended (during is Some)
-        let select_fields: Vec<&str> = field_selection
-            .select_fields
-            .iter()
-            .map(|s| s.as_str())
-            .collect();
-        query.push_str("SELECT ");
-        query.push_str(&select_fields.join(", "));
-        query.push_str(", segments.date\n");
-        query.push_str("FROM campaign\n");
-        query.push_str("WHERE ");
-        query.push_str(&where_clauses.join(" AND "));
-        query.push('\n');
-        query.push_str("DURING LAST_30_DAYS\n");
-        query.push_str("ORDER BY metrics.clicks DESC\n");
-        query.push_str("LIMIT 10\n");
-
-        let result = query.trim().to_string();
-        assert!(result.contains("SELECT campaign.name, metrics.clicks, segments.date"));
-        assert!(result.contains("FROM campaign"));
-        assert!(result.contains("WHERE campaign.status = 'ENABLED'"));
-        assert!(result.contains("DURING LAST_30_DAYS"));
-        assert!(result.contains("ORDER BY metrics.clicks DESC"));
-        assert!(result.contains("LIMIT 10"));
-        let _ = during;
-        let _ = limit;
-    }
-
     #[test]
     fn test_during_operator_accepted() {
         use mcc_gaql_common::field_metadata::FilterField;
@@ -2598,7 +2750,6 @@ mod tests {
                 "metrics.clicks".to_string(),
             ])
             .where_clause("campaign.status = 'ENABLED'".to_string())
-            .during(Some("LAST_30_DAYS".to_string()))
             .order_by(vec![("metrics.clicks".to_string(), "DESC".to_string())])
             .limit(Some(10))
             .build();
@@ -2606,10 +2757,8 @@ mod tests {
         assert!(query.contains("SELECT"));
         assert!(query.contains("campaign.name"));
         assert!(query.contains("metrics.clicks"));
-        assert!(query.contains("segments.date")); // Auto-added due to DURING
         assert!(query.contains("FROM campaign"));
         assert!(query.contains("WHERE campaign.status = 'ENABLED'"));
-        assert!(query.contains("segments.date DURING LAST_30_DAYS"));
         assert!(query.contains("ORDER BY metrics.clicks DESC"));
         assert!(query.contains("LIMIT 10"));
     }
@@ -2623,29 +2772,9 @@ mod tests {
 
         assert!(query.contains("SELECT"));
         assert!(query.contains("ad_group.name"));
-        assert!(!query.contains("segments.date")); // Not added without DURING
+        assert!(!query.contains("segments.date"));
         assert!(query.contains("FROM ad_group"));
         assert!(query.contains("WHERE ad_group.status = 'ENABLED'"));
-    }
-
-    #[test]
-    fn test_gaql_builder_during_already_in_select() {
-        // If segments.date is already in select, don't add it twice
-        let query = GaqlBuilder::new("campaign")
-            .select(vec![
-                "campaign.name".to_string(),
-                "segments.date".to_string(),
-            ])
-            .during(Some("LAST_7_DAYS".to_string()))
-            .build();
-
-        // Count occurrences of segments.date - should be exactly 1 in SELECT
-        let select_part = query.split("FROM").next().unwrap_or("");
-        let count = select_part.matches("segments.date").count();
-        assert_eq!(
-            count, 1,
-            "segments.date should appear exactly once in SELECT"
-        );
     }
 
     #[test]

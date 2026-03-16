@@ -709,6 +709,7 @@ pub struct PipelineTrace {
     pub phase1_reasoning: String,
     pub phase1_model_used: String,
     pub phase1_timing_ms: u64,
+    pub phase1_resource_sample: Vec<(String, String)>, // (resource_name, description)
     pub phase2_candidate_count: usize,
     pub phase2_rejected_count: usize,
     pub phase2_timing_ms: u64,
@@ -720,7 +721,6 @@ pub struct PipelineTrace {
     pub phase3_model_used: String,
     pub phase3_timing_ms: u64,
     pub phase4_where_clauses: Vec<String>,
-    pub phase4_during: Option<String>,
     pub phase4_limit: Option<u32>,
     pub phase4_implicit_filters: Vec<String>,
     pub generation_time_ms: u64,
