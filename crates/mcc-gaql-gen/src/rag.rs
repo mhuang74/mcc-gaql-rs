@@ -256,6 +256,18 @@ pub fn format_llm_request_debug(preamble: &Option<String>, prompt: &str) -> Stri
     output
 }
 
+/// Format LLM response for debug logging with human-friendly formatting
+pub fn format_llm_response_debug(response: &str) -> String {
+    let mut output = String::new();
+    output.push_str("┌─ LLM RESPONSE ───────────────────────────────────────────────────┐\n");
+    output.push_str(response);
+    if !response.ends_with('\n') {
+        output.push('\n');
+    }
+    output.push_str("└──────────────────────────────────────────────────────────────────┘\n");
+    output
+}
+
 /// Compute hash of query cookbook for cache validation
 /// Queries are sorted by ID to ensure deterministic ordering regardless of HashMap iteration order
 pub fn compute_query_cookbook_hash(queries: &[QueryEntry]) -> u64 {
