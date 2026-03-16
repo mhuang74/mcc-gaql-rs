@@ -216,6 +216,92 @@ impl ProtoParser {
         extract_preceding_comment_lines(lines, line_idx)
     }
 
+    /// Remove nested message definitions from content.
+    /// Returns content with nested message bodies replaced by whitespace,
+    /// preserving byte positions for parent-level field extraction.
+    fn remove_nested_messages(&self, content: &str) -> String {
+        let mut chars: Vec<char> = content.chars().collect();
+        let mut i = 0;
+        let mut brace_depth = 0;
+
+        while i < chars.len() {
+            match chars[i] {
+                '{' => {
+                    brace_depth += 1;
+                    i += 1;
+                }
+                '}' => {
+                    brace_depth -= 1;
+                    i += 1;
+                }
+                _ => {
+                    // Look for "message" keyword at depth > 0 (nested message)
+                    if brace_depth > 0
+                        && chars.get(i..i + 7) == Some(&['m', 'e', 's', 's', 'a', 'g', 'e'])
+                    {
+                        // Check if it's a word boundary (start of "message" keyword)
+                        let is_word_start =
+                            i == 0 || chars.get(i - 1).map_or(true, |c| !c.is_alphanumeric());
+
+                        if is_word_start {
+                            // Find the opening brace after message name
+                            let mut j = i + 7;
+                            // Skip whitespace and get message name
+                            while j < chars.len() && chars[j].is_whitespace() {
+                                j += 1;
+                            }
+                            // Skip message name
+                            while j < chars.len() && (chars[j].is_alphanumeric() || chars[j] == '_')
+                            {
+                                j += 1;
+                            }
+                            // Skip whitespace
+                            while j < chars.len() && chars[j].is_whitespace() {
+                                j += 1;
+                            }
+
+                            // Check if we found an opening brace
+                            if j < chars.len() && chars[j] == '{' {
+                                // Found a nested message, find its matching closing brace
+                                let nested_start = j;
+                                let mut nested_brace_depth = 0;
+                                let mut k = j;
+
+                                while k < chars.len() {
+                                    match chars[k] {
+                                        '{' => nested_brace_depth += 1,
+                                        '}' => {
+                                            nested_brace_depth -= 1;
+                                            if nested_brace_depth == 0 {
+                                                break;
+                                            }
+                                        }
+                                        _ => {}
+                                    }
+                                    k += 1;
+                                }
+
+                                // Replace content from opening brace to closing brace with whitespace
+                                // This preserves byte positions for parent fields
+                                for idx in nested_start..=k.min(chars.len() - 1) {
+                                    if chars[idx] != '\n' {
+                                        chars[idx] = ' ';
+                                    }
+                                }
+
+                                i = k + 1;
+                                continue;
+                            }
+                        }
+                    }
+                    i += 1;
+                }
+            }
+        }
+
+        chars.into_iter().collect()
+    }
+
     /// Extract fields within a message block.
     fn extract_message_fields(
         &self,
@@ -243,9 +329,14 @@ impl ProtoParser {
         }
 
         let message_block = &content[msg_start..msg_end];
+
+        // Remove nested message definitions to avoid extracting their fields
+        // This preserves byte positions so field comment extraction still works
+        let filtered_block = self.remove_nested_messages(message_block);
+
         let mut fields = Vec::new();
 
-        for caps in self.field_pattern.captures_iter(message_block) {
+        for caps in self.field_pattern.captures_iter(&filtered_block) {
             let type_name = caps.get(1).unwrap().as_str().to_string();
             let field_name = caps.get(2).unwrap().as_str().to_string();
             let field_number: u32 = caps.get(3).unwrap().as_str().parse().unwrap_or(0);
@@ -504,5 +595,435 @@ message Campaign {
             proto_to_gaql_field("AdGroup", "campaign"),
             "ad_group.campaign"
         );
+    }
+
+    const NESTED_PROTO: &str = r#"
+message AccessibleBiddingStrategy {
+  // Message describing TargetRoas.
+  message TargetRoas {
+    // Output only. The target ROAS.
+    double target_roas = 1;
+  }
+
+  // Message describing TargetCpa.
+  message TargetCpa {
+    // Output only. The target CPA.
+    int64 target_cpa_micros = 1;
+  }
+
+  // The resource name.
+  string resource_name = 1;
+
+  // Output only. The ID.
+  int64 id = 2;
+
+  // The target ROAS bidding strategy.
+  TargetRoas target_roas = 11;
+
+  // The target CPA bidding strategy.
+  TargetCpa target_cpa = 12;
+}
+"#;
+
+    #[test]
+    fn test_nested_message_extraction() {
+        let parser = ProtoParser::new();
+        let messages = parser.parse_proto_file(NESTED_PROTO);
+
+        assert_eq!(messages.len(), 1);
+        let strategy = &messages[0];
+        assert_eq!(strategy.message_name, "AccessibleBiddingStrategy");
+
+        // Should only extract parent-level fields, NOT fields from nested messages
+        // Parent fields: resource_name (1), id (2), target_roas (11), target_cpa (12)
+        // Nested fields that should NOT be extracted:
+        //   - TargetRoas.target_roas (1)
+        //   - TargetCpa.target_cpa_micros (1)
+        assert_eq!(
+            strategy.fields.len(),
+            4,
+            "Should extract exactly 4 parent-level fields, not nested fields"
+        );
+
+        // Check that we have the correct parent fields
+        let field_names: Vec<&str> = strategy
+            .fields
+            .iter()
+            .map(|f| f.field_name.as_str())
+            .collect();
+        assert!(field_names.contains(&"resource_name"));
+        assert!(field_names.contains(&"id"));
+        assert!(field_names.contains(&"target_roas"));
+        assert!(field_names.contains(&"target_cpa"));
+
+        // Verify field numbers are correct
+        let target_roas_field = strategy
+            .fields
+            .iter()
+            .find(|f| f.field_name == "target_roas")
+            .unwrap();
+        assert_eq!(
+            target_roas_field.field_number, 11,
+            "target_roas should have field number 11 (parent), not 1 (nested)"
+        );
+        assert_eq!(
+            target_roas_field.type_name, "TargetRoas",
+            "target_roas should be message type, not double"
+        );
+
+        // Verify we didn't extract the nested field with the same name
+        let target_roas_count = strategy
+            .fields
+            .iter()
+            .filter(|f| f.field_name == "target_roas")
+            .count();
+        assert_eq!(
+            target_roas_count, 1,
+            "Should only have one target_roas field (the parent one)"
+        );
+    }
+
+    const MULTIPLE_NESTED_PROTO: &str = r#"
+message Campaign {
+  message NestedBudget {
+    int64 amount_micros = 1;
+    string delivery_method = 2;
+  }
+
+  message NestedSetting {
+    bool optimize = 1;
+    string target = 2;
+  }
+
+  // Campaign fields
+  string resource_name = 1;
+  int64 id = 2;
+  string name = 3;
+
+  // Fields using nested types
+  NestedBudget budget = 10;
+  NestedSetting setting = 11;
+}
+"#;
+
+    #[test]
+    fn test_multiple_nested_messages() {
+        let parser = ProtoParser::new();
+        let messages = parser.parse_proto_file(MULTIPLE_NESTED_PROTO);
+
+        assert_eq!(messages.len(), 1);
+        let campaign = &messages[0];
+        assert_eq!(campaign.message_name, "Campaign");
+
+        // Should extract exactly 5 parent fields (3 primitive + 2 nested types)
+        assert_eq!(
+            campaign.fields.len(),
+            5,
+            "Should extract exactly 5 parent fields, not fields from nested messages"
+        );
+
+        // Verify field names
+        let field_names: Vec<&str> = campaign
+            .fields
+            .iter()
+            .map(|f| f.field_name.as_str())
+            .collect();
+        assert!(field_names.contains(&"resource_name"));
+        assert!(field_names.contains(&"id"));
+        assert!(field_names.contains(&"name"));
+        assert!(field_names.contains(&"budget"));
+        assert!(field_names.contains(&"setting"));
+
+        // Verify nested message fields are NOT present
+        assert!(
+            !field_names.contains(&"amount_micros"),
+            "NestedBudget.amount_micros should not be extracted"
+        );
+        assert!(
+            !field_names.contains(&"delivery_method"),
+            "NestedBudget.delivery_method should not be extracted"
+        );
+        assert!(
+            !field_names.contains(&"optimize"),
+            "NestedSetting.optimize should not be extracted"
+        );
+        assert!(
+            !field_names.contains(&"target"),
+            "NestedSetting.target should not be extracted"
+        );
+    }
+
+    const DEEP_NESTED_PROTO: &str = r#"
+message Outer {
+  message Middle {
+    message Inner {
+      string deep_field = 1;
+    }
+    string middle_field = 1;
+    Inner inner = 2;
+  }
+  string outer_field = 1;
+  Middle middle = 2;
+}
+"#;
+
+    #[test]
+    fn test_deeply_nested_messages() {
+        let parser = ProtoParser::new();
+        let messages = parser.parse_proto_file(DEEP_NESTED_PROTO);
+
+        assert_eq!(messages.len(), 1);
+        let outer = &messages[0];
+        assert_eq!(outer.message_name, "Outer");
+
+        // Should only extract 2 parent fields (outer_field and middle)
+        assert_eq!(
+            outer.fields.len(),
+            2,
+            "Should extract exactly 2 parent fields, ignoring all nested fields"
+        );
+
+        let field_names: Vec<&str> = outer
+            .fields
+            .iter()
+            .map(|f| f.field_name.as_str())
+            .collect();
+        assert!(field_names.contains(&"outer_field"));
+        assert!(field_names.contains(&"middle"));
+
+        // Ensure NO nested fields at any depth are extracted
+        assert!(
+            !field_names.contains(&"middle_field"),
+            "Middle.middle_field should not be extracted"
+        );
+        assert!(
+            !field_names.contains(&"deep_field"),
+            "Inner.deep_field should not be extracted"
+        );
+        assert!(
+            !field_names.contains(&"inner"),
+            "Middle.inner field should not be extracted"
+        );
+    }
+
+    const ACCESSIBLE_BIDDING_STRATEGY_PROTO: &str = r#"
+message AccessibleBiddingStrategy {
+  // Message describing a maximize conversions bid strategy.
+  // Maximize conversions is an automated bidding strategy which attempts
+  // to get the most conversions for the campaign.
+  message MaximizeConversions {
+    // Output only. The target CPA.
+    optional int64 target_cpa_micros = 1;
+
+    // Output only. The target cpa opt out field.
+    optional bool cpa_opt_out = 2;
+  }
+
+  // Message describing a TargetCpa bidding strategy.
+  message TargetCpa {
+    // Output only. Average CPA target.
+    int64 target_cpa_micros = 1;
+  }
+
+  // Message describing a TargetImpressionShare bid strategy.
+  message TargetImpressionShare {
+    // Output only. The targeted location on the search results page.
+    int64 location = 1;
+
+    // The chosen fraction of ads to be shown in the targeted location.
+    int64 location_fraction_micros = 2;
+
+    // Output only. Maximum bid limit.
+    int64 cpc_bid_ceiling_micros = 3;
+  }
+
+  // Message describing a TargetRoas bid strategy.
+  message TargetRoas {
+    // Output only. The target return on ad spend (ROAS) option.
+    double target_roas = 1;
+
+    // Output only. The chosen revenue per unit of spend.
+    double target_roas_value = 2;
+  }
+
+  // Message describing a TargetSpend bid strategy.
+  message TargetSpend {
+    // Output only. The spend target.
+    int64 target_spend_micros = 1;
+
+    // Output only. Maximum bid limit.
+    int64 cpc_bid_ceiling_micros = 2;
+  }
+
+  // Output only. The resource name.
+  string resource_name = 1;
+
+  // Output only. The ID.
+  int64 id = 2;
+
+  // Output only. The name.
+  string name = 3;
+
+  // Output only. The type.
+  int64 type = 4;
+
+  // Output only. Maximize conversions strategy metadata.
+  MaximizeConversions maximize_conversions = 5;
+
+  // Output only. Target CPA strategy metadata.
+  TargetCpa target_cpa = 6;
+
+  // Output only. Target impression share strategy metadata.
+  TargetImpressionShare target_impression_share = 7;
+
+  // Output only. Target ROAS strategy metadata.
+  TargetRoas target_roas = 8;
+
+  // Output only. Target spend strategy metadata.
+  TargetSpend target_spend = 9;
+}
+"#;
+
+    #[test]
+    fn test_accessible_bidding_strategy_no_duplicates() {
+        let parser = ProtoParser::new();
+        let messages = parser.parse_proto_file(ACCESSIBLE_BIDDING_STRATEGY_PROTO);
+
+        assert_eq!(messages.len(), 1);
+        let strategy = &messages[0];
+        assert_eq!(strategy.message_name, "AccessibleBiddingStrategy");
+
+        // Should extract exactly 9 parent fields
+        assert_eq!(
+            strategy.fields.len(),
+            9,
+            "Should extract exactly 9 parent fields, not fields from nested bidding strategy types"
+        );
+
+        // Build a map of field_name -> (field_number, type_name)
+        let field_map: std::collections::HashMap<&str, (u32, &str)> = strategy
+            .fields
+            .iter()
+            .map(|f| (f.field_name.as_str(), (f.field_number, f.type_name.as_str())))
+            .collect();
+
+        // Verify each parent field exists with correct field number
+        assert_eq!(field_map.get("resource_name"), Some(&(1, "string")));
+        assert_eq!(field_map.get("id"), Some(&(2, "int64")));
+        assert_eq!(field_map.get("name"), Some(&(3, "string")));
+        assert_eq!(field_map.get("type"), Some(&(4, "int64")));
+        assert_eq!(field_map.get("maximize_conversions"), Some(&(5, "MaximizeConversions")));
+        assert_eq!(field_map.get("target_cpa"), Some(&(6, "TargetCpa")));
+        assert_eq!(field_map.get("target_impression_share"), Some(&(7, "TargetImpressionShare")));
+        assert_eq!(field_map.get("target_roas"), Some(&(8, "TargetRoas")));
+        assert_eq!(field_map.get("target_spend"), Some(&(9, "TargetSpend")));
+
+        // Verify NO nested fields are present
+        assert!(
+            !field_map.contains_key("target_cpa_micros"),
+            "target_cpa_micros from nested messages should NOT be extracted"
+        );
+        assert!(
+            !field_map.contains_key("target_roas_value"),
+            "target_roas_value from nested messages should NOT be extracted"
+        );
+        assert!(
+            !field_map.contains_key("cpa_opt_out"),
+            "cpa_opt_out from nested messages should NOT be extracted"
+        );
+        assert!(
+            !field_map.contains_key("location_fraction_micros"),
+            "location_fraction_micros from nested messages should NOT be extracted"
+        );
+
+        // Most importantly: verify NO duplicate field names
+        let mut field_names: Vec<&str> = strategy
+            .fields
+            .iter()
+            .map(|f| f.field_name.as_str())
+            .collect();
+        field_names.sort();
+        let unique_names: std::collections::HashSet<&str> = field_names.iter().cloned().collect();
+        assert_eq!(
+            field_names.len(),
+            unique_names.len(),
+            "Found duplicate field names in extracted fields"
+        );
+
+        // Verify target_roas field is the parent one (field 8, type TargetRoas),
+        // NOT the nested one (field 1, type double)
+        let target_roas_fields: Vec<_> = strategy
+            .fields
+            .iter()
+            .filter(|f| f.field_name == "target_roas")
+            .collect();
+        assert_eq!(
+            target_roas_fields.len(),
+            1,
+            "Should have exactly one target_roas field"
+        );
+        let target_roas = target_roas_fields[0];
+        assert_eq!(target_roas.field_number, 8, "target_roas should be field 8 (parent)");
+        assert_eq!(target_roas.type_name, "TargetRoas", "target_roas should be message type");
+    }
+
+    const NESTED_WITH_ONEOF_PROTO: &str = r#"
+message Campaign {
+  message NetworkSettings {
+    bool target_google_search = 1;
+    bool target_search_network = 2;
+  }
+
+  message HotelSettingInfo {
+    int64 hotel_center_id = 1;
+  }
+
+  string resource_name = 1;
+  int64 id = 2;
+
+  oneof campaign_bidding_strategy {
+    int64 manual_cpc = 10;
+    int64 manual_cpm = 11;
+  }
+
+  NetworkSettings network_settings = 20;
+  HotelSettingInfo hotel_setting = 21;
+}
+"#;
+
+    #[test]
+    fn test_nested_messages_with_oneof() {
+        let parser = ProtoParser::new();
+        let messages = parser.parse_proto_file(NESTED_WITH_ONEOF_PROTO);
+
+        assert_eq!(messages.len(), 1);
+        let campaign = &messages[0];
+
+        // Should extract: resource_name, id, manual_cpc, manual_cpm, network_settings, hotel_setting = 6 fields
+        // Should NOT extract: target_google_search, target_search_network, hotel_center_id
+        assert_eq!(
+            campaign.fields.len(),
+            6,
+            "Should extract exactly 6 parent fields"
+        );
+
+        let field_names: Vec<&str> = campaign
+            .fields
+            .iter()
+            .map(|f| f.field_name.as_str())
+            .collect();
+
+        // Verify parent fields
+        assert!(field_names.contains(&"resource_name"));
+        assert!(field_names.contains(&"id"));
+        assert!(field_names.contains(&"manual_cpc"));
+        assert!(field_names.contains(&"manual_cpm"));
+        assert!(field_names.contains(&"network_settings"));
+        assert!(field_names.contains(&"hotel_setting"));
+
+        // Verify nested fields are NOT present
+        assert!(!field_names.contains(&"target_google_search"));
+        assert!(!field_names.contains(&"target_search_network"));
+        assert!(!field_names.contains(&"hotel_center_id"));
     }
 }

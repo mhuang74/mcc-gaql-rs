@@ -768,8 +768,8 @@ fn create_resource_sample(
 ) -> Vec<(String, String)> {
     // Stop words to filter out
     const STOP_WORDS: &[&str] = &[
-        "the", "from", "in", "and", "to", "of", "a", "an", "is", "are", "or", "with",
-        "on", "at", "by", "for", "that", "this", "these", "those", "it", "they",
+        "the", "from", "in", "and", "to", "of", "a", "an", "is", "are", "or", "with", "on", "at",
+        "by", "for", "that", "this", "these", "those", "it", "they",
     ];
 
     // Extract keywords from user query
@@ -796,9 +796,9 @@ fn create_resource_sample(
 
         let desc_lower = clean_desc.to_lowercase();
 
-        let is_match = keywords.iter().any(|kw| {
-            name_lower.contains(kw) || desc_lower.contains(kw)
-        });
+        let is_match = keywords
+            .iter()
+            .any(|kw| name_lower.contains(kw) || desc_lower.contains(kw));
 
         let entry = (name.clone(), clean_desc);
         if is_match {
@@ -1162,12 +1162,7 @@ impl MultiStepRAGAgent {
         // Phase 5: Generate final GAQL query
         let phase5_start = std::time::Instant::now();
         let result = self
-            .generate_gaql(
-                &primary_resource,
-                &field_selection,
-                &where_clauses,
-                limit,
-            )
+            .generate_gaql(&primary_resource, &field_selection, &where_clauses, limit)
             .await?;
         log::debug!(
             "Phase 5: GAQL generation ({}ms)",
@@ -1235,7 +1230,16 @@ impl MultiStepRAGAgent {
     async fn select_resource(
         &self,
         user_query: &str,
-    ) -> Result<(String, Vec<String>, Vec<String>, String, Vec<(String, String)>), anyhow::Error> {
+    ) -> Result<
+        (
+            String,
+            Vec<String>,
+            Vec<String>,
+            String,
+            Vec<(String, String)>,
+        ),
+        anyhow::Error,
+    > {
         let resources = self.field_cache.get_resources();
 
         // Build resource information for sampling
@@ -1259,13 +1263,16 @@ impl MultiStepRAGAgent {
         let resource_list: Vec<String> = resources
             .iter()
             .map(|r| {
-                format!("- {}: {}", r,
+                format!(
+                    "- {}: {}",
+                    r,
                     self.field_cache
                         .resource_metadata
                         .as_ref()
                         .and_then(|m| m.get(r))
                         .and_then(|m| m.description.as_deref())
-                        .unwrap_or(""))
+                        .unwrap_or("")
+                )
             })
             .collect();
 
@@ -1344,7 +1351,13 @@ Choose from: "#
             })
             .collect();
 
-        Ok((primary, validated_related, dropped, reasoning, resource_sample))
+        Ok((
+            primary,
+            validated_related,
+            dropped,
+            reasoning,
+            resource_sample,
+        ))
     }
 
     // =========================================================================
@@ -1418,7 +1431,10 @@ Choose from: "#
                     .filter(|f| seen.insert(f.name.clone()))
                     .map(|f| candidates.push(f.clone()))
                     .count();
-                log::debug!("Phase 2: Added {} metrics from selectable_with", metric_count);
+                log::debug!(
+                    "Phase 2: Added {} metrics from selectable_with",
+                    metric_count
+                );
             }
 
             // Fallback: If no segments in key_attributes, add segments from selectable_with
@@ -1708,17 +1724,19 @@ Choose from: "#
         // Quarter calculations (months 1,4,7,10 are quarter starts)
         let month = today.month();
         let quarter_start_month = ((month - 1) / 3) * 3 + 1;
-        let this_quarter_start = chrono::NaiveDate::from_ymd_opt(today.year(), quarter_start_month, 1)
-            .unwrap_or(today);
+        let this_quarter_start =
+            chrono::NaiveDate::from_ymd_opt(today.year(), quarter_start_month, 1).unwrap_or(today);
         let prev_quarter_end = this_quarter_start - chrono::Duration::days(1);
         let prev_quarter_month = ((prev_quarter_end.month() - 1) / 3) * 3 + 1;
-        let prev_quarter_start = chrono::NaiveDate::from_ymd_opt(prev_quarter_end.year(), prev_quarter_month, 1)
-            .unwrap_or(prev_quarter_end);
+        let prev_quarter_start =
+            chrono::NaiveDate::from_ymd_opt(prev_quarter_end.year(), prev_quarter_month, 1)
+                .unwrap_or(prev_quarter_end);
 
         // Year calculations
         let this_year_start = chrono::NaiveDate::from_ymd_opt(today.year(), 1, 1).unwrap_or(today);
         let prev_year_end = this_year_start - chrono::Duration::days(1);
-        let prev_year_start = chrono::NaiveDate::from_ymd_opt(prev_year_end.year(), 1, 1).unwrap_or(prev_year_end);
+        let prev_year_start =
+            chrono::NaiveDate::from_ymd_opt(prev_year_end.year(), 1, 1).unwrap_or(prev_year_end);
 
         // Week calculations (Monday start)
         let weekday = today.weekday().num_days_from_monday();
@@ -1728,38 +1746,21 @@ Choose from: "#
 
         // Season calculations (fixed dates)
         let year = today.year();
-        let (this_summer_start, this_summer_end) = (
-            format!("{year}-06-01"),
-            format!("{year}-08-31")
-        );
-        let (last_summer_start, last_summer_end) = (
-            format!("{}-06-01", year - 1),
-            format!("{}-08-31", year - 1)
-        );
-        let (this_winter_start, this_winter_end) = (
-            format!("{year}-12-01"),
-            format!("{year}-02-28")
-        );
-        let (last_winter_start, last_winter_end) = (
-            format!("{}-12-01", year - 1),
-            format!("{year}-02-28")
-        );
-        let (this_spring_start, this_spring_end) = (
-            format!("{year}-03-01"),
-            format!("{year}-05-31")
-        );
-        let (last_spring_start, last_spring_end) = (
-            format!("{}-03-01", year - 1),
-            format!("{}-05-31", year - 1)
-        );
-        let (this_fall_start, this_fall_end) = (
-            format!("{year}-09-01"),
-            format!("{year}-11-30")
-        );
-        let (last_fall_start, last_fall_end) = (
-            format!("{}-09-01", year - 1),
-            format!("{}-11-30", year - 1)
-        );
+        let (this_summer_start, this_summer_end) =
+            (format!("{year}-06-01"), format!("{year}-08-31"));
+        let (last_summer_start, last_summer_end) =
+            (format!("{}-06-01", year - 1), format!("{}-08-31", year - 1));
+        let (this_winter_start, this_winter_end) =
+            (format!("{year}-12-01"), format!("{year}-02-28"));
+        let (last_winter_start, last_winter_end) =
+            (format!("{}-12-01", year - 1), format!("{year}-02-28"));
+        let (this_spring_start, this_spring_end) =
+            (format!("{year}-03-01"), format!("{year}-05-31"));
+        let (last_spring_start, last_spring_end) =
+            (format!("{}-03-01", year - 1), format!("{}-05-31", year - 1));
+        let (this_fall_start, this_fall_end) = (format!("{year}-09-01"), format!("{year}-11-30"));
+        let (last_fall_start, last_fall_end) =
+            (format!("{}-09-01", year - 1), format!("{}-11-30", year - 1));
 
         // Christmas holiday period (Dec 20-31)
         let this_christmas_start = format!("{year}-12-20");
@@ -1773,7 +1774,8 @@ Choose from: "#
 
         // Build prompt conditionally based on whether cookbook is enabled
         let (system_prompt, user_prompt) = if self.pipeline_config.use_query_cookbook {
-            let sys = format!(r#"You are a Google Ads Query Language (GAQL) expert. Given:
+            let sys = format!(
+                r#"You are a Google Ads Query Language (GAQL) expert. Given:
 1. A user query
 2. Cookbook examples
 3. Available fields categorized by type
@@ -1844,14 +1846,16 @@ Respond ONLY with valid JSON:
   - "christmas holiday" → operator: "BETWEEN", value: '{this_christmas_start} AND {this_christmas_end}'
   - "last 60 days" → operator: "BETWEEN", value: '{last_60_start} AND {today}'
   - "last 90 days" → operator: "BETWEEN", value: '{last_90_start} AND {today}'
-"#);
+"#
+            );
             let user = format!(
                 "User query: {}\n\nCookbook examples:\n{}\n\nAvailable fields:{}",
                 user_query, examples, candidate_text
             );
             (sys, user)
         } else {
-            let sys = format!(r#"You are a Google Ads Query Language (GAQL) expert. Given:
+            let sys = format!(
+                r#"You are a Google Ads Query Language (GAQL) expert. Given:
 1. A user query
 2. Available fields categorized by type
 
@@ -1921,7 +1925,8 @@ Respond ONLY with valid JSON:
   - "christmas holiday" → operator: "BETWEEN", value: '{this_christmas_start} AND {this_christmas_end}'
   - "last 60 days" → operator: "BETWEEN", value: '{last_60_start} AND {today}'
   - "last 90 days" → operator: "BETWEEN", value: '{last_90_start} AND {today}'
-"#);
+"#
+            );
             let user = format!(
                 "User query: {}\n\nAvailable fields:{}",
                 user_query, candidate_text
@@ -2138,22 +2143,49 @@ Respond ONLY with valid JSON:
                         let start_clean = start.trim();
                         let end_clean = end.trim();
                         // Validate that neither part contains the field name or nested BETWEEN
-                        if start_clean.contains("segments.date") || start_clean.contains("BETWEEN")
-                            || end_clean.contains("segments.date") || end_clean.contains("BETWEEN") {
-                            log::error!("Malformed BETWEEN value contains field name or nested BETWEEN: '{}'", escaped_value);
+                        if start_clean.contains("segments.date")
+                            || start_clean.contains("BETWEEN")
+                            || end_clean.contains("segments.date")
+                            || end_clean.contains("BETWEEN")
+                        {
+                            log::error!(
+                                "Malformed BETWEEN value contains field name or nested BETWEEN: '{}'",
+                                escaped_value
+                            );
                             // Attempt to extract just the dates
-                            let fixed = escaped_value.replace("segments.date", "").replace("BETWEEN", "").replace("'", "");
+                            let fixed = escaped_value
+                                .replace("segments.date", "")
+                                .replace("BETWEEN", "")
+                                .replace("'", "");
                             if let Some((s, e)) = fixed.split_once(" AND ") {
-                                format!("{} BETWEEN '{}' AND '{}'", ff.field_name, s.trim(), e.trim())
+                                format!(
+                                    "{} BETWEEN '{}' AND '{}'",
+                                    ff.field_name,
+                                    s.trim(),
+                                    e.trim()
+                                )
                             } else {
-                                format!("{} BETWEEN '{}' AND '{}'", ff.field_name, start_clean, end_clean)
+                                format!(
+                                    "{} BETWEEN '{}' AND '{}'",
+                                    ff.field_name, start_clean, end_clean
+                                )
                             }
                         } else {
-                            format!("{} BETWEEN '{}' AND '{}'", ff.field_name, start_clean, end_clean)
+                            format!(
+                                "{} BETWEEN '{}' AND '{}'",
+                                ff.field_name, start_clean, end_clean
+                            )
                         }
                     } else {
-                        log::error!("Invalid BETWEEN format for '{}': expected 'start AND end', got '{}'", ff.field_name, escaped_value);
-                        format!("{} BETWEEN '{}' AND '{}'", ff.field_name, escaped_value, escaped_value)
+                        log::error!(
+                            "Invalid BETWEEN format for '{}': expected 'start AND end', got '{}'",
+                            ff.field_name,
+                            escaped_value
+                        );
+                        format!(
+                            "{} BETWEEN '{}' AND '{}'",
+                            ff.field_name, escaped_value, escaped_value
+                        )
                     }
                 }
                 _ => format!("{} {} '{}'", ff.field_name, op, escaped_value), // Quoted for other operators
