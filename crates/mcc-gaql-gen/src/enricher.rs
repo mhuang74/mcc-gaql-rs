@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use mcc_gaql_common::field_metadata::{FieldMetadata, FieldMetadataCache, ResourceMetadata};
 
-use crate::rag::format_llm_request_debug;
+use crate::rag::{format_llm_request_debug, format_llm_response_debug};
 
 use crate::model_pool::{ModelLease, ModelPool};
 use crate::scraper::ScrapedDocs;
@@ -285,6 +285,7 @@ Use in SELECT to label rows in reports.\",\n\
             lease.model_name(),
             llm_start.elapsed().as_millis()
         );
+        log::trace!("{}", format_llm_response_debug(&response));
 
         Self::parse_enrichment_response_static(&response)
     }
@@ -496,6 +497,7 @@ used to query. Return ONLY the sentence, no formatting.";
             lease.model_name(),
             llm_start.elapsed().as_millis()
         );
+        log::trace!("{}", format_llm_response_debug(&response));
 
         Ok(response.trim().to_string())
     }
@@ -591,6 +593,7 @@ Do NOT include fields that are rarely used or very specialized.";
             lease.model_name(),
             llm_start.elapsed().as_millis()
         );
+        log::trace!("{}", format_llm_response_debug(&response));
 
         // Parse JSON response (strip markdown fences first)
         let cleaned_response = strip_json_fences(&response);
