@@ -536,8 +536,8 @@ used to query. Return ONLY the sentence, no formatting.";
         let system_prompt = "\
 You are a Google Ads API expert. Given a list of GAQL field names, select the most \
 commonly useful ones for typical reporting queries. Return ONLY valid JSON with two keys:\n\
-- \"key_attributes\": array of 3-5 attribute field names (e.g., campaign.name, ad_group.status)\n\
-- \"key_metrics\": array of 5-10 metric field names (e.g., metrics.clicks, metrics.impressions)\n\
+- \"key_attributes\": array of 5-10 attribute field names (e.g., campaign.name, ad_group.status)\n\
+- \"key_metrics\": array of 7-12 metric field names (e.g., metrics.clicks, metrics.impressions)\n\
 \nSelect fields that are most commonly used in everyday Google Ads reporting. \
 Do NOT include fields that are rarely used or very specialized.";
 
@@ -607,7 +607,7 @@ Do NOT include fields that are rarely used or very specialized.";
                 arr.iter()
                     .filter_map(|v| v.as_str().map(|s| s.to_string()))
                     .filter(|s| resource_attrs.contains(s))
-                    .take(5)
+                    .take(10)
                     .collect()
             })
             .unwrap_or_default();
@@ -619,7 +619,7 @@ Do NOT include fields that are rarely used or very specialized.";
                 arr.iter()
                     .filter_map(|v| v.as_str().map(|s| s.to_string()))
                     .filter(|s| resource_metrics.contains(s))
-                    .take(10)
+                    .take(12)
                     .collect()
             })
             .unwrap_or_default();
@@ -628,13 +628,13 @@ Do NOT include fields that are rarely used or very specialized.";
         if key_attributes.is_empty() && !resource_attrs.is_empty() {
             let mut sorted_attrs = resource_attrs.clone();
             sorted_attrs.sort();
-            key_attributes = sorted_attrs.into_iter().take(5).collect();
+            key_attributes = sorted_attrs.into_iter().take(10).collect();
         }
 
         if key_metrics.is_empty() && !resource_metrics.is_empty() {
             let mut sorted_metrics = resource_metrics.clone();
             sorted_metrics.sort();
-            key_metrics = sorted_metrics.into_iter().take(10).collect();
+            key_metrics = sorted_metrics.into_iter().take(12).collect();
         }
 
         Ok((key_attributes, key_metrics))
