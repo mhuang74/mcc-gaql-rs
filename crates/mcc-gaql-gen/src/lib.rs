@@ -1,6 +1,7 @@
 // Library target for integration tests and external access.
 #![recursion_limit = "512"]
 pub mod enricher;
+pub mod formatter;
 pub mod model_pool;
 pub mod proto_docs_cache;
 pub mod proto_locator;

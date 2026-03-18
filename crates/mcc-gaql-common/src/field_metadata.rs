@@ -124,6 +124,9 @@ pub struct ResourceMetadata {
     /// Description (populated by enricher)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Whether alphabetical fallback was used instead of AI selection
+    #[serde(default)]
+    pub uses_fallback: bool,
 }
 
 /// Cache for Google Ads field metadata
@@ -310,16 +313,38 @@ impl FieldMetadataCache {
             .count()
     }
 
-    /// Retain only fields and resources matching the given resource names
+    /// Retain only fields and resources matching the given resource names.
+    /// Also keeps metrics and segments that are compatible with any kept resource.
     pub fn retain_resources(&mut self, keep_resources: &[String]) {
         let keep_set: std::collections::HashSet<_> = keep_resources.iter().cloned().collect();
 
-        // Filter fields - only keep fields belonging to retained resources
+        // Filter fields - keep fields that:
+        // 1. Belong to a retained resource (e.g., "keyword_view.resource_name")
+        // 2. Are RESOURCE-category fields matching a kept resource (e.g., "keyword_view")
+        // 3. Are metrics/segments compatible with any kept resource
         self.fields.retain(|_, field| {
-            field
-                .get_resource()
-                .map(|r| keep_set.contains(&r))
-                .unwrap_or(false)
+            // Keep if field belongs to a retained resource (e.g., "keyword_view.resource_name")
+            if let Some(r) = field.get_resource() {
+                if keep_set.contains(&r) {
+                    return true;
+                }
+            }
+
+            // Keep RESOURCE-category fields whose name matches a kept resource (e.g., "keyword_view")
+            if field.is_resource() && keep_set.contains(&field.name) {
+                return true;
+            }
+
+            // Keep metrics and segments that are compatible with any kept resource
+            // Check if any kept resource appears in the field's selectable_with list
+            if field.is_metric() || field.is_segment() {
+                return field
+                    .selectable_with
+                    .iter()
+                    .any(|r| keep_set.contains(r));
+            }
+
+            false
         });
 
         // Filter resources map
@@ -927,6 +952,7 @@ mod tests {
                 key_metrics: vec![],
                 field_count: 2,
                 description: Some("Campaign resource".to_string()),
+                uses_fallback: false,
             },
         );
         resource_metadata.insert(
@@ -938,6 +964,7 @@ mod tests {
                 key_metrics: vec![],
                 field_count: 1,
                 description: Some("Ad group resource".to_string()),
+                uses_fallback: false,
             },
         );
         resource_metadata.insert(
@@ -949,6 +976,7 @@ mod tests {
                 key_metrics: vec![],
                 field_count: 1,
                 description: Some("Customer resource".to_string()),
+                uses_fallback: false,
             },
         );
         cache.resource_metadata = Some(resource_metadata);
@@ -978,6 +1006,188 @@ mod tests {
             assert!(rm.contains_key("ad_group"));
             assert!(!rm.contains_key("customer"));
         }
+    }
+
+    #[test]
+    fn test_retain_resources_keeps_resource_category_fields() {
+        // This tests the fix for keyword_view (and similar view resources) being
+        // filtered out during --test-run mode. RESOURCE-category fields don't have
+        // a dot in their name, so get_resource() returns None. We need to explicitly
+        // keep them when their name matches a retained resource.
+        // Also tests that compatible metrics/segments are retained.
+        let mut cache = FieldMetadataCache::new();
+
+        // Add RESOURCE-category field (like "keyword_view") - no dot in name
+        cache.fields.insert(
+            "keyword_view".to_string(),
+            FieldMetadata {
+                name: "keyword_view".to_string(),
+                category: "RESOURCE".to_string(),
+                data_type: "MESSAGE".to_string(),
+                selectable: false,
+                filterable: false,
+                sortable: false,
+                metrics_compatible: false,
+                resource_name: Some("googleAdsFields/keyword_view".to_string()),
+                selectable_with: vec![
+                    "metrics.clicks".to_string(),
+                    "metrics.impressions".to_string(),
+                    "ad_group".to_string(),
+                ],
+                enum_values: vec![],
+                attribute_resources: vec![],
+                description: None,
+                usage_notes: None,
+            },
+        );
+
+        // Add attribute field for keyword_view (has dot in name)
+        cache.fields.insert(
+            "keyword_view.resource_name".to_string(),
+            FieldMetadata {
+                name: "keyword_view.resource_name".to_string(),
+                category: "ATTRIBUTE".to_string(),
+                data_type: "STRING".to_string(),
+                selectable: true,
+                filterable: true,
+                sortable: false,
+                metrics_compatible: true,
+                resource_name: None,
+                selectable_with: vec![],
+                enum_values: vec![],
+                attribute_resources: vec![],
+                description: None,
+                usage_notes: None,
+            },
+        );
+
+        // Add a metric that is compatible with keyword_view
+        cache.fields.insert(
+            "metrics.clicks".to_string(),
+            FieldMetadata {
+                name: "metrics.clicks".to_string(),
+                category: "METRIC".to_string(),
+                data_type: "INT64".to_string(),
+                selectable: true,
+                filterable: true,
+                sortable: true,
+                metrics_compatible: false,
+                resource_name: None,
+                selectable_with: vec!["keyword_view".to_string(), "campaign".to_string()],
+                enum_values: vec![],
+                attribute_resources: vec![],
+                description: None,
+                usage_notes: None,
+            },
+        );
+
+        // Add a metric that is NOT compatible with keyword_view
+        cache.fields.insert(
+            "metrics.hotel_average_lead_value_micros".to_string(),
+            FieldMetadata {
+                name: "metrics.hotel_average_lead_value_micros".to_string(),
+                category: "METRIC".to_string(),
+                data_type: "DOUBLE".to_string(),
+                selectable: true,
+                filterable: true,
+                sortable: true,
+                metrics_compatible: false,
+                resource_name: None,
+                selectable_with: vec!["hotel_performance_view".to_string()], // Not keyword_view
+                enum_values: vec![],
+                attribute_resources: vec![],
+                description: None,
+                usage_notes: None,
+            },
+        );
+
+        // Add a segment compatible with keyword_view
+        cache.fields.insert(
+            "segments.date".to_string(),
+            FieldMetadata {
+                name: "segments.date".to_string(),
+                category: "SEGMENT".to_string(),
+                data_type: "DATE".to_string(),
+                selectable: true,
+                filterable: true,
+                sortable: true,
+                metrics_compatible: false,
+                resource_name: None,
+                selectable_with: vec!["keyword_view".to_string(), "campaign".to_string()],
+                enum_values: vec![],
+                attribute_resources: vec![],
+                description: None,
+                usage_notes: None,
+            },
+        );
+
+        // Add another resource that will be filtered out
+        cache.fields.insert(
+            "campaign".to_string(),
+            FieldMetadata {
+                name: "campaign".to_string(),
+                category: "RESOURCE".to_string(),
+                data_type: "MESSAGE".to_string(),
+                selectable: false,
+                filterable: false,
+                sortable: false,
+                metrics_compatible: false,
+                resource_name: Some("googleAdsFields/campaign".to_string()),
+                selectable_with: vec!["metrics.clicks".to_string()],
+                enum_values: vec![],
+                attribute_resources: vec![],
+                description: None,
+                usage_notes: None,
+            },
+        );
+
+        // Retain only keyword_view
+        cache.retain_resources(&["keyword_view".to_string()]);
+
+        // CRITICAL: The RESOURCE-category field "keyword_view" must be retained
+        // This is needed for get_resource_selectable_with() to work
+        assert!(
+            cache.fields.contains_key("keyword_view"),
+            "RESOURCE-category field 'keyword_view' should be retained"
+        );
+
+        // The attribute field should also be retained
+        assert!(
+            cache.fields.contains_key("keyword_view.resource_name"),
+            "Attribute field 'keyword_view.resource_name' should be retained"
+        );
+
+        // Compatible metric should be retained
+        assert!(
+            cache.fields.contains_key("metrics.clicks"),
+            "Compatible metric 'metrics.clicks' should be retained"
+        );
+
+        // Incompatible metric should be filtered out
+        assert!(
+            !cache.fields.contains_key("metrics.hotel_average_lead_value_micros"),
+            "Incompatible metric should be filtered out"
+        );
+
+        // Compatible segment should be retained
+        assert!(
+            cache.fields.contains_key("segments.date"),
+            "Compatible segment 'segments.date' should be retained"
+        );
+
+        // The campaign RESOURCE field should be filtered out
+        assert!(
+            !cache.fields.contains_key("campaign"),
+            "RESOURCE field 'campaign' should be filtered out"
+        );
+
+        // Verify get_resource_selectable_with works after retain
+        let selectable_with = cache.get_resource_selectable_with("keyword_view");
+        assert!(
+            !selectable_with.is_empty(),
+            "selectable_with should not be empty after retain_resources"
+        );
+        assert!(selectable_with.contains(&"metrics.clicks".to_string()));
     }
 
     #[test]

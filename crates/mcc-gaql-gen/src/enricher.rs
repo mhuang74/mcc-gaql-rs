@@ -174,7 +174,7 @@ impl MetadataEnricher {
         log::info!("Selecting key fields for {} resources", resources.len());
         for resource in &resources {
             match self.select_key_fields_for_resource(resource, cache).await {
-                Ok((key_attrs, key_mets)) => {
+                Ok((key_attrs, key_mets, uses_fallback)) => {
                     if let Some(rm) = cache
                         .resource_metadata
                         .as_mut()
@@ -182,6 +182,7 @@ impl MetadataEnricher {
                     {
                         rm.key_attributes = key_attrs;
                         rm.key_metrics = key_mets;
+                        rm.uses_fallback = uses_fallback;
                     }
                 }
                 Err(e) => {
@@ -503,12 +504,12 @@ used to query. Return ONLY the sentence, no formatting.";
     }
 
     /// Select key attributes and metrics for a resource using LLM
-    /// Returns (key_attributes, key_metrics) or falls back to alphabetical first-N on failure
+    /// Returns (key_attributes, key_metrics, uses_fallback) or falls back to alphabetical first-N on failure
     async fn select_key_fields_for_resource(
         &self,
         resource: &str,
         cache: &FieldMetadataCache,
-    ) -> Result<(Vec<String>, Vec<String>)> {
+    ) -> Result<(Vec<String>, Vec<String>, bool)> {
         // Get resource attributes (ATTRIBUTE fields for this resource)
         let resource_attrs: Vec<String> = cache
             .get_resource_fields(resource)
@@ -625,19 +626,22 @@ Do NOT include fields that are rarely used or very specialized.";
             .unwrap_or_default();
 
         // Fallback: if LLM returned nothing valid, use alphabetical first-N
+        let mut uses_fallback = false;
         if key_attributes.is_empty() && !resource_attrs.is_empty() {
             let mut sorted_attrs = resource_attrs.clone();
             sorted_attrs.sort();
             key_attributes = sorted_attrs.into_iter().take(10).collect();
+            uses_fallback = true;
         }
 
         if key_metrics.is_empty() && !resource_metrics.is_empty() {
             let mut sorted_metrics = resource_metrics.clone();
             sorted_metrics.sort();
             key_metrics = sorted_metrics.into_iter().take(12).collect();
+            uses_fallback = true;
         }
 
-        Ok((key_attributes, key_metrics))
+        Ok((key_attributes, key_metrics, uses_fallback))
     }
 }
 

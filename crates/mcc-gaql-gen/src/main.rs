@@ -6,6 +6,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 
 use mcc_gaql_gen::enricher;
+use mcc_gaql_gen::formatter;
 use mcc_gaql_gen::model_pool;
 use mcc_gaql_gen::proto_docs_cache;
 use mcc_gaql_gen::proto_locator;
@@ -16,10 +17,11 @@ use mcc_gaql_gen::vector_store;
 
 use mcc_gaql_common::config::{QueryEntry, get_queries_from_file};
 use mcc_gaql_common::field_metadata::FieldMetadataCache;
-use mcc_gaql_common::paths::config_file_path;
+use mcc_gaql_common::paths::{config_file_path, field_metadata_enriched_path};
+
 
 /// Core resources for test-run mode
-const TEST_RUN_RESOURCES: &[&str] = &["campaign", "ad_group", "ad_group_ad", "ad_group_criterion"];
+const TEST_RUN_RESOURCES: &[&str] = &["campaign", "ad_group", "ad_group_ad", "keyword_view"];
 
 /// Filter resources for test-run mode
 fn filter_test_resources(resources: Vec<String>) -> Vec<String> {
@@ -62,7 +64,7 @@ enum Commands {
         #[arg(long, default_value = "30")]
         ttl_days: i64,
 
-        /// Only process core resources (campaign, ad_group, ad_group_ad, ad_group_criterion) for testing
+        /// Only process core resources (campaign, ad_group, ad_group_ad, keyword_view) for testing
         #[arg(long)]
         test_run: bool,
     },
@@ -93,7 +95,7 @@ enum Commands {
         #[arg(long, default_value = "30")]
         scrape_ttl_days: i64,
 
-        /// Only process core resources (campaign, ad_group, ad_group_ad, ad_group_criterion) for testing
+        /// Only process core resources (campaign, ad_group, ad_group_ad, keyword_view) for testing
         #[arg(long)]
         test_run: bool,
 
@@ -174,6 +176,40 @@ enum Commands {
         /// Path to enriched field metadata JSON (defaults to standard enriched cache path)
         #[arg(long)]
         metadata: Option<PathBuf>,
+    },
+
+    /// Display enriched field metadata for debugging RAG pipeline
+    Metadata {
+        /// Resource name, field name, or pattern
+        query: String,
+
+        /// Path to enriched metadata JSON (defaults to standard enriched cache path)
+        #[arg(long)]
+        metadata: Option<PathBuf>,
+
+        /// Output format: llm, full, json [default: llm]
+        #[arg(long, default_value = "llm")]
+        format: String,
+
+        /// Filter by category: resource, attribute, metric, segment
+        #[arg(long)]
+        category: Option<String>,
+
+        /// Use subset resources only (campaign, ad_group, ad_group_ad, keyword_view)
+        #[arg(long)]
+        subset: bool,
+
+        /// Show all fields (default shows LLM-limited view with 15 per category)
+        #[arg(long)]
+        show_all: bool,
+
+        /// Show enrichment comparison (requires non-enriched cache in cache dir)
+        #[arg(long)]
+        diff: bool,
+
+        /// Filter fields: no-description, no-usage-notes, fallback (resources only)
+        #[arg(long)]
+        filter: Option<String>,
     },
 
     /// Clear the LanceDB vector cache
@@ -261,6 +297,29 @@ async fn main() -> Result<()> {
             cmd_index(queries, metadata).await?;
         }
 
+        Commands::Metadata {
+            query,
+            metadata,
+            format,
+            category,
+            subset,
+            show_all,
+            diff,
+            filter,
+        } => {
+            cmd_metadata(
+                query,
+                metadata,
+                format,
+                category,
+                subset,
+                show_all,
+                diff,
+                filter,
+            )
+            .await?;
+        }
+
         Commands::ClearCache => {
             vector_store::clear_cache()?;
         }
@@ -295,7 +354,7 @@ async fn cmd_scrape(
     if test_run {
         resources = filter_test_resources(resources);
         println!(
-            "Test run mode: limited to {} resources (campaign, ad_group, ad_group_ad, ad_group_criterion)",
+            "Test run mode: limited to {} resources (campaign, ad_group, ad_group_ad, keyword_view)",
             resources.len()
         );
     }
@@ -872,6 +931,97 @@ async fn cmd_parse_protos(output: Option<PathBuf>, force: bool) -> Result<()> {
     Ok(())
 }
 
+/// Display enriched field metadata for debugging RAG pipeline
+async fn cmd_metadata(
+    query: String,
+    metadata: Option<PathBuf>,
+    format: String,
+    category: Option<String>,
+    subset: bool,
+    show_all: bool,
+    diff: bool,
+    filter: Option<String>,
+) -> Result<()> {
+    // Determine metadata path
+    let metadata_path = metadata.or_else(|| field_metadata_enriched_path().ok())
+        .context("Could not determine enriched metadata path")?;
+
+    if !metadata_path.exists() {
+        anyhow::bail!(
+            "Enriched metadata not found at {:?}. Run 'mcc-gaql-gen enrich' first.",
+            metadata_path
+        );
+    }
+
+    // Load enriched cache
+    let cache = FieldMetadataCache::load_from_disk(&metadata_path).await
+        .context("Failed to load enriched metadata")?;
+
+    // Diff mode - compare with non-enriched cache
+    if diff {
+        let non_enriched_path = metadata_path.parent()
+            .ok_or_else(|| anyhow::anyhow!("Invalid metadata path"))?
+            .join("field_metadata.json");
+
+        if !non_enriched_path.exists() {
+            eprintln!("Warning: Non-enriched cache not found at {:?}. Showing enriched-only output.", non_enriched_path);
+        }
+
+        let non_enriched_cache = if non_enriched_path.exists() {
+            Some(FieldMetadataCache::load_from_disk(&non_enriched_path).await?)
+        } else {
+            None
+        };
+
+        if let Some(ne) = non_enriched_cache {
+            let output = formatter::format_diff_llm(&cache, &ne, &query, show_all)?;
+            print!("{}", output);
+            return Ok(());
+        }
+    }
+
+    // Match query against cache
+    let query_result = formatter::match_query(&cache, &query)?;
+
+    // Apply subset filter
+    let query_result = if subset {
+        formatter::filter_subset(query_result)
+    } else {
+        query_result
+    };
+
+    // Apply category filter
+    let query_result = if let Some(cat) = category {
+        formatter::filter_by_category(query_result, &cat)
+    } else {
+        query_result
+    };
+
+    // Apply custom filters
+    let query_result = match filter.as_deref() {
+        Some("no-description") => formatter::filter_no_description(query_result),
+        Some("no-usage-notes") => formatter::filter_no_usage_notes(query_result),
+        Some("fallback") => formatter::filter_fallback_resources(query_result),
+        Some(f) => {
+            anyhow::bail!("Invalid filter: {}. Valid values: no-description, no-usage-notes, fallback", f);
+        }
+        None => query_result,
+    };
+
+    // Format based on format type
+    match format.as_str() {
+        "llm" => print!("{}", formatter::format_llm(&query_result, show_all)),
+        "full" => print!("{}", formatter::format_full(&query_result)),
+        "json" => {
+            let json = formatter::format_json(&query_result)?;
+            print!("{}", json);
+        }
+        _ => anyhow::bail!("Invalid format: {}. Valid values: llm, full, json", format),
+    }
+
+    Ok(())
+}
+
 /// Validate that required LLM environment variables are set
 fn validate_llm_env() -> Result<()> {
     if env::var("MCC_GAQL_LLM_API_KEY").is_err() && env::var("OPENROUTER_API_KEY").is_err() {
@@ -940,7 +1090,7 @@ mod tests {
             "campaign".to_string(),
             "ad_group".to_string(),
             "ad_group_ad".to_string(),
-            "ad_group_criterion".to_string(),
+            "keyword_view".to_string(),
             "ad".to_string(),
             "keyword".to_string(),
             "campaign_budget".to_string(),
@@ -954,7 +1104,7 @@ mod tests {
         assert!(filtered.contains(&"campaign".to_string()));
         assert!(filtered.contains(&"ad_group".to_string()));
         assert!(filtered.contains(&"ad_group_ad".to_string()));
-        assert!(filtered.contains(&"ad_group_criterion".to_string()));
+        assert!(filtered.contains(&"keyword_view".to_string()));
         assert!(!filtered.contains(&"ad".to_string()));
         assert!(!filtered.contains(&"keyword".to_string()));
         assert!(!filtered.contains(&"campaign_budget".to_string()));
