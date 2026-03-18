@@ -273,6 +273,7 @@ fn build_resource_metadata_from_fields(
                 key_metrics,
                 field_count: resource_fields.len(),
                 description: None,
+                uses_fallback: false,
             },
         );
     }
