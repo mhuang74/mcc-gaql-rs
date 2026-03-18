@@ -5,6 +5,15 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 
+/// Print startup banner with build information to logs
+fn print_startup_banner() {
+    let version_info = format!("v{} ({}) built {}", env!("CARGO_PKG_VERSION"), env!("GIT_HASH"), env!("BUILD_TIME"));
+
+    log::info!("═════════════════════════════════════════════════════════════════");
+    log::info!("{}", format!(" mcc-gaql-gen {} ", version_info));
+    log::info!("═════════════════════════════════════════════════════════════════");
+}
+
 use mcc_gaql_gen::enricher;
 use mcc_gaql_gen::formatter;
 use mcc_gaql_gen::model_pool;
@@ -222,6 +231,7 @@ async fn main() -> Result<()> {
 
     // Initialize logging
     init_logger(cli.verbose);
+    print_startup_banner();
 
     match cli.command {
         Commands::Scrape {

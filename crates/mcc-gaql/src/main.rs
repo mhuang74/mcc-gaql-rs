@@ -29,9 +29,19 @@ use config::ResolvedConfig;
 use field_metadata::{fetch_from_api, load_or_fetch};
 use googleads::GoogleAdsAPIAccess;
 
+/// Print startup banner with build information to logs
+fn print_startup_banner() {
+    let version_info = format!("v{} ({}) built {}", env!("CARGO_PKG_VERSION"), env!("GIT_HASH"), env!("BUILD_TIME"));
+
+    log::info!("═════════════════════════════════════════════════════════════════");
+    log::info!("{}", format!(" mcc-gaql {} ", version_info));
+    log::info!("═════════════════════════════════════════════════════════════════");
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     util::init_logger();
+    print_startup_banner();
 
     let mut args = args::parse();
 
