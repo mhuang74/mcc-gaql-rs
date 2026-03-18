@@ -41,4 +41,4 @@ default = []
 external_client_secret = []
 
 [build-dependencies]
-# build.rs uses std only, no extra deps needed
+chrono = { workspace = true }

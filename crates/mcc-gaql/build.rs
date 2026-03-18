@@ -12,6 +12,10 @@ fn main() {
     println!("cargo:rerun-if-changed=.git/HEAD");
     println!("cargo:rerun-if-changed=.git/index");
 
+    // Generate BUILD_TIME (ISO 8601 UTC)
+    let build_time = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    println!("cargo:rustc-env=BUILD_TIME={}", build_time);
+
     // Handle client secret embedding
     if let Ok(client_secret_json) = env::var("MCC_GAQL_EMBED_CLIENT_SECRET") {
         println!(
