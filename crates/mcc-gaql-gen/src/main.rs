@@ -7,7 +7,12 @@ use clap::{Parser, Subcommand};
 
 /// Print startup banner with build information to logs
 fn print_startup_banner() {
-    let version_info = format!("v{} ({}) built {}", env!("CARGO_PKG_VERSION"), env!("GIT_HASH"), env!("BUILD_TIME"));
+    let version_info = format!(
+        "v{} ({}) built {}",
+        env!("CARGO_PKG_VERSION"),
+        env!("GIT_HASH"),
+        env!("BUILD_TIME")
+    );
 
     log::info!("═════════════════════════════════════════════════════════════════");
     log::info!("{}", format!(" mcc-gaql-gen {} ", version_info));
@@ -27,7 +32,6 @@ use mcc_gaql_gen::vector_store;
 use mcc_gaql_common::config::{QueryEntry, get_queries_from_file};
 use mcc_gaql_common::field_metadata::FieldMetadataCache;
 use mcc_gaql_common::paths::{config_file_path, field_metadata_enriched_path};
-
 
 /// Core resources for test-run mode
 const TEST_RUN_RESOURCES: &[&str] = &["campaign", "ad_group", "ad_group_ad", "keyword_view"];
@@ -80,6 +84,9 @@ enum Commands {
 
     /// Enrich field metadata with LLM-generated descriptions
     Enrich {
+        /// Resource name to enrich (e.g., "campaign"). If not specified, enriches all resources.
+        resource: Option<String>,
+
         /// Path to the field metadata cache (JSON). Defaults to the standard cache path.
         #[arg(long)]
         metadata_cache: Option<PathBuf>,
@@ -249,6 +256,7 @@ async fn main() -> Result<()> {
         }
 
         Commands::Enrich {
+            resource,
             metadata_cache,
             output,
             scraped_docs,
@@ -260,6 +268,7 @@ async fn main() -> Result<()> {
             concurrency,
         } => {
             cmd_enrich(
+                resource,
                 metadata_cache,
                 output,
                 scraped_docs,
@@ -324,14 +333,7 @@ async fn main() -> Result<()> {
             filter,
         } => {
             cmd_metadata(
-                query,
-                metadata,
-                format,
-                category,
-                subset,
-                show_all,
-                diff,
-                filter,
+                query, metadata, format, category, subset, show_all, diff, filter,
             )
             .await?;
         }
@@ -408,6 +410,7 @@ async fn cmd_scrape(
 
 /// Enrich field metadata with LLM descriptions
 async fn cmd_enrich(
+    resource: Option<String>,
     metadata_cache: Option<PathBuf>,
     output: Option<PathBuf>,
     scraped_docs: Option<PathBuf>,
@@ -430,6 +433,9 @@ async fn cmd_enrich(
             "Failed to load field metadata cache. Run 'mcc-gaql --refresh-field-cache' first.",
         )?;
 
+    // Determine the target resource(s) for enrichment
+    let target_resource = resource;
+
     // Filter resources in cache for test-run mode BEFORE enrichment
     if test_run {
         let test_resources = filter_test_resources(cache.get_resources());
@@ -437,6 +443,24 @@ async fn cmd_enrich(
         println!(
             "Test run mode: limited to {} resources, {} fields",
             cache.get_resources().len(),
+            cache.fields.len()
+        );
+    }
+
+    // Filter to single resource if specified
+    if let Some(ref res) = target_resource {
+        // Validate that the resource exists
+        if !cache.get_resources().contains(res) {
+            anyhow::bail!(
+                "Resource '{}' not found in field metadata cache. Available resources: {}",
+                res,
+                cache.get_resources().join(", ")
+            );
+        }
+        cache.retain_resources(&[res.clone()]);
+        println!(
+            "Enriching single resource '{}': {} fields",
+            res,
             cache.fields.len()
         );
     }
@@ -449,7 +473,7 @@ async fn cmd_enrich(
 
     // Proto-based enrichment (no LLM needed)
     if use_proto {
-        return cmd_enrich_proto(&mut cache, output).await;
+        return cmd_enrich_proto(&mut cache, output, target_resource.clone()).await;
     }
 
     // LLM-based enrichment (original path)
@@ -465,8 +489,7 @@ async fn cmd_enrich(
 
     let model_pool = if let Some(concurrency) = concurrency {
         Arc::new(
-            model_pool::ModelPool::new(Arc::clone(&llm_config))
-                .with_total_concurrency(concurrency),
+            model_pool::ModelPool::new(Arc::clone(&llm_config)).with_total_concurrency(concurrency),
         )
     } else {
         Arc::new(model_pool::ModelPool::new(Arc::clone(&llm_config)))
@@ -516,8 +539,19 @@ async fn cmd_enrich(
 
     // Save enriched cache
     let enriched_path = output
+        .clone()
         .or_else(|| mcc_gaql_common::paths::field_metadata_enriched_path().ok())
         .context("Could not determine enriched metadata output path")?;
+
+    // If enriching a single resource, merge with existing enriched cache
+    if target_resource.is_some() && enriched_path.exists() {
+        println!(
+            "\nMerging with existing enriched cache at {:?}...",
+            enriched_path
+        );
+        let existing_cache = FieldMetadataCache::load_from_disk(&enriched_path).await?;
+        cache = merge_enriched_caches(existing_cache, cache);
+    }
 
     println!("\nSaving enriched metadata to {:?}...", enriched_path);
     cache.save_to_disk(&enriched_path).await?;
@@ -536,7 +570,11 @@ async fn cmd_enrich(
 }
 
 /// Proto-based enrichment: use proto documentation instead of LLM
-async fn cmd_enrich_proto(cache: &mut FieldMetadataCache, output: Option<PathBuf>) -> Result<()> {
+async fn cmd_enrich_proto(
+    cache: &mut FieldMetadataCache,
+    output: Option<PathBuf>,
+    target_resource: Option<String>,
+) -> Result<()> {
     // Stage 1: Load or build proto docs cache
     println!("\nStage 1/2: Loading proto documentation...");
 
@@ -585,8 +623,19 @@ async fn cmd_enrich_proto(cache: &mut FieldMetadataCache, output: Option<PathBuf
 
     // Save enriched cache
     let enriched_path = output
+        .clone()
         .or_else(|| mcc_gaql_common::paths::field_metadata_enriched_path().ok())
         .context("Could not determine enriched metadata output path")?;
+
+    // If enriching a single resource, merge with existing enriched cache
+    if target_resource.is_some() && enriched_path.exists() {
+        println!(
+            "\nMerging with existing enriched cache at {:?}...",
+            enriched_path
+        );
+        let existing_cache = FieldMetadataCache::load_from_disk(&enriched_path).await?;
+        *cache = merge_enriched_caches(existing_cache, cache.clone());
+    }
 
     println!("\nSaving enriched metadata to {:?}...", enriched_path);
     cache.save_to_disk(&enriched_path).await?;
@@ -967,7 +1016,8 @@ async fn cmd_metadata(
     filter: Option<String>,
 ) -> Result<()> {
     // Determine metadata path
-    let metadata_path = metadata.or_else(|| field_metadata_enriched_path().ok())
+    let metadata_path = metadata
+        .or_else(|| field_metadata_enriched_path().ok())
         .context("Could not determine enriched metadata path")?;
 
     if !metadata_path.exists() {
@@ -978,17 +1028,22 @@ async fn cmd_metadata(
     }
 
     // Load enriched cache
-    let cache = FieldMetadataCache::load_from_disk(&metadata_path).await
+    let cache = FieldMetadataCache::load_from_disk(&metadata_path)
+        .await
         .context("Failed to load enriched metadata")?;
 
     // Diff mode - compare with non-enriched cache
     if diff {
-        let non_enriched_path = metadata_path.parent()
+        let non_enriched_path = metadata_path
+            .parent()
             .ok_or_else(|| anyhow::anyhow!("Invalid metadata path"))?
             .join("field_metadata.json");
 
         if !non_enriched_path.exists() {
-            eprintln!("Warning: Non-enriched cache not found at {:?}. Showing enriched-only output.", non_enriched_path);
+            eprintln!(
+                "Warning: Non-enriched cache not found at {:?}. Showing enriched-only output.",
+                non_enriched_path
+            );
         }
 
         let non_enriched_cache = if non_enriched_path.exists() {
@@ -1027,7 +1082,10 @@ async fn cmd_metadata(
         Some("no-usage-notes") => formatter::filter_no_usage_notes(query_result),
         Some("fallback") => formatter::filter_fallback_resources(query_result),
         Some(f) => {
-            anyhow::bail!("Invalid filter: {}. Valid values: no-description, no-usage-notes, fallback", f);
+            anyhow::bail!(
+                "Invalid filter: {}. Valid values: no-description, no-usage-notes, fallback",
+                f
+            );
         }
         None => query_result,
     };
@@ -1063,6 +1121,40 @@ fn validate_llm_env() -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// Merge a newly enriched cache (single resource) into an existing enriched cache.
+/// The new cache's fields take precedence, but all other fields from the existing
+/// cache are preserved.
+fn merge_enriched_caches(
+    existing: FieldMetadataCache,
+    new: FieldMetadataCache,
+) -> FieldMetadataCache {
+    use std::collections::HashMap;
+
+    let mut merged = existing;
+
+    // Update fields with newly enriched ones
+    for (field_name, field) in new.fields {
+        merged.fields.insert(field_name, field);
+    }
+
+    // Update resource metadata with newly enriched resources
+    if let Some(new_metadata) = new.resource_metadata {
+        if merged.resource_metadata.is_none() {
+            merged.resource_metadata = Some(HashMap::new());
+        }
+        if let Some(ref mut existing_metadata) = merged.resource_metadata {
+            for (resource_name, metadata) in new_metadata {
+                existing_metadata.insert(resource_name, metadata);
+            }
+        }
+    }
+
+    // Update last_updated timestamp
+    merged.last_updated = chrono::Utc::now();
+
+    merged
 }
 
 /// Initialize logging based on verbosity and environment variables

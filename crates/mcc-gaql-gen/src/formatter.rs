@@ -4,9 +4,9 @@
 //
 
 use anyhow::Result;
+use mcc_gaql_common::field_metadata::{FieldMetadata, FieldMetadataCache, ResourceMetadata};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use mcc_gaql_common::field_metadata::{FieldMetadata, FieldMetadataCache, ResourceMetadata};
 
 /// Quality indicator for a field with missing data
 const NO_DESCRIPTION: &str = "[no description]";
@@ -51,7 +51,12 @@ pub fn match_query(cache: &FieldMetadataCache, query: &str) -> Result<QueryResul
 
     // If NOT a full field name, check resource match FIRST
     if !is_full_field_name {
-        if cache.resource_metadata.as_ref().map(|rm| rm.contains_key(query)).unwrap_or(false) {
+        if cache
+            .resource_metadata
+            .as_ref()
+            .map(|rm| rm.contains_key(query))
+            .unwrap_or(false)
+        {
             // Get all fields for this resource
             let resource_fields = cache.get_resource_fields(query);
             let mut attributes = Vec::new();
@@ -67,7 +72,10 @@ pub fn match_query(cache: &FieldMetadataCache, query: &str) -> Result<QueryResul
                 }
             }
 
-            let metadata = cache.resource_metadata.as_ref().and_then(|rm| rm.get(query))
+            let metadata = cache
+                .resource_metadata
+                .as_ref()
+                .and_then(|rm| rm.get(query))
                 .cloned()
                 .unwrap_or_else(|| ResourceMetadata {
                     name: query.to_string(),
@@ -94,7 +102,12 @@ pub fn match_query(cache: &FieldMetadataCache, query: &str) -> Result<QueryResul
     }
 
     // Try exact resource match again (as fallback)
-    if cache.resource_metadata.as_ref().map(|rm| rm.contains_key(query)).unwrap_or(false) {
+    if cache
+        .resource_metadata
+        .as_ref()
+        .map(|rm| rm.contains_key(query))
+        .unwrap_or(false)
+    {
         // Get all fields for this resource
         let resource_fields = cache.get_resource_fields(query);
         let mut attributes = Vec::new();
@@ -110,7 +123,10 @@ pub fn match_query(cache: &FieldMetadataCache, query: &str) -> Result<QueryResul
             }
         }
 
-        let metadata = cache.resource_metadata.as_ref().and_then(|rm| rm.get(query))
+        let metadata = cache
+            .resource_metadata
+            .as_ref()
+            .and_then(|rm| rm.get(query))
             .cloned()
             .unwrap_or_else(|| ResourceMetadata {
                 name: query.to_string(),
@@ -138,7 +154,10 @@ pub fn match_query(cache: &FieldMetadataCache, query: &str) -> Result<QueryResul
 }
 
 /// Find fields matching a pattern, grouped by category
-fn find_fields_by_pattern(cache: &FieldMetadataCache, pattern: &str) -> HashMap<String, Vec<FieldMetadata>> {
+fn find_fields_by_pattern(
+    cache: &FieldMetadataCache,
+    pattern: &str,
+) -> HashMap<String, Vec<FieldMetadata>> {
     let mut result = HashMap::new();
 
     // Convert glob pattern to regex-like matching
@@ -146,7 +165,8 @@ fn find_fields_by_pattern(cache: &FieldMetadataCache, pattern: &str) -> HashMap<
         // Simple wildcard pattern - convert to regex
         let regex_pattern = pattern.replace('*', ".*");
         // Check if pattern starts with ^ or we need it
-        let _anchored = if regex_pattern.starts_with(".") || regex_pattern.starts_with("metrics")
+        let _anchored = if regex_pattern.starts_with(".")
+            || regex_pattern.starts_with("metrics")
             || regex_pattern.starts_with("segments")
         {
             format!(".*{}", regex_pattern)
@@ -215,44 +235,35 @@ pub fn filter_by_category(query_result: QueryResult, category: &str) -> QueryRes
         } => {
             let cat = category.to_uppercase();
             match cat.as_str() {
-                "ATTRIBUTE" | "Attribute" | "attribute" => {
-                    QueryResult::Resource {
-                        metadata,
-                        attributes,
-                        metrics: vec![],
-                        segments: vec![],
-                    }
-                }
-                "METRIC" | "Metric" | "metric" => {
-                    QueryResult::Resource {
-                        metadata,
-                        attributes: vec![],
-                        metrics,
-                        segments: vec![],
-                    }
-                }
-                "SEGMENT" | "Segment" | "segment" => {
-                    QueryResult::Resource {
-                        metadata,
-                        attributes: vec![],
-                        metrics: vec![],
-                        segments,
-                    }
-                }
+                "ATTRIBUTE" | "Attribute" | "attribute" => QueryResult::Resource {
+                    metadata,
+                    attributes,
+                    metrics: vec![],
+                    segments: vec![],
+                },
+                "METRIC" | "Metric" | "metric" => QueryResult::Resource {
+                    metadata,
+                    attributes: vec![],
+                    metrics,
+                    segments: vec![],
+                },
+                "SEGMENT" | "Segment" | "segment" => QueryResult::Resource {
+                    metadata,
+                    attributes: vec![],
+                    metrics: vec![],
+                    segments,
+                },
                 _ => QueryResult::Resource {
                     metadata,
                     attributes,
                     metrics,
                     segments,
-                }
+                },
             }
         }
         QueryResult::Pattern { mut fields } => {
             let cat = category.to_uppercase();
-            fields = fields
-                .into_iter()
-                .filter(|(c, _)| c == &cat)
-                .collect();
+            fields = fields.into_iter().filter(|(c, _)| c == &cat).collect();
             QueryResult::Pattern { fields }
         }
     }
@@ -311,7 +322,8 @@ pub fn filter_subset(query_result: QueryResult) -> QueryResult {
                             SUBSET_RESOURCES.contains(&resource.as_str())
                         } else {
                             // metrics and segments are allowed
-                            field.name.starts_with("metrics.") || field.name.starts_with("segments.")
+                            field.name.starts_with("metrics.")
+                                || field.name.starts_with("segments.")
                         }
                     });
                     (cat, field_list)
@@ -328,7 +340,9 @@ pub fn filter_subset(query_result: QueryResult) -> QueryResult {
 pub fn filter_no_description(query_result: QueryResult) -> QueryResult {
     match query_result {
         QueryResult::Field(field) => {
-            if field.description.is_none() || field.description.as_ref().map_or(true, |d| d.is_empty()) {
+            if field.description.is_none()
+                || field.description.as_ref().map_or(true, |d| d.is_empty())
+            {
                 QueryResult::Field(field)
             } else {
                 QueryResult::Pattern {
@@ -345,7 +359,10 @@ pub fn filter_no_description(query_result: QueryResult) -> QueryResult {
             let filter_desc = |fields: Vec<FieldMetadata>| -> Vec<FieldMetadata> {
                 fields
                     .into_iter()
-                    .filter(|f| f.description.is_none() || f.description.as_ref().map_or(true, |d| d.is_empty()))
+                    .filter(|f| {
+                        f.description.is_none()
+                            || f.description.as_ref().map_or(true, |d| d.is_empty())
+                    })
                     .collect()
             };
 
@@ -371,7 +388,9 @@ pub fn filter_no_description(query_result: QueryResult) -> QueryResult {
 pub fn filter_no_usage_notes(query_result: QueryResult) -> QueryResult {
     match query_result {
         QueryResult::Field(field) => {
-            if field.usage_notes.is_none() || field.usage_notes.as_ref().map_or(true, |n| n.is_empty()) {
+            if field.usage_notes.is_none()
+                || field.usage_notes.as_ref().map_or(true, |n| n.is_empty())
+            {
                 QueryResult::Field(field)
             } else {
                 QueryResult::Pattern {
@@ -389,7 +408,8 @@ pub fn filter_no_usage_notes(query_result: QueryResult) -> QueryResult {
                 fields
                     .into_iter()
                     .filter(|f| {
-                        f.usage_notes.is_none() || f.usage_notes.as_ref().map_or(true, |n| n.is_empty())
+                        f.usage_notes.is_none()
+                            || f.usage_notes.as_ref().map_or(true, |n| n.is_empty())
                     })
                     .collect()
             };
@@ -454,8 +474,11 @@ pub fn format_llm(query_result: &QueryResult, show_all: bool) -> String {
 
     match query_result {
         QueryResult::Field(field) => {
-            output.push_str(&format!("- {}: {}\n", field.name,
-                field.description.as_deref().unwrap_or(NO_DESCRIPTION)));
+            output.push_str(&format!(
+                "- {}: {}\n",
+                field.name,
+                field.description.as_deref().unwrap_or(NO_DESCRIPTION)
+            ));
         }
         QueryResult::Resource {
             metadata,
@@ -469,7 +492,10 @@ pub fn format_llm(query_result: &QueryResult, show_all: bool) -> String {
                 String::new()
             };
 
-            output.push_str(&format!("=== RESOURCE: {}{} ===\n", metadata.name, fallback_tag));
+            output.push_str(&format!(
+                "=== RESOURCE: {}{} ===\n",
+                metadata.name, fallback_tag
+            ));
 
             if let Some(desc) = &metadata.description {
                 output.push_str(&format!("Description: {}\n", desc));
@@ -478,25 +504,44 @@ pub fn format_llm(query_result: &QueryResult, show_all: bool) -> String {
             if !metadata.key_attributes.is_empty() {
                 output.push_str(&format!(
                     "Key attributes: {}\n",
-                    metadata.key_attributes.iter().take(5).cloned().collect::<Vec<_>>().join(", ")
+                    metadata
+                        .key_attributes
+                        .iter()
+                        .take(5)
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 ));
             }
 
             if !metadata.key_metrics.is_empty() {
                 output.push_str(&format!(
                     "Key metrics: {}\n",
-                    metadata.key_metrics.iter().take(5).cloned().collect::<Vec<_>>().join(", ")
+                    metadata
+                        .key_metrics
+                        .iter()
+                        .take(5)
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 ));
             }
 
             output.push_str("\n");
 
             // Apply category limit
-            let limit = if show_all { usize::MAX } else { LLM_CATEGORY_LIMIT };
+            let limit = if show_all {
+                usize::MAX
+            } else {
+                LLM_CATEGORY_LIMIT
+            };
 
             if !attributes.is_empty() {
-                output.push_str(&format!("### ATTRIBUTE ({}/{} showing)\n",
-                    limit.min(attributes.len()), attributes.len()));
+                output.push_str(&format!(
+                    "### ATTRIBUTE ({}/{} showing)\n",
+                    limit.min(attributes.len()),
+                    attributes.len()
+                ));
                 for (i, field) in attributes.iter().take(limit).enumerate() {
                     output.push_str(&format_field_llm(field, i));
                 }
@@ -504,8 +549,11 @@ pub fn format_llm(query_result: &QueryResult, show_all: bool) -> String {
             }
 
             if !metrics.is_empty() {
-                output.push_str(&format!("### METRIC ({}/{} showing)\n",
-                    limit.min(metrics.len()), metrics.len()));
+                output.push_str(&format!(
+                    "### METRIC ({}/{} showing)\n",
+                    limit.min(metrics.len()),
+                    metrics.len()
+                ));
                 for (i, field) in metrics.iter().take(limit).enumerate() {
                     output.push_str(&format_field_llm(field, i));
                 }
@@ -513,22 +561,33 @@ pub fn format_llm(query_result: &QueryResult, show_all: bool) -> String {
             }
 
             if !segments.is_empty() {
-                output.push_str(&format!("### SEGMENT ({}/{} showing)\n",
-                    limit.min(segments.len()), segments.len()));
+                output.push_str(&format!(
+                    "### SEGMENT ({}/{} showing)\n",
+                    limit.min(segments.len()),
+                    segments.len()
+                ));
                 for (i, field) in segments.iter().take(limit).enumerate() {
                     output.push_str(&format_field_llm(field, i));
                 }
             }
         }
         QueryResult::Pattern { fields } => {
-            let limit = if show_all { usize::MAX } else { LLM_CATEGORY_LIMIT };
+            let limit = if show_all {
+                usize::MAX
+            } else {
+                LLM_CATEGORY_LIMIT
+            };
 
             for (category, field_list) in fields {
                 if field_list.is_empty() {
                     continue;
                 }
-                output.push_str(&format!("### {} ({}/{} showing)\n",
-                    category, limit.min(field_list.len()), field_list.len()));
+                output.push_str(&format!(
+                    "### {} ({}/{} showing)\n",
+                    category,
+                    limit.min(field_list.len()),
+                    field_list.len()
+                ));
                 for (i, field) in field_list.iter().take(limit).enumerate() {
                     output.push_str(&format_field_llm(field, i));
                 }
@@ -542,7 +601,11 @@ pub fn format_llm(query_result: &QueryResult, show_all: bool) -> String {
 
 /// Format a single field in LLM style
 fn format_field_llm(field: &FieldMetadata, _index: usize) -> String {
-    let filterable_tag = if field.filterable { " [filterable]" } else { "" };
+    let filterable_tag = if field.filterable {
+        " [filterable]"
+    } else {
+        ""
+    };
     let sortable_tag = if field.sortable { " [sortable]" } else { "" };
 
     let mut parts = vec![
@@ -590,7 +653,10 @@ pub fn format_full(query_result: &QueryResult) -> String {
                 String::new()
             };
 
-            output.push_str(&format!("=== RESOURCE: {}{} ===\n", metadata.name, fallback_tag));
+            output.push_str(&format!(
+                "=== RESOURCE: {}{} ===\n",
+                metadata.name, fallback_tag
+            ));
 
             if let Some(desc) = &metadata.description {
                 output.push_str(&format!("Description: {}\n", desc));
@@ -599,11 +665,17 @@ pub fn format_full(query_result: &QueryResult) -> String {
             output.push_str(&format!("Fields: {} total", metadata.field_count));
 
             if !metadata.key_attributes.is_empty() {
-                output.push_str(&format!("\nKey attributes: {}", metadata.key_attributes.join(", ")));
+                output.push_str(&format!(
+                    "\nKey attributes: {}",
+                    metadata.key_attributes.join(", ")
+                ));
             }
 
             if !metadata.key_metrics.is_empty() {
-                output.push_str(&format!("\nKey metrics: {}", metadata.key_metrics.join(", ")));
+                output.push_str(&format!(
+                    "\nKey metrics: {}",
+                    metadata.key_metrics.join(", ")
+                ));
             }
 
             output.push_str(&format!("\nUses fallback: {}\n\n", metadata.uses_fallback));
@@ -653,13 +725,17 @@ pub fn format_full(query_result: &QueryResult) -> String {
 
 /// Format a single field with all metadata
 fn format_field_full(field: &FieldMetadata) -> String {
-    let desc_indicator = if field.description.is_none() || field.description.as_ref().map_or(true, |d| d.is_empty()) {
+    let desc_indicator = if field.description.is_none()
+        || field.description.as_ref().map_or(true, |d| d.is_empty())
+    {
         format!(" {}", NO_DESCRIPTION)
     } else {
         String::new()
     };
 
-    let notes_indicator = if field.usage_notes.is_none() || field.usage_notes.as_ref().map_or(true, |n| n.is_empty()) {
+    let notes_indicator = if field.usage_notes.is_none()
+        || field.usage_notes.as_ref().map_or(true, |n| n.is_empty())
+    {
         format!(" {}", NO_USAGE_NOTES)
     } else {
         String::new()
@@ -686,12 +762,23 @@ fn format_field_full(field: &FieldMetadata) -> String {
     if !field.selectable_with.is_empty() {
         output.push_str(&format!(
             "  Selectable with: {}\n",
-            field.selectable_with.iter().take(5).cloned().collect::<Vec<_>>().join(", ")
+            field
+                .selectable_with
+                .iter()
+                .take(5)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ")
         ));
     }
 
     if !field.enum_values.is_empty() {
-        let values: Vec<&str> = field.enum_values.iter().take(10).map(String::as_str).collect();
+        let values: Vec<&str> = field
+            .enum_values
+            .iter()
+            .take(10)
+            .map(String::as_str)
+            .collect();
         output.push_str(&format!("  Enum values: {}\n", values.join(", ")));
     }
 
@@ -747,11 +834,18 @@ pub fn format_diff_llm(
 
     output.push_str("=== ENRICHMENT COMPARISON ===\n");
     output.push_str(&format!("Total fields: {}\n", total_fields));
-    output.push_str(&format!("Enriched: {} ({:.1}%)\n", enriched_count, enrichment_rate));
+    output.push_str(&format!(
+        "Enriched: {} ({:.1}%)\n",
+        enriched_count, enrichment_rate
+    ));
 
     // Get non-enriched fields
     let non_enriched_count = total_fields - enriched_count;
-    output.push_str(&format!("Without description: {} ({:.1}%)\n", non_enriched_count, 100.0 - enrichment_rate));
+    output.push_str(&format!(
+        "Without description: {} ({:.1}%)\n",
+        non_enriched_count,
+        100.0 - enrichment_rate
+    ));
 
     output.push_str("\n");
 
@@ -776,7 +870,10 @@ pub fn format_diff_llm(
                 String::new()
             };
 
-            result_with_markers.push_str(&format!("=== RESOURCE: {}{} ===\n", metadata.name, fallback_tag));
+            result_with_markers.push_str(&format!(
+                "=== RESOURCE: {}{} ===\n",
+                metadata.name, fallback_tag
+            ));
 
             if let Some(desc) = &metadata.description {
                 result_with_markers.push_str(&format!("Description: {}\n", desc));
@@ -785,58 +882,95 @@ pub fn format_diff_llm(
             if !metadata.key_attributes.is_empty() {
                 result_with_markers.push_str(&format!(
                     "Key attributes: {}\n",
-                    metadata.key_attributes.iter().take(5).cloned().collect::<Vec<_>>().join(", ")
+                    metadata
+                        .key_attributes
+                        .iter()
+                        .take(5)
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 ));
             }
 
             if !metadata.key_metrics.is_empty() {
                 result_with_markers.push_str(&format!(
                     "Key metrics: {}\n",
-                    metadata.key_metrics.iter().take(5).cloned().collect::<Vec<_>>().join(", ")
+                    metadata
+                        .key_metrics
+                        .iter()
+                        .take(5)
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 ));
             }
 
             result_with_markers.push_str("\n");
 
-            let limit = if show_all { usize::MAX } else { LLM_CATEGORY_LIMIT };
+            let limit = if show_all {
+                usize::MAX
+            } else {
+                LLM_CATEGORY_LIMIT
+            };
 
             if !attributes.is_empty() {
-                result_with_markers.push_str(&format!("### ATTRIBUTE ({}/{} showing)\n",
-                    limit.min(attributes.len()), attributes.len()));
+                result_with_markers.push_str(&format!(
+                    "### ATTRIBUTE ({}/{} showing)\n",
+                    limit.min(attributes.len()),
+                    attributes.len()
+                ));
                 for field in attributes.iter().take(limit) {
-                    result_with_markers.push_str(&format_field_with_llm_marker(field, non_enriched));
+                    result_with_markers
+                        .push_str(&format_field_with_llm_marker(field, non_enriched));
                 }
                 result_with_markers.push('\n');
             }
 
             if !metrics.is_empty() {
-                result_with_markers.push_str(&format!("### METRIC ({}/{} showing)\n",
-                    limit.min(metrics.len()), metrics.len()));
+                result_with_markers.push_str(&format!(
+                    "### METRIC ({}/{} showing)\n",
+                    limit.min(metrics.len()),
+                    metrics.len()
+                ));
                 for field in metrics.iter().take(limit) {
-                    result_with_markers.push_str(&format_field_with_llm_marker(field, non_enriched));
+                    result_with_markers
+                        .push_str(&format_field_with_llm_marker(field, non_enriched));
                 }
                 result_with_markers.push('\n');
             }
 
             if !segments.is_empty() {
-                result_with_markers.push_str(&format!("### SEGMENT ({}/{} showing)\n",
-                    limit.min(segments.len()), segments.len()));
+                result_with_markers.push_str(&format!(
+                    "### SEGMENT ({}/{} showing)\n",
+                    limit.min(segments.len()),
+                    segments.len()
+                ));
                 for field in segments.iter().take(limit) {
-                    result_with_markers.push_str(&format_field_with_llm_marker(field, non_enriched));
+                    result_with_markers
+                        .push_str(&format_field_with_llm_marker(field, non_enriched));
                 }
             }
         }
         QueryResult::Pattern { fields } => {
-            let limit = if show_all { usize::MAX } else { LLM_CATEGORY_LIMIT };
+            let limit = if show_all {
+                usize::MAX
+            } else {
+                LLM_CATEGORY_LIMIT
+            };
 
             for (category, field_list) in fields {
                 if field_list.is_empty() {
                     continue;
                 }
-                result_with_markers.push_str(&format!("### {} ({}/{} showing)\n",
-                    category, limit.min(field_list.len()), field_list.len()));
+                result_with_markers.push_str(&format!(
+                    "### {} ({}/{} showing)\n",
+                    category,
+                    limit.min(field_list.len()),
+                    field_list.len()
+                ));
                 for field in field_list.iter().take(limit) {
-                    result_with_markers.push_str(&format_field_with_llm_marker(field, non_enriched));
+                    result_with_markers
+                        .push_str(&format_field_with_llm_marker(field, non_enriched));
                 }
                 result_with_markers.push('\n');
             }
@@ -849,13 +983,17 @@ pub fn format_diff_llm(
 }
 
 /// Format a field with LLM-enriched marker
-fn format_field_with_llm_marker(field: &FieldMetadata, non_enriched: &FieldMetadataCache) -> String {
+fn format_field_with_llm_marker(
+    field: &FieldMetadata,
+    non_enriched: &FieldMetadataCache,
+) -> String {
     // Check if this field was enriched (has description in enriched, not in non-enriched)
     let non_enriched_field = non_enriched.get_field(&field.name);
     let was_enriched = non_enriched_field
         .map(|ne| {
             let has_desc = ne.description.is_some() && !ne.description.as_ref().unwrap().is_empty();
-            let enriched_has_desc = field.description.is_some() && !field.description.as_ref().unwrap().is_empty();
+            let enriched_has_desc =
+                field.description.is_some() && !field.description.as_ref().unwrap().is_empty();
             !has_desc && enriched_has_desc
         })
         .unwrap_or(false);
@@ -866,17 +1004,27 @@ fn format_field_with_llm_marker(field: &FieldMetadata, non_enriched: &FieldMetad
         String::new()
     };
 
-    let filterable_tag = if field.filterable { " [filterable]" } else { "" };
+    let filterable_tag = if field.filterable {
+        " [filterable]"
+    } else {
+        ""
+    };
     let sortable_tag = if field.sortable { " [sortable]" } else { "" };
 
     let desc = field.description.as_deref().unwrap_or(NO_DESCRIPTION);
 
-    let mut output = format!("- {}{}{}{}: {}\n", field.name, llm_marker, filterable_tag, sortable_tag, desc);
+    let mut output = format!(
+        "- {}{}{}{}: {}\n",
+        field.name, llm_marker, filterable_tag, sortable_tag, desc
+    );
 
     // Add before/after if enriched
     if was_enriched {
         if let Some(ne_field) = non_enriched_field {
-            output.push_str(&format!("  Before: {}\n", ne_field.description.as_deref().unwrap_or("")));
+            output.push_str(&format!(
+                "  Before: {}\n",
+                ne_field.description.as_deref().unwrap_or("")
+            ));
             output.push_str(&format!("  After: {}\n", desc));
         }
     }

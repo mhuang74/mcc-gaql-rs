@@ -21,7 +21,7 @@
 
 [account_ids_with_access_and_traffic_last_week]
 description = """
-Account IDs Accessible and Trafficking
+Find accounts that have clicks in last 7 days
 """
 query = """
 SELECT 
@@ -34,7 +34,7 @@ WHERE
 
 [accounts_with_traffic_last_week]
 description = """
-Accounts with Traffic Last Week
+Show account performance for accounts with impressions in the last 7 days. Include account name, cost, and currency.
 """
 query = """
 SELECT 
@@ -52,7 +52,7 @@ WHERE
 
 [keywords_with_top_traffic_last_week]
 description = """
-Top Keywords
+Show cost and performance of top trafficking keywords with more than 10,000 clicks in the last 7 days. Include id and name for account, campaign, and adgroup. Include campaign type and account currency.
 """
 query = """
 SELECT
@@ -81,7 +81,7 @@ LIMIT 10
 
 [accounts_with_perf_max_campaigns_last_week]
 description = """
-Accounts with Performance Max Campaigns
+Show the top performing Performance Max Campaign (by clicks) for each account, with at least 100 clicks in the last 7 days. Include id and name for account and campaign. Include campaign type and account currency.
 """
 query = """
 SELECT 
@@ -106,7 +106,7 @@ LIMIT 1
 
 [accounts_with_smart_campaigns_last_week]
 description = """
-Accounts with Smart Campaigns
+Show the top performing Smart Campaign (by clicks) for each account, with at least 100 clicks in the last 7 days. Include id and name for account and campaign. Include campaign type and account currency.
 """
 query = """
 	SELECT 
@@ -131,7 +131,7 @@ query = """
 
 [accounts_with_local_campaigns_last_week]
 description = """
-Accounts with Local Campaigns
+Show the top performing Local Campaigns (by clicks) for each account, with at least 500 clicks in the last 7 days. Include id and name for account and campaign. Include campaign type and account currency.
 """
 query = """
 	SELECT 
@@ -156,7 +156,7 @@ query = """
 
 [accounts_with_shopping_campaigns_last_week]
 description = """
-Accounts with Shopping Campaigns
+Show the top performing Shopping Campaign (by clicks) for each account, with at least 100 clicks in the last 7 days. Include id and name for account and campaign. Include campaign type and account currency.
 """
 query = """
 	SELECT 
@@ -181,7 +181,7 @@ query = """
 
 [accounts_with_multichannel_campaigns_last_week]
 description = """
-Accounts with Multi-Channel Campaigns
+Show the top performing Multi-Channel Campaign (by clicks) for each account, with at least 100 clicks in the last 7 days. Include id and name for account and campaign. Include campaign type and account currency.
 """
 query = """
 	SELECT 
@@ -207,7 +207,7 @@ query = """
 
 [accounts_with_asset_sitelink_last_week]
 description = """
-Accounts with Asset-based Sitelink Ext
+Show the top performing Sitelink (by impressions) for each account, with at least 20,000 clicks in the last 7 days. Include id and name for account and campaign. Include campaign type and account currency.
 """
 query = """
 	SELECT 
@@ -233,7 +233,7 @@ query = """
 
 [accounts_with_asset_call_last_week]
 description = """
-Accounts with Asset-based Call Ext
+Show the top performing Call Extension (by impressions) for each account, with at least 100 impressions in the last 7 days. Include id and name for account and campaign. Include campaign type and account currency.
 """
 query = """
 	SELECT 
@@ -259,7 +259,7 @@ query = """
 
 [accounts_with_asset_callout_last_week]
 description = """
-Accounts with Asset-based Callout Ext
+Show the top performing Callout Extension (by impressions) for each account, with at least 30000 clicks in the last 7 days. Include id and name for account and campaign. Include campaign type and account currency.
 """
 query = """
 	SELECT 
@@ -285,7 +285,7 @@ query = """
 
 [accounts_with_asset_app_last_week]
 description = """
-Accounts with Asset-based App Ext
+Show the top performing App Extension (by impressions) for each account, with at least 1 impression in the last 7 days. Include id and name for account and campaign. Include campaign type and account currency.
 """
 query = """
 	SELECT 
@@ -311,13 +311,13 @@ query = """
 
 [perf_max_campaigns_with_traffic_last_30_days]
 description = """
-Last 30-day Traffic from Performance Max Campaigns
+Show daily performance of Performance Max Campaigns for the previous 30 days, including key performance metrics like CTR, AvgCpc, Conversion, Revenue, CPA. Include ID and Name for campaigns.
 """
 query = """
 	SELECT 
 	  campaign.id, 
 	  campaign.name,
-  	  campaign.advertising_channel_type,
+  	campaign.advertising_channel_type,
 	  segments.date,
 	  metrics.impressions, 
 	  metrics.clicks, 
@@ -339,7 +339,7 @@ query = """
 
 [asset_fields_with_traffic_ytd]
 description = """
-YTD Traffic from asset_field_type_view resource
+Show YTD daily performance of assets on days with at least 1 daily impression. Include account currency code and asset type.
 """
 query = """
 	SELECT 
@@ -351,55 +351,16 @@ query = """
 	  customer.currency_code  
 	FROM asset_field_type_view 
 	WHERE 
-	  segments.year IN (2022)
+	  segments.year IN (2026)
 	  AND metrics.impressions > 1
 	ORDER BY 
 	  asset_field_type_view.field_type, segments.date
 """
 
-[extension_feed_items_with_traffic_ytd]
-description = """
-YTD Trafic from extension_feed_item resource
-"""
-query = """
-	SELECT
-	  extension_feed_item.extension_type,
-	  segments.date,
-	  metrics.impressions,
-	  metrics.clicks,
-	  metrics.cost_micros,
-	  customer.currency_code
-	FROM extension_feed_item
-	WHERE
-	  segments.year IN (2022)
-	  AND metrics.impressions > 1
-	ORDER BY 
-	  extension_feed_item.extension_type, segments.date
-"""
-
-[feed_placeholders_with_traffic_ytd]
-description = """
-YTD Trafic from feed_placeholder_view resource
-"""
-query = """
-	SELECT
-	  feed_placeholder_view.placeholder_type,
-	  segments.date,
-	  metrics.impressions,
-	  metrics.clicks,
-	  metrics.cost_micros,
-	  customer.currency_code
-	FROM feed_placeholder_view
-	WHERE
-	  segments.year IN (2022) 
-	  AND metrics.impressions > 1
-	ORDER BY 
-	  feed_placeholder_view.placeholder_type, segments.date
-"""
 
 [campaigns_with_smart_bidding_by_spend]
 description = """
-Top Spending Smart Bidding Campaigns
+Show 25 top spending Smart Bidding Campaigns from each account, with at least 1,000 spend within last 7 days. Include ID and Name of accounts and campaigns. Include conversion metrics.
 """
 query = """
 	SELECT 
@@ -429,7 +390,7 @@ query = """
 
 [campaigns_shopping_campaign_performance]
 description = """
-Performance of all Shopping Campaigns
+Show performance of all Shopping Campaigns from each account (by spend), with at least 100 spend within last 30 days. Include ID and Name of accounts and campaigns. Include budget, bidding strategy, avgCpc, and conversion metrics.
 """
 query = """
 	SELECT 
