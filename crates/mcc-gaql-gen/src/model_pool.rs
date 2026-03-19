@@ -15,14 +15,19 @@ use crate::rag::LlmConfig;
 
 /// Pool of LLM models with per-model concurrency control.
 ///
-/// Each model has a semaphore with 1 permit, ensuring only one request per
-/// model is in-flight at any time.  Use [`ModelPool::acquire`] to obtain the
-/// next available model, or [`ModelPool::acquire_preferred`] to wait
-/// specifically for model index 0.
+/// Each model has a semaphore with `permits` permits, allowing multiple concurrent
+/// requests per model.  Callers acquire a `ModelLease`, use it to create an agent,
+/// then simply drop the lease to release the slot.
+///
+/// Use [`ModelPool::acquire`] to obtain the next available model.
 pub struct ModelPool {
     config: Arc<LlmConfig>,
     /// One semaphore per model; semaphore index == model index in `config`.
+    /// Number of permits per semaphore controls per-model concurrency.
     semaphores: Vec<Arc<Semaphore>>,
+    /// Number of permits per semaphore (per-model concurrency).
+    #[allow(dead_code)]
+    permits_per_model: usize,
 }
 
 impl ModelPool {
@@ -36,7 +41,44 @@ impl ModelPool {
             .map(|_| Arc::new(Semaphore::new(1)))
             .collect();
 
-        Self { config, semaphores }
+        Self {
+            config,
+            semaphores,
+            permits_per_model: 1,
+        }
+    }
+
+    /// Set the total concurrency across all models.
+    ///
+    /// This distributes permits evenly across models. For example, with
+    /// 2 models and total_concurrency=4, each model gets 2 permits (4 total).
+    pub fn with_total_concurrency(self, total_concurrency: usize) -> Self {
+        if total_concurrency == 0 {
+            log::warn!("Invalid total concurrency 0, using default");
+            return self;
+        }
+
+        let model_count = self.config.model_count().max(1);
+        let permits_per_model = (total_concurrency + model_count - 1) / model_count; // Ceiling division
+
+        log::info!(
+            "Setting total concurrency to {} ({} permits per model across {} models)",
+            total_concurrency,
+            permits_per_model,
+            model_count
+        );
+
+        let semaphores = self.config
+            .all_models()
+            .iter()
+            .map(|_| Arc::new(Semaphore::new(permits_per_model)))
+            .collect();
+
+        Self {
+            semaphores,
+            permits_per_model,
+            ..self
+        }
     }
 
     /// Returns the number of models in the pool.

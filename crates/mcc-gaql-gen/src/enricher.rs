@@ -172,49 +172,96 @@ impl MetadataEnricher {
 
         // Stage 3: Key field selection per resource (run before resource description enrichment)
         log::info!("Selecting key fields for {} resources", resources.len());
-        for resource in &resources {
-            match self.select_key_fields_for_resource(resource, cache).await {
-                Ok((key_attrs, key_mets, uses_fallback)) => {
-                    if let Some(rm) = cache
-                        .resource_metadata
-                        .as_mut()
-                        .and_then(|m| m.get_mut(resource))
-                    {
-                        rm.key_attributes = key_attrs;
-                        rm.key_metrics = key_mets;
-                        rm.uses_fallback = uses_fallback;
-                    }
+
+        // Process key field selection concurrently using buffer_unordered(concurrency).
+        let model_pool = Arc::clone(&self.model_pool);
+        let key_field_results: Vec<_> = stream::iter(resources.iter())
+            .map(|resource| {
+                let pool = Arc::clone(&model_pool);
+                let resource = resource.clone();
+                // Need to pass cache data as read-only
+                let resource_attrs = cache
+                    .get_resource_fields(&resource)
+                    .iter()
+                    .filter(|f| f.is_attribute())
+                    .map(|f| f.name.clone())
+                    .collect::<Vec<String>>();
+                let selectable_with = cache.get_resource_selectable_with(&resource);
+                let resource_metrics = selectable_with
+                    .iter()
+                    .filter(|f| f.starts_with("metrics."))
+                    .cloned()
+                    .collect::<Vec<String>>();
+                async move {
+                    let lease = pool.acquire().await;
+                    // Call static helper that takes lease + data
+                    Self::select_key_fields_with_lease(&lease, &resource, &resource_attrs, &resource_metrics)
+                        .await
+                        .map(|result| (resource, result))
                 }
-                Err(e) => {
-                    log::warn!("  Key field selection failed for '{}': {}", resource, e);
-                }
+            })
+            .buffer_unordered(concurrency)
+            .collect()
+            .await;
+
+        // Apply results to cache
+        for result in key_field_results.into_iter().flatten() {
+            let (resource, (key_attrs, key_mets, uses_fallback)) = result;
+            if let Some(rm) = cache
+                .resource_metadata
+                .as_mut()
+                .and_then(|m| m.get_mut(&resource))
+            {
+                rm.key_attributes = key_attrs;
+                rm.key_metrics = key_mets;
+                rm.uses_fallback = uses_fallback;
             }
         }
 
-        // Enrich resource-level metadata (sequential, since there are fewer resources)
+        // Enrich resource-level metadata using concurrent processing
         log::info!(
             "Enriching resource-level metadata for {} resources",
             resources.len()
         );
-        for resource in &resources {
-            if let Some(rm) = cache
-                .resource_metadata
-                .as_mut()
-                .and_then(|m| m.get_mut(resource))
-            {
-                match self.enrich_resource(resource, rm, &scraped).await {
-                    Ok(desc) => {
-                        if !desc.is_empty() {
-                            rm.description = Some(desc);
-                        }
+
+        // Process resource description enrichment concurrently using buffer_unordered(concurrency).
+        let resource_desc_results: Vec<_> = stream::iter(resources.iter())
+            .map(|resource| {
+                let pool = Arc::clone(&model_pool);
+                let scraped = Arc::clone(&scraped);
+                let resource = resource.clone();
+                // Extract needed ResourceMetadata fields before async block
+                let rm_data = cache
+                    .resource_metadata
+                    .as_ref()
+                    .and_then(|m| m.get(&resource))
+                    .cloned();
+                async move {
+                    if let Some(rm) = rm_data {
+                        let lease = pool.acquire().await;
+                        Self::enrich_resource_with_lease(&lease, &resource, &rm, &scraped)
+                            .await
+                            .map(|desc| (resource, desc))
+                            .ok()
+                    } else {
+                        None
                     }
-                    Err(e) => {
-                        log::warn!(
-                            "  Resource description generation failed for '{}': {}",
-                            resource,
-                            e
-                        );
-                    }
+                }
+            })
+            .buffer_unordered(concurrency)
+            .collect()
+            .await;
+
+        // Apply results to cache
+        for result in resource_desc_results.into_iter().flatten() {
+            let (resource, desc) = result;
+            if !desc.is_empty() {
+                if let Some(rm) = cache
+                    .resource_metadata
+                    .as_mut()
+                    .and_then(|m| m.get_mut(&resource))
+                {
+                    rm.description = Some(desc);
                 }
             }
         }
@@ -428,9 +475,9 @@ Use in SELECT to label rows in reports.\",\n\
         Ok(result)
     }
 
-    /// Generate a description for a resource (not a field)
-    async fn enrich_resource(
-        &self,
+    /// Generate a description for a resource (not a field) using a pre-acquired lease
+    async fn enrich_resource_with_lease(
+        lease: &ModelLease,
         resource_name: &str,
         rm: &ResourceMetadata,
         scraped: &ScrapedDocs,
@@ -473,7 +520,6 @@ used to query. Return ONLY the sentence, no formatting.";
             user_prompt.push_str(&format!("Documentation: {}\n", scraped_desc));
         }
 
-        let lease = self.model_pool.acquire_preferred().await;
         log::debug!(
             "Enriching resource {} (model={}, temp={})",
             resource_name,
@@ -503,29 +549,14 @@ used to query. Return ONLY the sentence, no formatting.";
         Ok(response.trim().to_string())
     }
 
-    /// Select key attributes and metrics for a resource using LLM
+    /// Select key attributes and metrics for a resource using LLM with a pre-acquired lease
     /// Returns (key_attributes, key_metrics, uses_fallback) or falls back to alphabetical first-N on failure
-    async fn select_key_fields_for_resource(
-        &self,
+    async fn select_key_fields_with_lease(
+        lease: &ModelLease,
         resource: &str,
-        cache: &FieldMetadataCache,
+        resource_attrs: &[String],
+        resource_metrics: &[String],
     ) -> Result<(Vec<String>, Vec<String>, bool)> {
-        // Get resource attributes (ATTRIBUTE fields for this resource)
-        let resource_attrs: Vec<String> = cache
-            .get_resource_fields(resource)
-            .iter()
-            .filter(|f| f.is_attribute())
-            .map(|f| f.name.clone())
-            .collect();
-
-        // Get compatible metrics from resource's selectable_with
-        let selectable_with = cache.get_resource_selectable_with(resource);
-        let resource_metrics: Vec<String> = selectable_with
-            .iter()
-            .filter(|f| f.starts_with("metrics."))
-            .cloned()
-            .collect();
-
         if resource_attrs.is_empty() && resource_metrics.is_empty() {
             return Err(anyhow::anyhow!(
                 "No attributes or metrics found for resource '{}'",
@@ -564,8 +595,6 @@ Do NOT include fields that are rarely used or very specialized.";
         }
 
         user_prompt.push_str("Return JSON: {\"key_attributes\": [...], \"key_metrics\": [...]}");
-
-        let lease = self.model_pool.acquire_preferred().await;
         log::debug!(
             "Selecting key fields for {} (model={}, temp={})",
             resource,
@@ -628,14 +657,14 @@ Do NOT include fields that are rarely used or very specialized.";
         // Fallback: if LLM returned nothing valid, use alphabetical first-N
         let mut uses_fallback = false;
         if key_attributes.is_empty() && !resource_attrs.is_empty() {
-            let mut sorted_attrs = resource_attrs.clone();
+            let mut sorted_attrs = resource_attrs.to_vec();
             sorted_attrs.sort();
             key_attributes = sorted_attrs.into_iter().take(10).collect();
             uses_fallback = true;
         }
 
         if key_metrics.is_empty() && !resource_metrics.is_empty() {
-            let mut sorted_metrics = resource_metrics.clone();
+            let mut sorted_metrics = resource_metrics.to_vec();
             sorted_metrics.sort();
             key_metrics = sorted_metrics.into_iter().take(12).collect();
             uses_fallback = true;
