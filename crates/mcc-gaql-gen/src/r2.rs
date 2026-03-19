@@ -2,7 +2,7 @@
 //
 // Uses the S3-compatible API via reqwest with HMAC-SHA256 request signing.
 // Public objects can be downloaded without credentials; uploads require
-// R2_ACCESS_KEY and R2_SECRET_KEY environment variables.
+// MCC_GAQL_R2_ACCESS_KEY_ID and MCC_GAQL_R2_SECRET_ACCESS_KEY environment variables.
 
 use anyhow::{Context, Result};
 use std::path::Path;
@@ -10,7 +10,7 @@ use tokio::fs;
 
 /// R2 bucket configuration
 struct R2Config {
-    account_id: String,
+    endpoint_url: String,
     bucket: String,
     access_key: String,
     secret_key: String,
@@ -19,15 +19,17 @@ struct R2Config {
 impl R2Config {
     /// Load R2 configuration from environment variables
     fn from_env() -> Result<Self> {
-        let account_id = std::env::var("R2_ACCOUNT_ID").context("R2_ACCOUNT_ID must be set")?;
-        let bucket = std::env::var("R2_BUCKET").unwrap_or_else(|_| "mcc-gaql".to_string());
-        let access_key =
-            std::env::var("R2_ACCESS_KEY").context("R2_ACCESS_KEY must be set for upload")?;
-        let secret_key =
-            std::env::var("R2_SECRET_KEY").context("R2_SECRET_KEY must be set for upload")?;
+        let endpoint_url = std::env::var("MCC_GAQL_R2_ENDPOINT_URL")
+            .context("MCC_GAQL_R2_ENDPOINT_URL must be set")?;
+        let bucket = std::env::var("MCC_GAQL_R2_BUCKET")
+            .unwrap_or_else(|_| "mcc-gaql-metadata".to_string());
+        let access_key = std::env::var("MCC_GAQL_R2_ACCESS_KEY_ID")
+            .context("MCC_GAQL_R2_ACCESS_KEY_ID must be set for upload")?;
+        let secret_key = std::env::var("MCC_GAQL_R2_SECRET_ACCESS_KEY")
+            .context("MCC_GAQL_R2_SECRET_ACCESS_KEY must be set for upload")?;
 
         Ok(Self {
-            account_id,
+            endpoint_url,
             bucket,
             access_key,
             secret_key,
@@ -36,7 +38,7 @@ impl R2Config {
 
     /// Returns the S3 endpoint URL for this R2 bucket
     fn endpoint(&self) -> String {
-        format!("https://{}.r2.cloudflarestorage.com", self.account_id)
+        self.endpoint_url.trim_end_matches('/').to_string()
     }
 }
 
@@ -86,7 +88,7 @@ pub async fn download(public_base_url: &str, object_key: &str, dest_path: &Path)
 
 /// Upload a local file to R2 using the S3-compatible API with AWS Signature Version 4.
 ///
-/// Requires R2_ACCOUNT_ID, R2_ACCESS_KEY, and R2_SECRET_KEY environment variables.
+/// Requires MCC_GAQL_R2_ENDPOINT_URL, MCC_GAQL_R2_ACCESS_KEY_ID, and MCC_GAQL_R2_SECRET_ACCESS_KEY environment variables.
 pub async fn upload(object_key: &str, source_path: &Path) -> Result<()> {
     let config = R2Config::from_env()?;
 
