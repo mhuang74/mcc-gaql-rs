@@ -68,7 +68,8 @@ impl ModelPool {
             model_count
         );
 
-        let semaphores = self.config
+        let semaphores = self
+            .config
             .all_models()
             .iter()
             .map(|_| Arc::new(Semaphore::new(permits_per_model)))
@@ -84,6 +85,11 @@ impl ModelPool {
     /// Returns the number of models in the pool.
     pub fn model_count(&self) -> usize {
         self.semaphores.len()
+    }
+
+    /// Returns the total concurrency (sum of permits across all models).
+    pub fn total_concurrency(&self) -> usize {
+        self.permits_per_model * self.semaphores.len()
     }
 
     /// Acquire any available model using a least-busy-first strategy.
@@ -233,6 +239,20 @@ mod tests {
     fn test_model_pool_model_count() {
         let pool = make_pool(&["model-a", "model-b", "model-c"]);
         assert_eq!(pool.model_count(), 3);
+    }
+
+    #[test]
+    fn test_total_concurrency_default() {
+        let pool = make_pool(&["model-a", "model-b", "model-c"]);
+        // Default: 1 permit per model
+        assert_eq!(pool.total_concurrency(), 3);
+    }
+
+    #[test]
+    fn test_total_concurrency_with_custom_permits() {
+        let pool = make_pool(&["model-a", "model-b"]).with_total_concurrency(10);
+        // 10 total, 2 models => 5 permits per model => 10 total
+        assert_eq!(pool.total_concurrency(), 10);
     }
 
     #[tokio::test]
