@@ -13,6 +13,23 @@ use serde::{Deserialize, Serialize};
 
 use crate::proto_parser::{ProtoEnumDoc, ProtoMessageDoc};
 
+/// Convert PascalCase to snake_case.
+/// e.g., "AdGroup" -> "ad_group", "CampaignBudget" -> "campaign_budget"
+fn pascal_to_snake(s: &str) -> String {
+    let mut result = String::new();
+    for (i, c) in s.chars().enumerate() {
+        if c.is_uppercase() {
+            if i > 0 {
+                result.push('_');
+            }
+            result.push(c.to_ascii_lowercase());
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
 /// Convert snake_case to PascalCase.
 /// e.g., "ad_group" -> "AdGroup", "campaign_budget" -> "CampaignBudget"
 pub fn snake_to_pascal_case(s: &str) -> String {
@@ -122,8 +139,8 @@ impl ProtoDocsCache {
         // Convert messages to scraped field docs
         for (message_name, message) in &self.messages {
             for field in &message.fields {
-                // Construct GAQL-style field name: resource.field (lowercase resource)
-                let gaql_resource = message_name.to_ascii_lowercase();
+                // Construct GAQL-style field name: resource.field (snake_case resource)
+                let gaql_resource = pascal_to_snake(message_name);
                 let field_key = format!("{}.{}", gaql_resource, field.field_name);
 
                 // Convert field behaviors to strings
@@ -175,7 +192,7 @@ impl ProtoDocsCache {
 
             // Also add resource-level description
             if !message.description.is_empty() {
-                let resource_key = message_name.to_ascii_lowercase();
+                let resource_key = pascal_to_snake(message_name);
                 docs.insert(
                     resource_key,
                     ScrapedFieldDoc {
@@ -461,5 +478,16 @@ mod tests {
             "AdGroupCriterion"
         );
         assert_eq!(snake_to_pascal_case(""), "");
+    }
+
+    #[test]
+    fn test_pascal_to_snake() {
+        assert_eq!(pascal_to_snake("Campaign"), "campaign");
+        assert_eq!(pascal_to_snake("AdGroup"), "ad_group");
+        assert_eq!(pascal_to_snake("CampaignBudget"), "campaign_budget");
+        assert_eq!(pascal_to_snake("AdGroupCriterion"), "ad_group_criterion");
+        assert_eq!(pascal_to_snake("AdGroupAd"), "ad_group_ad");
+        assert_eq!(pascal_to_snake("KeywordView"), "keyword_view");
+        assert_eq!(pascal_to_snake(""), "");
     }
 }

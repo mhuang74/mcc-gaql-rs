@@ -15,6 +15,7 @@ use rig::completion::Prompt;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::time::{sleep, Duration};
 
 use mcc_gaql_common::field_metadata::{FieldMetadata, FieldMetadataCache, ResourceMetadata};
 
@@ -22,6 +23,47 @@ use crate::rag::{format_llm_request_debug, format_llm_response_debug};
 
 use crate::model_pool::{ModelLease, ModelPool};
 use crate::scraper::ScrapedDocs;
+
+/// Retry an async operation with exponential backoff.
+/// Delays: 1s, 2s, 4s (doubling each retry)
+async fn retry_with_backoff<T, E, Fut, F>(
+    operation_name: &str,
+    max_retries: u32,
+    mut f: F,
+) -> Result<T, E>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, E>>,
+    E: std::fmt::Display,
+{
+    let mut attempt = 0;
+    loop {
+        match f().await {
+            Ok(result) => return Ok(result),
+            Err(e) => {
+                attempt += 1;
+                if attempt > max_retries {
+                    log::warn!(
+                        "{} failed after {} retries: {}",
+                        operation_name,
+                        max_retries,
+                        e
+                    );
+                    return Err(e);
+                }
+                let delay_secs = 1u64 << (attempt - 1); // 1, 2, 4 seconds
+                log::info!(
+                    "{} failed (attempt {}), retrying in {}s: {}",
+                    operation_name,
+                    attempt,
+                    delay_secs,
+                    e
+                );
+                sleep(Duration::from_secs(delay_secs)).await;
+            }
+        }
+    }
+}
 
 /// LLM-based enricher for Google Ads field metadata
 pub struct MetadataEnricher {
@@ -123,9 +165,12 @@ impl MetadataEnricher {
                         lease.model_name()
                     );
 
-                    let result =
-                        Self::enrich_batch_with_lease(&lease, &resource, &batch_fields, &scraped)
-                            .await;
+                    let result = retry_with_backoff(
+                        &format!("Batch {} ({})", idx + 1, resource),
+                        3,
+                        || Self::enrich_batch_with_lease(&lease, &resource, &batch_fields, &scraped),
+                    )
+                    .await;
 
                     // lease dropped here, model slot released
                     match &result {
@@ -195,11 +240,17 @@ impl MetadataEnricher {
                 async move {
                     let lease = pool.acquire().await;
                     // Call static helper that takes lease + data
-                    Self::select_key_fields_with_lease(
-                        &lease,
-                        &resource,
-                        &resource_attrs,
-                        &resource_metrics,
+                    retry_with_backoff(
+                        &format!("Key fields for {}", resource),
+                        3,
+                        || {
+                            Self::select_key_fields_with_lease(
+                                &lease,
+                                &resource,
+                                &resource_attrs,
+                                &resource_metrics,
+                            )
+                        },
                     )
                     .await
                     .map(|result| (resource, result))
@@ -244,10 +295,14 @@ impl MetadataEnricher {
                 async move {
                     if let Some(rm) = rm_data {
                         let lease = pool.acquire().await;
-                        Self::enrich_resource_with_lease(&lease, &resource, &rm, &scraped)
-                            .await
-                            .map(|desc| (resource, desc))
-                            .ok()
+                        retry_with_backoff(
+                            &format!("Resource desc for {}", resource),
+                            3,
+                            || Self::enrich_resource_with_lease(&lease, &resource, &rm, &scraped),
+                        )
+                        .await
+                        .map(|desc| (resource, desc))
+                        .ok()
                     } else {
                         None
                     }

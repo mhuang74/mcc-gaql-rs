@@ -783,11 +783,7 @@ message Outer {
             "Should extract exactly 2 parent fields, ignoring all nested fields"
         );
 
-        let field_names: Vec<&str> = outer
-            .fields
-            .iter()
-            .map(|f| f.field_name.as_str())
-            .collect();
+        let field_names: Vec<&str> = outer.fields.iter().map(|f| f.field_name.as_str()).collect();
         assert!(field_names.contains(&"outer_field"));
         assert!(field_names.contains(&"middle"));
 
@@ -904,7 +900,12 @@ message AccessibleBiddingStrategy {
         let field_map: std::collections::HashMap<&str, (u32, &str)> = strategy
             .fields
             .iter()
-            .map(|f| (f.field_name.as_str(), (f.field_number, f.type_name.as_str())))
+            .map(|f| {
+                (
+                    f.field_name.as_str(),
+                    (f.field_number, f.type_name.as_str()),
+                )
+            })
             .collect();
 
         // Verify each parent field exists with correct field number
@@ -912,9 +913,15 @@ message AccessibleBiddingStrategy {
         assert_eq!(field_map.get("id"), Some(&(2, "int64")));
         assert_eq!(field_map.get("name"), Some(&(3, "string")));
         assert_eq!(field_map.get("type"), Some(&(4, "int64")));
-        assert_eq!(field_map.get("maximize_conversions"), Some(&(5, "MaximizeConversions")));
+        assert_eq!(
+            field_map.get("maximize_conversions"),
+            Some(&(5, "MaximizeConversions"))
+        );
         assert_eq!(field_map.get("target_cpa"), Some(&(6, "TargetCpa")));
-        assert_eq!(field_map.get("target_impression_share"), Some(&(7, "TargetImpressionShare")));
+        assert_eq!(
+            field_map.get("target_impression_share"),
+            Some(&(7, "TargetImpressionShare"))
+        );
         assert_eq!(field_map.get("target_roas"), Some(&(8, "TargetRoas")));
         assert_eq!(field_map.get("target_spend"), Some(&(9, "TargetSpend")));
 
@@ -963,8 +970,14 @@ message AccessibleBiddingStrategy {
             "Should have exactly one target_roas field"
         );
         let target_roas = target_roas_fields[0];
-        assert_eq!(target_roas.field_number, 8, "target_roas should be field 8 (parent)");
-        assert_eq!(target_roas.type_name, "TargetRoas", "target_roas should be message type");
+        assert_eq!(
+            target_roas.field_number, 8,
+            "target_roas should be field 8 (parent)"
+        );
+        assert_eq!(
+            target_roas.type_name, "TargetRoas",
+            "target_roas should be message type"
+        );
     }
 
     const NESTED_WITH_ONEOF_PROTO: &str = r#"

@@ -338,10 +338,7 @@ impl FieldMetadataCache {
             // Keep metrics and segments that are compatible with any kept resource
             // Check if any kept resource appears in the field's selectable_with list
             if field.is_metric() || field.is_segment() {
-                return field
-                    .selectable_with
-                    .iter()
-                    .any(|r| keep_set.contains(r));
+                return field.selectable_with.iter().any(|r| keep_set.contains(r));
             }
 
             false
@@ -1165,7 +1162,9 @@ mod tests {
 
         // Incompatible metric should be filtered out
         assert!(
-            !cache.fields.contains_key("metrics.hotel_average_lead_value_micros"),
+            !cache
+                .fields
+                .contains_key("metrics.hotel_average_lead_value_micros"),
             "Incompatible metric should be filtered out"
         );
 
