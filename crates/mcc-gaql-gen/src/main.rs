@@ -111,6 +111,10 @@ enum Commands {
         /// Use proto documentation as primary source (no LLM calls). Overrides --no-llm.
         #[arg(long)]
         use_proto: bool,
+
+        /// Total concurrent LLM requests across all models (default: number of models)
+        #[arg(long)]
+        concurrency: Option<usize>,
     },
 
     /// Generate a GAQL query from a natural language prompt
@@ -253,6 +257,7 @@ async fn main() -> Result<()> {
             scrape_ttl_days,
             test_run,
             use_proto,
+            concurrency,
         } => {
             cmd_enrich(
                 metadata_cache,
@@ -263,6 +268,7 @@ async fn main() -> Result<()> {
                 scrape_ttl_days,
                 test_run,
                 use_proto,
+                concurrency,
             )
             .await?;
         }
@@ -410,6 +416,7 @@ async fn cmd_enrich(
     scrape_ttl_days: i64,
     test_run: bool,
     use_proto: bool,
+    concurrency: Option<usize>,
 ) -> Result<()> {
     // Load metadata cache first (needed for both proto and LLM modes)
     let cache_path = metadata_cache
@@ -456,7 +463,14 @@ async fn cmd_enrich(
         llm_config.all_models()
     );
 
-    let model_pool = Arc::new(model_pool::ModelPool::new(Arc::clone(&llm_config)));
+    let model_pool = if let Some(concurrency) = concurrency {
+        Arc::new(
+            model_pool::ModelPool::new(Arc::clone(&llm_config))
+                .with_total_concurrency(concurrency),
+        )
+    } else {
+        Arc::new(model_pool::ModelPool::new(Arc::clone(&llm_config)))
+    };
 
     // Load proto docs (preferred) or scraped docs (legacy) for enrichment context
     let scraped = if let Some(scraped_path) = scraped_docs {
