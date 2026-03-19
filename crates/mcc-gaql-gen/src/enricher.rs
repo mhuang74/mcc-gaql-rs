@@ -57,7 +57,7 @@ impl MetadataEnricher {
     ) -> Result<()> {
         let resources = cache.get_resources();
         let total_resources = resources.len();
-        let concurrency = self.model_pool.model_count();
+        let concurrency = self.model_pool.total_concurrency();
 
         log::info!(
             "Starting LLM enrichment for {} resources ({} fields total, concurrency: {})",
@@ -195,9 +195,14 @@ impl MetadataEnricher {
                 async move {
                     let lease = pool.acquire().await;
                     // Call static helper that takes lease + data
-                    Self::select_key_fields_with_lease(&lease, &resource, &resource_attrs, &resource_metrics)
-                        .await
-                        .map(|result| (resource, result))
+                    Self::select_key_fields_with_lease(
+                        &lease,
+                        &resource,
+                        &resource_attrs,
+                        &resource_metrics,
+                    )
+                    .await
+                    .map(|result| (resource, result))
                 }
             })
             .buffer_unordered(concurrency)
