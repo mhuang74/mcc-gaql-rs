@@ -1866,7 +1866,7 @@ Choose from: "#
 
         for (cat, fields) in categories {
             candidate_text.push_str(&format!("\n### {} ({})\n", cat, fields.len()));
-            for f in fields.iter().take(15) {
+            for f in &fields {
                 let filterable_tag = if f.filterable { " [filterable]" } else { "" };
                 let sortable_tag = if f.sortable { " [sortable]" } else { "" };
 
