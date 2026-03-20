@@ -18,7 +18,8 @@ use rig::{
     vector_store::{VectorSearchRequest, VectorStoreIndex},
 };
 use rig_fastembed::FastembedModel;
-use rig_lancedb::{LanceDbVectorIndex, SearchParams};
+use rig::vector_store::request::SearchFilter;
+use rig_lancedb::{LanceDBFilter, LanceDbVectorIndex, SearchParams};
 use serde::{Deserialize, Serialize};
 
 use mcc_gaql_common::config::QueryEntry;
@@ -1314,6 +1315,7 @@ Choose from: "#
             self.llm_config.preferred_model(),
             llm_start.elapsed().as_millis()
         );
+        log::trace!("{}", format_llm_response_debug(&response));
 
         // Parse JSON response (strip markdown fences first)
         let cleaned_response = strip_markdown_code_blocks(&response);
@@ -1478,11 +1480,38 @@ Choose from: "#
         // Tier 2: Query-specific RAG vector searches
         // =========================================================================
 
-        // Search for attributes matching the primary resource
+        // Build list of valid attribute resource prefixes (primary + auto-joined resources)
+        // Auto-joined resources are items in selectable_with that don't contain a dot
+        let mut valid_attr_resources: Vec<String> = vec![primary.to_string()];
+        valid_attr_resources.extend(
+            selectable_with
+                .iter()
+                .filter(|s| !s.contains('.'))
+                .cloned(),
+        );
+        log::debug!(
+            "Phase 2: Valid attribute resources: {:?}",
+            valid_attr_resources
+        );
+
+        // Build OR filter for all valid attribute resources
+        // This pre-filters the vector search to only include fields from valid resources
+        let attr_filter = valid_attr_resources
+            .iter()
+            .map(|r| LanceDBFilter::like("id".to_string(), format!("{}.%", r)))
+            .reduce(SearchFilter::or);
+
+        // Search for attributes matching the primary resource and auto-joined resources
         let attr_search = async {
-            let search_request = VectorSearchRequest::builder()
+            let mut builder = VectorSearchRequest::builder()
                 .query(user_query)
-                .samples(30)
+                .samples(30);
+
+            if let Some(filter) = attr_filter {
+                builder = builder.filter(filter);
+            }
+
+            let search_request = builder
                 .build()
                 .map_err(|e| anyhow::anyhow!("Failed to build attr search request: {}", e))?;
 
@@ -1492,11 +1521,13 @@ Choose from: "#
                 .map_err(|e| anyhow::anyhow!("Attr vector search failed: {}", e))
         };
 
-        // Search for metrics
+        // Search for metrics (pre-filtered to metrics.* fields)
+        let metric_filter = LanceDBFilter::like("id".to_string(), "metrics.%".to_string());
         let metric_search = async {
             let search_request = VectorSearchRequest::builder()
                 .query(user_query)
                 .samples(30)
+                .filter(metric_filter)
                 .build()
                 .map_err(|e| anyhow::anyhow!("Failed to build metric search request: {}", e))?;
 
@@ -1506,11 +1537,13 @@ Choose from: "#
                 .map_err(|e| anyhow::anyhow!("Metric vector search failed: {}", e))
         };
 
-        // Search for segments
+        // Search for segments (pre-filtered to segments.* fields)
+        let segment_filter = LanceDBFilter::like("id".to_string(), "segments.%".to_string());
         let segment_search = async {
             let search_request = VectorSearchRequest::builder()
                 .query(user_query)
                 .samples(15)
+                .filter(segment_filter)
                 .build()
                 .map_err(|e| anyhow::anyhow!("Failed to build segment search request: {}", e))?;
 
@@ -1530,13 +1563,25 @@ Choose from: "#
             search_start.elapsed().as_millis()
         );
 
-        // Process attribute results: filter to fields starting with "{primary}."
-        let prefix = format!("{}.", primary);
+        // Process attribute results: filter to fields from valid resources
+        // (primary + auto-joined resources). Pre-filter already handles most filtering,
+        // but we double-check here and verify the field exists in cache.
+        if let Ok(results) = &attr_results {
+            let attr_ids: Vec<_> = results.iter().map(|r| r.2.id.as_str()).collect();
+            log::debug!(
+                "Phase 2: Attribute vector search returned {} fields: {:?}",
+                attr_ids.len(),
+                attr_ids
+            );
+        }
         if let Ok(results) = attr_results {
             for result in results {
                 let doc = &result.2;
-                // Filter strictly to attributes for the primary resource by name prefix
-                if doc.id.starts_with(&prefix)
+                // Verify field belongs to a valid resource and exists in cache
+                let is_valid_resource = valid_attr_resources
+                    .iter()
+                    .any(|r| doc.id.starts_with(&format!("{}.", r)));
+                if is_valid_resource
                     && let Some(field) = self.field_cache.fields.get(&doc.id)
                     && seen.insert(field.name.clone())
                 {
@@ -1953,6 +1998,7 @@ Respond ONLY with valid JSON:
             self.llm_config.preferred_model(),
             llm_start.elapsed().as_millis()
         );
+        log::trace!("{}", format_llm_response_debug(&response));
 
         // Parse JSON response (strip markdown fences first)
         let cleaned_response = strip_markdown_code_blocks(&response);
