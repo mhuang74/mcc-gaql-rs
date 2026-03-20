@@ -175,8 +175,7 @@ impl ProtoDocsCache {
                     .as_ref()
                     .and_then(|et| enums.get(et))
                     .map(|e| {
-                        let values: Vec<String> =
-                            e.values.iter().map(|v| v.name.clone()).collect();
+                        let values: Vec<String> = e.values.iter().map(|v| v.name.clone()).collect();
                         let descriptions: Vec<String> = e
                             .values
                             .iter()
@@ -231,11 +230,7 @@ impl ProtoDocsCache {
         }
 
         // Seed from resource messages only
-        let resource_count = self
-            .messages
-            .values()
-            .filter(|m| m.is_resource)
-            .count();
+        let resource_count = self.messages.values().filter(|m| m.is_resource).count();
 
         for (message_name, message) in &self.messages {
             if !message.is_resource {
@@ -301,8 +296,7 @@ impl ProtoDocsCache {
 
     /// Check if cache is valid for a given commit and schema version.
     pub fn is_valid(&self, expected_commit: &str) -> bool {
-        self.googleads_rs_commit == expected_commit
-            && self.schema_version == CURRENT_SCHEMA_VERSION
+        self.googleads_rs_commit == expected_commit && self.schema_version == CURRENT_SCHEMA_VERSION
     }
 
     /// Get statistics about the cache.
@@ -621,9 +615,7 @@ mod tests {
         cache
             .messages
             .insert("PolicySummary".to_string(), policy_summary);
-        cache
-            .messages
-            .insert("AdGroupAd".to_string(), ad_group_ad);
+        cache.messages.insert("AdGroupAd".to_string(), ad_group_ad);
         cache
     }
 

@@ -226,8 +226,7 @@ impl ProtoParser {
 
         while i < chars.len() {
             // We look for `message` keyword only at depth 0 (direct child level)
-            if brace_depth == 0
-                && chars.get(i..i + 7) == Some(&['m', 'e', 's', 's', 'a', 'g', 'e'])
+            if brace_depth == 0 && chars.get(i..i + 7) == Some(&['m', 'e', 's', 's', 'a', 'g', 'e'])
             {
                 let is_word_start = i == 0 || !chars[i - 1].is_alphanumeric();
                 if is_word_start {
@@ -700,10 +699,7 @@ pub fn parse_all_protos(
     // Use or_insert so resource-defined messages (parsed first) take priority.
     let common_dir = proto_dir.join("common");
     if common_dir.exists() {
-        for entry in WalkDir::new(&common_dir)
-            .into_iter()
-            .filter_map(|e| e.ok())
-        {
+        for entry in WalkDir::new(&common_dir).into_iter().filter_map(|e| e.ok()) {
             let path = entry.path();
             if path.extension().map_or(false, |ext| ext == "proto") {
                 let content = std::fs::read_to_string(path)?;
