@@ -21,8 +21,8 @@ impl R2Config {
     fn from_env() -> Result<Self> {
         let endpoint_url = std::env::var("MCC_GAQL_R2_ENDPOINT_URL")
             .context("MCC_GAQL_R2_ENDPOINT_URL must be set")?;
-        let bucket = std::env::var("MCC_GAQL_R2_BUCKET")
-            .unwrap_or_else(|_| "mcc-gaql-metadata".to_string());
+        let bucket =
+            std::env::var("MCC_GAQL_R2_BUCKET").unwrap_or_else(|_| "mcc-gaql-metadata".to_string());
         let access_key = std::env::var("MCC_GAQL_R2_ACCESS_KEY_ID")
             .context("MCC_GAQL_R2_ACCESS_KEY_ID must be set for upload")?;
         let secret_key = std::env::var("MCC_GAQL_R2_SECRET_ACCESS_KEY")

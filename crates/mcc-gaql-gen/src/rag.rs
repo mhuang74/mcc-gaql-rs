@@ -9,6 +9,7 @@ use futures::stream::{self, StreamExt};
 use log::info;
 
 use lancedb::DistanceType;
+use rig::vector_store::request::SearchFilter;
 use rig::{
     agent::Agent,
     client::CompletionClient,
@@ -18,7 +19,6 @@ use rig::{
     vector_store::{VectorSearchRequest, VectorStoreIndex},
 };
 use rig_fastembed::FastembedModel;
-use rig::vector_store::request::SearchFilter;
 use rig_lancedb::{LanceDBFilter, LanceDbVectorIndex, SearchParams};
 use serde::{Deserialize, Serialize};
 
@@ -1098,6 +1098,109 @@ impl MultiStepRAGAgent {
         })
     }
 
+    /// Build a categorized, formatted list of resources for the LLM prompt
+    fn build_categorized_resource_list(&self, resources: &[String]) -> String {
+        // Define category patterns and their display names
+        let categories: Vec<(&[&str], &str)> = vec![
+            (&["campaign"], "CAMPAIGN RESOURCES"),
+            (&["ad_group"], "AD GROUP RESOURCES"),
+            (&["ad"], "AD RESOURCES"),
+            (&["asset"], "ASSET RESOURCES"),
+            (&["keyword", "search_term"], "KEYWORD & SEARCH RESOURCES"),
+            (&["audience"], "AUDIENCE RESOURCES"),
+            (&["conversion"], "CONVERSION RESOURCES"),
+            (&["customer"], "CUSTOMER & ACCOUNT RESOURCES"),
+            (&["bidding"], "BIDDING RESOURCES"),
+            (&["budget"], "BUDGET RESOURCES"),
+            (&["label"], "LABEL RESOURCES"),
+            (&["shopping", "product"], "SHOPPING & PRODUCT RESOURCES"),
+            (&["hotel"], "HOTEL RESOURCES"),
+            (&["local_services"], "LOCAL SERVICES RESOURCES"),
+            (&["video"], "VIDEO RESOURCES"),
+            (&["display"], "DISPLAY RESOURCES"),
+            (&["geo"], "GEOGRAPHIC RESOURCES"),
+            (&["experiment"], "EXPERIMENT RESOURCES"),
+            (&["shared"], "SHARED SET RESOURCES"),
+            (&["user_list"], "USER LIST RESOURCES"),
+            (&["offline"], "OFFLINE CONVERSION RESOURCES"),
+            (&["lead_form"], "LEAD FORM RESOURCES"),
+        ];
+
+        // Categorize resources
+        let mut categorized: std::collections::HashMap<String, Vec<(String, String)>> =
+            std::collections::HashMap::new();
+        let mut uncategorized: Vec<(String, String)> = Vec::new();
+
+        for resource in resources {
+            let description = self
+                .field_cache
+                .resource_metadata
+                .as_ref()
+                .and_then(|m| m.get(resource))
+                .and_then(|m| m.description.clone())
+                .unwrap_or_default();
+
+            let mut found = false;
+            for (patterns, category) in &categories {
+                if patterns.iter().any(|p| resource.contains(p)) {
+                    categorized
+                        .entry(category.to_string())
+                        .or_default()
+                        .push((resource.clone(), description.clone()));
+                    found = true;
+                    break;
+                }
+            }
+            if !found {
+                uncategorized.push((resource.clone(), description));
+            }
+        }
+
+        // Build formatted output
+        let mut output = String::new();
+
+        // Add categorized resources in order
+        for (_, category_name) in &categories {
+            if let Some(items) = categorized.get(*category_name) {
+                if !items.is_empty() {
+                    output.push_str(&format!("\n--- {} ---\n", category_name));
+                    for (name, desc) in items {
+                        if desc.is_empty() {
+                            output.push_str(&format!("  - {}\n", name));
+                        } else {
+                            // Truncate very long descriptions for readability
+                            let short_desc = if desc.len() > 120 {
+                                format!("{}...", &desc[..117])
+                            } else {
+                                desc.clone()
+                            };
+                            output.push_str(&format!("  - {}: {}\n", name, short_desc));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Add uncategorized resources
+        if !uncategorized.is_empty() {
+            output.push_str("\n--- OTHER RESOURCES ---\n");
+            for (name, desc) in uncategorized {
+                if desc.is_empty() {
+                    output.push_str(&format!("  - {}\n", name));
+                } else {
+                    let short_desc = if desc.len() > 120 {
+                        format!("{}...", &desc[..117])
+                    } else {
+                        desc
+                    };
+                    output.push_str(&format!("  - {}: {}\n", name, short_desc));
+                }
+            }
+        }
+
+        output
+    }
+
     /// Main entry point: generate GAQL query from user prompt
     pub async fn generate(
         &self,
@@ -1260,39 +1363,27 @@ impl MultiStepRAGAgent {
         // Generate sample of 5 resources (prioritizing keyword matches)
         let resource_sample = create_resource_sample(user_query, &resource_info);
 
-        // Build compact resource list for LLM
-        let resource_list: Vec<String> = resources
-            .iter()
-            .map(|r| {
-                format!(
-                    "- {}: {}",
-                    r,
-                    self.field_cache
-                        .resource_metadata
-                        .as_ref()
-                        .and_then(|m| m.get(r))
-                        .and_then(|m| m.description.as_deref())
-                        .unwrap_or("")
-                )
-            })
-            .collect();
+        // Build categorized resource list for LLM
+        let categorized_resources = self.build_categorized_resource_list(&resources);
 
-        let system_prompt =
+        let system_prompt = format!(
             r#"You are a Google Ads Query Language (GAQL) expert. Given a user query, determine:
 1. The primary resource to query FROM (e.g., campaign, ad_group, keyword_view)
 2. Any related resources that might be needed (for JOINs or attributes)
 
 Respond ONLY with valid JSON:
-{
+{{
   "primary_resource": "resource_name",
   "related_resources": ["related_resource1", "related_resource2"],
   "confidence": 0.95,
   "reasoning": "brief explanation"
-}
+}}
 
-Choose from: "#
-                .to_string()
-                + &resource_list.join(", ");
+Choose from the following resources (organized by category):
+
+{}"#,
+            categorized_resources
+        );
 
         let user_prompt = format!("User query: {}", user_query);
 
@@ -1483,12 +1574,7 @@ Choose from: "#
         // Build list of valid attribute resource prefixes (primary + auto-joined resources)
         // Auto-joined resources are items in selectable_with that don't contain a dot
         let mut valid_attr_resources: Vec<String> = vec![primary.to_string()];
-        valid_attr_resources.extend(
-            selectable_with
-                .iter()
-                .filter(|s| !s.contains('.'))
-                .cloned(),
-        );
+        valid_attr_resources.extend(selectable_with.iter().filter(|s| !s.contains('.')).cloned());
         log::debug!(
             "Phase 2: Valid attribute resources: {:?}",
             valid_attr_resources
@@ -1505,9 +1591,7 @@ Choose from: "#
         // Use 50 samples to ensure we capture semantically relevant fields that may rank
         // lower due to competing terms in the query (e.g., "budget" dominating "app id")
         let attr_search = async {
-            let mut builder = VectorSearchRequest::builder()
-                .query(user_query)
-                .samples(50);
+            let mut builder = VectorSearchRequest::builder().query(user_query).samples(50);
 
             if let Some(filter) = attr_filter {
                 builder = builder.filter(filter);
@@ -1665,17 +1749,15 @@ Choose from: "#
 
         // Extract meaningful terms (skip common words)
         let stop_words: HashSet<&str> = [
-            "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
-            "have", "has", "had", "do", "does", "did", "will", "would", "could",
-            "should", "may", "might", "must", "shall", "can", "need", "dare",
-            "ought", "used", "to", "of", "in", "for", "on", "with", "at", "by",
-            "from", "as", "into", "through", "during", "before", "after", "above",
-            "below", "between", "under", "again", "further", "then", "once", "here",
-            "there", "when", "where", "why", "how", "all", "each", "few", "more",
-            "most", "other", "some", "such", "no", "nor", "not", "only", "own",
-            "same", "so", "than", "too", "very", "just", "and", "but", "if", "or",
-            "because", "until", "while", "although", "list", "show", "get", "find",
-            "include", "select", "query", "report",
+            "a", "an", "the", "is", "are", "was", "were", "be", "been", "being", "have", "has",
+            "had", "do", "does", "did", "will", "would", "could", "should", "may", "might", "must",
+            "shall", "can", "need", "dare", "ought", "used", "to", "of", "in", "for", "on", "with",
+            "at", "by", "from", "as", "into", "through", "during", "before", "after", "above",
+            "below", "between", "under", "again", "further", "then", "once", "here", "there",
+            "when", "where", "why", "how", "all", "each", "few", "more", "most", "other", "some",
+            "such", "no", "nor", "not", "only", "own", "same", "so", "than", "too", "very", "just",
+            "and", "but", "if", "or", "because", "until", "while", "although", "list", "show",
+            "get", "find", "include", "select", "query", "report",
         ]
         .into_iter()
         .collect();

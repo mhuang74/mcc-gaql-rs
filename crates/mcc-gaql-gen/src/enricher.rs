@@ -15,7 +15,7 @@ use rig::completion::Prompt;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::time::{sleep, Duration};
+use tokio::time::{Duration, sleep};
 
 use mcc_gaql_common::field_metadata::{FieldMetadata, FieldMetadataCache, ResourceMetadata};
 
@@ -165,12 +165,16 @@ impl MetadataEnricher {
                         lease.model_name()
                     );
 
-                    let result = retry_with_backoff(
-                        &format!("Batch {} ({})", idx + 1, resource),
-                        3,
-                        || Self::enrich_batch_with_lease(&lease, &resource, &batch_fields, &scraped),
-                    )
-                    .await;
+                    let result =
+                        retry_with_backoff(&format!("Batch {} ({})", idx + 1, resource), 3, || {
+                            Self::enrich_batch_with_lease(
+                                &lease,
+                                &resource,
+                                &batch_fields,
+                                &scraped,
+                            )
+                        })
+                        .await;
 
                     // lease dropped here, model slot released
                     match &result {
@@ -240,18 +244,14 @@ impl MetadataEnricher {
                 async move {
                     let lease = pool.acquire().await;
                     // Call static helper that takes lease + data
-                    retry_with_backoff(
-                        &format!("Key fields for {}", resource),
-                        3,
-                        || {
-                            Self::select_key_fields_with_lease(
-                                &lease,
-                                &resource,
-                                &resource_attrs,
-                                &resource_metrics,
-                            )
-                        },
-                    )
+                    retry_with_backoff(&format!("Key fields for {}", resource), 3, || {
+                        Self::select_key_fields_with_lease(
+                            &lease,
+                            &resource,
+                            &resource_attrs,
+                            &resource_metrics,
+                        )
+                    })
                     .await
                     .map(|result| (resource, result))
                 }
@@ -295,11 +295,9 @@ impl MetadataEnricher {
                 async move {
                     if let Some(rm) = rm_data {
                         let lease = pool.acquire().await;
-                        retry_with_backoff(
-                            &format!("Resource desc for {}", resource),
-                            3,
-                            || Self::enrich_resource_with_lease(&lease, &resource, &rm, &scraped),
-                        )
+                        retry_with_backoff(&format!("Resource desc for {}", resource), 3, || {
+                            Self::enrich_resource_with_lease(&lease, &resource, &rm, &scraped)
+                        })
                         .await
                         .map(|desc| (resource, desc))
                         .ok()
