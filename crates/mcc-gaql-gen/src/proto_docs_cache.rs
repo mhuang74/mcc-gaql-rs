@@ -13,6 +13,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::proto_parser::{ProtoEnumDoc, ProtoMessageDoc};
 
+/// Current schema version. Increment when the cache format changes incompatibly.
+const CURRENT_SCHEMA_VERSION: u32 = 1;
+
 /// Convert PascalCase to snake_case.
 /// e.g., "AdGroup" -> "ad_group", "CampaignBudget" -> "campaign_budget"
 fn pascal_to_snake(s: &str) -> String {
@@ -52,9 +55,11 @@ pub fn snake_to_pascal_case(s: &str) -> String {
 /// Convert GAQL field name to proto message and field names.
 /// e.g., "campaign.name" -> ("Campaign", "name")
 /// e.g., "ad_group.status" -> ("AdGroup", "status")
+/// e.g., "ad_group_ad.policy_summary.approval_status" -> ("AdGroupAd", "policy_summary")
+///   (returns the resource message and the first field segment; nested resolution is done via graph traversal)
 pub fn gaql_to_proto(field_name: &str) -> Option<(String, String)> {
     let parts: Vec<&str> = field_name.split('.').collect();
-    if parts.len() != 2 {
+    if parts.len() < 2 {
         return None;
     }
 
@@ -65,6 +70,13 @@ pub fn gaql_to_proto(field_name: &str) -> Option<(String, String)> {
     let message_name = snake_to_pascal_case(resource);
 
     Some((message_name, field.to_string()))
+}
+
+/// Extract the simple (last-segment) type name from a possibly fully-qualified proto type.
+/// e.g., `"google.ads.googleads.v23.common.PolicySummary"` → `"PolicySummary"`
+/// e.g., `"PolicySummary"` → `"PolicySummary"`
+fn simple_type_name(type_name: &str) -> &str {
+    type_name.rsplit('.').next().unwrap_or(type_name)
 }
 
 /// Cache structure for proto documentation.
@@ -80,6 +92,9 @@ pub struct ProtoDocsCache {
     pub messages: HashMap<String, ProtoMessageDoc>,
     /// Map: enum_name -> enum documentation
     pub enums: HashMap<String, ProtoEnumDoc>,
+    /// Cache schema version; old caches (0/absent) are rebuilt automatically.
+    #[serde(default)]
+    pub schema_version: u32,
 }
 
 impl ProtoDocsCache {
@@ -91,6 +106,7 @@ impl ProtoDocsCache {
             googleads_rs_commit: commit,
             messages: HashMap::new(),
             enums: HashMap::new(),
+            schema_version: CURRENT_SCHEMA_VERSION,
         }
     }
 
@@ -127,74 +143,110 @@ impl ProtoDocsCache {
     }
 
     /// Convert proto docs to ScrapedDocs format for use with the enricher.
-    /// This allows the LLM enrichment to use proto documentation instead of web-scraped docs.
-    /// Preserves all proto information including field behaviors, types, and enum descriptions.
+    /// Uses graph traversal from resource messages to emit nested GAQL keys like
+    /// `ad_group_ad.policy_summary.approval_status`.
     pub fn to_scraped_docs(&self) -> crate::scraper::ScrapedDocs {
         use crate::proto_parser::FieldBehavior;
         use crate::scraper::{ScrapedDocs, ScrapedFieldDoc};
-        use std::collections::HashMap;
+        use std::collections::{HashMap, HashSet};
 
         let mut docs: HashMap<String, ScrapedFieldDoc> = HashMap::new();
+        let mut visited_messages: HashSet<String> = HashSet::new();
 
-        // Convert messages to scraped field docs
-        for (message_name, message) in &self.messages {
-            for field in &message.fields {
-                // Construct GAQL-style field name: resource.field (snake_case resource)
-                let gaql_resource = pascal_to_snake(message_name);
-                let field_key = format!("{}.{}", gaql_resource, field.field_name);
+        /// Build a `ScrapedFieldDoc` from a proto field, resolving enum values from the cache.
+        fn make_field_doc(
+            field: &crate::proto_parser::ProtoFieldDoc,
+            enums: &HashMap<String, crate::proto_parser::ProtoEnumDoc>,
+        ) -> ScrapedFieldDoc {
+            let field_behavior: Vec<String> = field
+                .field_behavior
+                .iter()
+                .map(|b| match b {
+                    FieldBehavior::Immutable => "IMMUTABLE".to_string(),
+                    FieldBehavior::OutputOnly => "OUTPUT_ONLY".to_string(),
+                    FieldBehavior::Required => "REQUIRED".to_string(),
+                    FieldBehavior::Optional => "OPTIONAL".to_string(),
+                })
+                .collect();
 
-                // Convert field behaviors to strings
-                let field_behavior: Vec<String> = field
-                    .field_behavior
-                    .iter()
-                    .map(|b| match b {
-                        FieldBehavior::Immutable => "IMMUTABLE".to_string(),
-                        FieldBehavior::OutputOnly => "OUTPUT_ONLY".to_string(),
-                        FieldBehavior::Required => "REQUIRED".to_string(),
-                        FieldBehavior::Optional => "OPTIONAL".to_string(),
+            let (enum_values, enum_value_descriptions) = if field.is_enum {
+                field
+                    .enum_type
+                    .as_ref()
+                    .and_then(|et| enums.get(et))
+                    .map(|e| {
+                        let values: Vec<String> =
+                            e.values.iter().map(|v| v.name.clone()).collect();
+                        let descriptions: Vec<String> = e
+                            .values
+                            .iter()
+                            .filter(|v| !v.description.is_empty())
+                            .map(|v| format!("{}: {}", v.name, v.description))
+                            .collect();
+                        (values, descriptions)
                     })
-                    .collect();
+                    .unwrap_or_default()
+            } else {
+                (Vec::new(), Vec::new())
+            };
 
-                // Get enum values and their descriptions if this is an enum field
-                let (enum_values, enum_value_descriptions) = if field.is_enum {
-                    field
-                        .enum_type
-                        .as_ref()
-                        .and_then(|enum_type| {
-                            self.enums.get(enum_type).map(|e| {
-                                let values: Vec<String> =
-                                    e.values.iter().map(|v| v.name.clone()).collect();
-                                let descriptions: Vec<String> = e
-                                    .values
-                                    .iter()
-                                    .filter(|v| !v.description.is_empty())
-                                    .map(|v| format!("{}: {}", v.name, v.description))
-                                    .collect();
-                                (values, descriptions)
-                            })
-                        })
-                        .unwrap_or_default()
-                } else {
-                    (Vec::new(), Vec::new())
-                };
+            ScrapedFieldDoc {
+                description: field.description.clone(),
+                enum_values,
+                enum_value_descriptions,
+                field_behavior,
+                proto_type: field.type_name.clone(),
+            }
+        }
 
-                docs.insert(
-                    field_key,
-                    ScrapedFieldDoc {
-                        description: field.description.clone(),
-                        enum_values,
-                        enum_value_descriptions,
-                        field_behavior,
-                        proto_type: field.type_name.clone(),
-                    },
-                );
+        /// Walk a message's fields recursively, emitting docs keyed by GAQL path.
+        fn walk_message(
+            message_name: &str,
+            prefix: &str,
+            messages: &HashMap<String, ProtoMessageDoc>,
+            enums: &HashMap<String, crate::proto_parser::ProtoEnumDoc>,
+            docs: &mut HashMap<String, ScrapedFieldDoc>,
+            visited: &mut HashSet<String>,
+        ) {
+            if !visited.insert(message_name.to_string()) {
+                return; // cycle guard
             }
 
-            // Also add resource-level description
+            let Some(message) = messages.get(message_name) else {
+                return;
+            };
+
+            for field in &message.fields {
+                let key = format!("{}.{}", prefix, field.field_name);
+                docs.insert(key.clone(), make_field_doc(field, enums));
+
+                // If the field's type resolves to a known message, recurse
+                let simple = simple_type_name(&field.type_name);
+                if messages.contains_key(simple) {
+                    walk_message(simple, &key, messages, enums, docs, visited);
+                }
+            }
+
+            visited.remove(message_name);
+        }
+
+        // Seed from resource messages only
+        let resource_count = self
+            .messages
+            .values()
+            .filter(|m| m.is_resource)
+            .count();
+
+        for (message_name, message) in &self.messages {
+            if !message.is_resource {
+                continue;
+            }
+
+            // Resource-level description entry (e.g., key = "campaign")
+            let resource_key = pascal_to_snake(message_name);
             if !message.description.is_empty() {
-                let resource_key = pascal_to_snake(message_name);
                 docs.insert(
-                    resource_key,
+                    resource_key.clone(),
                     ScrapedFieldDoc {
                         description: message.description.clone(),
                         enum_values: Vec::new(),
@@ -204,13 +256,23 @@ impl ProtoDocsCache {
                     },
                 );
             }
+
+            // Walk fields, building nested GAQL keys
+            walk_message(
+                message_name,
+                &resource_key,
+                &self.messages,
+                &self.enums,
+                &mut docs,
+                &mut visited_messages,
+            );
         }
 
         ScrapedDocs {
             scraped_at: self.parsed_at,
             api_version: self.api_version.clone(),
             docs,
-            resources_scraped: self.messages.len(),
+            resources_scraped: resource_count,
             resources_skipped: 0,
         }
     }
@@ -237,9 +299,10 @@ impl ProtoDocsCache {
         Ok(cache)
     }
 
-    /// Check if cache is valid for a given commit.
+    /// Check if cache is valid for a given commit and schema version.
     pub fn is_valid(&self, expected_commit: &str) -> bool {
         self.googleads_rs_commit == expected_commit
+            && self.schema_version == CURRENT_SCHEMA_VERSION
     }
 
     /// Get statistics about the cache.
@@ -464,8 +527,12 @@ mod tests {
         );
 
         // Test invalid inputs
-        assert_eq!(gaql_to_proto("campaign"), None); // No dot
-        assert_eq!(gaql_to_proto("campaign.name.extra"), None); // Too many parts
+        assert_eq!(gaql_to_proto("campaign"), None); // No dot — must have at least resource.field
+        // Nested fields with 3+ parts are now valid (returns resource message + first field segment)
+        assert_eq!(
+            gaql_to_proto("campaign.name.extra"),
+            Some(("Campaign".to_string(), "name".to_string()))
+        );
     }
 
     #[test]
@@ -489,5 +556,159 @@ mod tests {
         assert_eq!(pascal_to_snake("AdGroupAd"), "ad_group_ad");
         assert_eq!(pascal_to_snake("KeywordView"), "keyword_view");
         assert_eq!(pascal_to_snake(""), "");
+    }
+
+    #[test]
+    fn test_schema_version_invalidates_cache() {
+        let cache = ProtoDocsCache::new("v23".to_string(), "abc123".to_string());
+        // Current schema version should be valid
+        assert!(cache.is_valid("abc123"));
+
+        // A cache with schema_version = 0 (old/absent) should be invalid
+        let mut old_cache = cache.clone();
+        old_cache.schema_version = 0;
+        assert!(!old_cache.is_valid("abc123"));
+    }
+
+    fn make_test_cache() -> ProtoDocsCache {
+        use crate::proto_parser::{ProtoFieldDoc, ProtoMessageDoc};
+
+        let mut cache = ProtoDocsCache::new("v23".to_string(), "test".to_string());
+
+        // PolicySummary sub-message (not a resource)
+        let policy_summary = ProtoMessageDoc {
+            message_name: "PolicySummary".to_string(),
+            description: "Policy summary for an ad.".to_string(),
+            fields: vec![ProtoFieldDoc {
+                field_name: "approval_status".to_string(),
+                field_number: 1,
+                description: "The approval status of the ad.".to_string(),
+                field_behavior: vec![],
+                type_name: "ApprovalStatus".to_string(),
+                is_enum: false,
+                enum_type: None,
+            }],
+            is_resource: false,
+        };
+
+        // AdGroupAd resource message
+        let ad_group_ad = ProtoMessageDoc {
+            message_name: "AdGroupAd".to_string(),
+            description: "An ad group ad.".to_string(),
+            fields: vec![
+                ProtoFieldDoc {
+                    field_name: "resource_name".to_string(),
+                    field_number: 1,
+                    description: "The resource name.".to_string(),
+                    field_behavior: vec![],
+                    type_name: "string".to_string(),
+                    is_enum: false,
+                    enum_type: None,
+                },
+                ProtoFieldDoc {
+                    field_name: "policy_summary".to_string(),
+                    field_number: 2,
+                    description: "Policy summary.".to_string(),
+                    field_behavior: vec![],
+                    type_name: "PolicySummary".to_string(),
+                    is_enum: false,
+                    enum_type: None,
+                },
+            ],
+            is_resource: true,
+        };
+
+        cache
+            .messages
+            .insert("PolicySummary".to_string(), policy_summary);
+        cache
+            .messages
+            .insert("AdGroupAd".to_string(), ad_group_ad);
+        cache
+    }
+
+    #[test]
+    fn test_to_scraped_docs_nested_keys() {
+        let cache = make_test_cache();
+        let scraped = cache.to_scraped_docs();
+
+        // Flat key should exist
+        assert!(
+            scraped.docs.contains_key("ad_group_ad.resource_name"),
+            "Flat key ad_group_ad.resource_name should be present"
+        );
+        assert!(
+            scraped.docs.contains_key("ad_group_ad.policy_summary"),
+            "Intermediate key ad_group_ad.policy_summary should be present"
+        );
+        // Nested key should be generated via graph traversal
+        assert!(
+            scraped
+                .docs
+                .contains_key("ad_group_ad.policy_summary.approval_status"),
+            "Nested key ad_group_ad.policy_summary.approval_status should be present"
+        );
+
+        let nested = scraped
+            .docs
+            .get("ad_group_ad.policy_summary.approval_status")
+            .unwrap();
+        assert_eq!(nested.description, "The approval status of the ad.");
+    }
+
+    #[test]
+    fn test_to_scraped_docs_simple_fields_unchanged() {
+        let cache = make_test_cache();
+        let scraped = cache.to_scraped_docs();
+
+        let name_doc = scraped.docs.get("ad_group_ad.resource_name").unwrap();
+        assert_eq!(name_doc.description, "The resource name.");
+        assert_eq!(name_doc.proto_type, "string");
+    }
+
+    #[test]
+    fn test_to_scraped_docs_cycle_guard() {
+        use crate::proto_parser::{ProtoFieldDoc, ProtoMessageDoc};
+
+        let mut cache = ProtoDocsCache::new("v23".to_string(), "test".to_string());
+
+        // A -> B -> A (cycle)
+        let msg_a = ProtoMessageDoc {
+            message_name: "MsgA".to_string(),
+            description: String::new(),
+            fields: vec![ProtoFieldDoc {
+                field_name: "b_ref".to_string(),
+                field_number: 1,
+                description: String::new(),
+                field_behavior: vec![],
+                type_name: "MsgB".to_string(),
+                is_enum: false,
+                enum_type: None,
+            }],
+            is_resource: true,
+        };
+
+        let msg_b = ProtoMessageDoc {
+            message_name: "MsgB".to_string(),
+            description: String::new(),
+            fields: vec![ProtoFieldDoc {
+                field_name: "a_ref".to_string(),
+                field_number: 1,
+                description: String::new(),
+                field_behavior: vec![],
+                type_name: "MsgA".to_string(),
+                is_enum: false,
+                enum_type: None,
+            }],
+            is_resource: false,
+        };
+
+        cache.messages.insert("MsgA".to_string(), msg_a);
+        cache.messages.insert("MsgB".to_string(), msg_b);
+
+        // Must not infinite-loop
+        let scraped = cache.to_scraped_docs();
+        // At minimum MsgA's own field should be emitted
+        assert!(scraped.docs.contains_key("msg_a.b_ref"));
     }
 }

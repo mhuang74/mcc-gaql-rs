@@ -37,6 +37,9 @@ pub struct ProtoMessageDoc {
     pub message_name: String,
     pub description: String,
     pub fields: Vec<ProtoFieldDoc>,
+    /// True if this message is a top-level GAQL resource (from resources/*.proto).
+    #[serde(default)]
+    pub is_resource: bool,
 }
 
 /// Parsed documentation for a single enum value.
@@ -122,7 +125,7 @@ impl ProtoParser {
             // Match field definitions: type name = number;
             // Captures: type, name, number
             field_pattern: Regex::new(
-                r#"(?m)^\s*((?:\w+\.)*\w+)\s+(\w+)\s*=\s*(\d+)(?:\s*\[([^\]]*)\])?;"#,
+                r#"(?m)^\s*(?:repeated\s+|optional\s+)?((?:\w+\s*\.\s*)*\w+)\s+(\w+)\s*=\s*(\d+)(?:\s*\[([^\]]*)\])?;"#,
             )
             .unwrap(),
             // Match enum definitions: enum EnumName {
@@ -143,7 +146,7 @@ impl ProtoParser {
         let mut messages = Vec::new();
         let lines: Vec<&str> = content.lines().collect();
 
-        // Find all message definitions
+        // Find all top-level message definitions
         for caps in self.message_pattern.captures_iter(content) {
             let message_name = caps.get(1).unwrap().as_str().to_string();
 
@@ -156,14 +159,171 @@ impl ProtoParser {
             // Extract fields within the message
             let fields = self.extract_message_fields(content, msg_start, &message_name);
 
+            // Collect inline nested messages as separate entries
+            let nested = self.collect_nested_messages(content, msg_start);
+
             messages.push(ProtoMessageDoc {
                 message_name,
                 description,
                 fields,
+                is_resource: false, // callers set true for resource messages
             });
+
+            messages.extend(nested);
         }
 
         messages
+    }
+
+    /// Collect inline nested message definitions within a message block,
+    /// returning them as separate `ProtoMessageDoc` entries (with `is_resource: false`).
+    fn collect_nested_messages(&self, content: &str, msg_start: usize) -> Vec<ProtoMessageDoc> {
+        // Find the opening brace of the top-level message
+        let open_brace = content[msg_start..].find('{').map(|p| msg_start + p);
+        let Some(open_brace) = open_brace else {
+            return Vec::new();
+        };
+
+        // Find matching closing brace
+        let mut brace_count = 0i32;
+        let mut close_brace = open_brace;
+        for (i, c) in content[open_brace..].char_indices() {
+            match c {
+                '{' => brace_count += 1,
+                '}' => {
+                    brace_count -= 1;
+                    if brace_count == 0 {
+                        close_brace = open_brace + i;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Pass only the body (between the outer braces) to avoid re-matching the top-level header
+        let body_start = open_brace + 1;
+        let body = &content[body_start..close_brace];
+        self.collect_nested_messages_in_block(body, content, body_start)
+    }
+
+    /// Collect direct child nested messages within a message body.
+    /// `body` is the content between the outer message's `{` and `}` (exclusive).
+    /// `body_offset` is the byte offset of `body` within `full_content`.
+    /// Only finds direct children (brace-depth 1 within body); recurses to find grandchildren.
+    fn collect_nested_messages_in_block(
+        &self,
+        body: &str,
+        full_content: &str,
+        body_offset: usize,
+    ) -> Vec<ProtoMessageDoc> {
+        let mut result = Vec::new();
+        let lines: Vec<&str> = full_content.lines().collect();
+
+        let chars: Vec<char> = body.chars().collect();
+        let mut i = 0;
+        let mut brace_depth = 0usize;
+
+        while i < chars.len() {
+            // We look for `message` keyword only at depth 0 (direct child level)
+            if brace_depth == 0
+                && chars.get(i..i + 7) == Some(&['m', 'e', 's', 's', 'a', 'g', 'e'])
+            {
+                let is_word_start = i == 0 || !chars[i - 1].is_alphanumeric();
+                if is_word_start {
+                    // Convert char position to byte position for byte-based slicing
+                    let byte_pos: usize = chars[..i].iter().collect::<String>().len();
+
+                    // Extract message name
+                    let mut j = i + 7;
+                    while j < chars.len() && chars[j].is_whitespace() {
+                        j += 1;
+                    }
+                    let name_start = j;
+                    while j < chars.len() && (chars[j].is_alphanumeric() || chars[j] == '_') {
+                        j += 1;
+                    }
+                    let message_name: String = chars[name_start..j].iter().collect();
+
+                    // Skip to opening brace
+                    while j < chars.len() && chars[j].is_whitespace() {
+                        j += 1;
+                    }
+
+                    if j < chars.len() && chars[j] == '{' {
+                        let open_brace_char = j;
+                        // Find matching close brace
+                        let mut depth = 0i32;
+                        let mut close_brace_char = open_brace_char;
+                        let mut k = open_brace_char;
+                        while k < chars.len() {
+                            match chars[k] {
+                                '{' => depth += 1,
+                                '}' => {
+                                    depth -= 1;
+                                    if depth == 0 {
+                                        close_brace_char = k;
+                                        break;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            k += 1;
+                        }
+
+                        // Compute byte offsets for header start and body
+                        let global_header_start = body_offset + byte_pos;
+                        let open_brace_byte_in_body: usize =
+                            chars[..open_brace_char].iter().collect::<String>().len();
+                        let close_brace_byte_in_body: usize =
+                            chars[..close_brace_char].iter().collect::<String>().len();
+                        let body_start_byte = open_brace_byte_in_body + 1; // after `{`
+                        let body_end_byte = close_brace_byte_in_body;
+
+                        let child_body = &body[body_start_byte..body_end_byte];
+                        let child_body_offset = body_offset + body_start_byte;
+
+                        // Extract fields using the full content for comment lookup
+                        let fields = self.extract_message_fields(
+                            full_content,
+                            global_header_start,
+                            &message_name,
+                        );
+                        let description =
+                            self.extract_preceding_comment(&lines, global_header_start);
+
+                        result.push(ProtoMessageDoc {
+                            message_name,
+                            description,
+                            fields,
+                            is_resource: false,
+                        });
+
+                        // Recurse into child body for deeper nesting
+                        let deeper = self.collect_nested_messages_in_block(
+                            child_body,
+                            full_content,
+                            child_body_offset,
+                        );
+                        result.extend(deeper);
+
+                        // Advance past the closing brace of this nested message
+                        i = close_brace_char + 1;
+                        brace_depth = 0;
+                        continue;
+                    }
+                }
+            }
+
+            match chars[i] {
+                '{' => brace_depth += 1,
+                '}' => brace_depth = brace_depth.saturating_sub(1),
+                _ => {}
+            }
+            i += 1;
+        }
+
+        result
     }
 
     /// Parse an enum proto file and extract enum documentation.
@@ -199,15 +359,12 @@ impl ProtoParser {
 
     /// Extract the name of the containing message for an enum.
     fn find_container_message(&self, content: &str, pos: usize) -> Option<String> {
-        // Look backwards from pos to find the message definition
+        // Look backwards from pos to find the last message definition
         let before = &content[..pos];
-
-        // Find the last message before this enum
-        for caps in self.message_pattern.captures_iter(before) {
-            return Some(caps.get(1).unwrap().as_str().to_string());
-        }
-
-        None
+        self.message_pattern
+            .captures_iter(before)
+            .last()
+            .map(|caps| caps.get(1).unwrap().as_str().to_string())
     }
 
     /// Extract comment lines preceding a definition.
@@ -302,6 +459,30 @@ impl ProtoParser {
         chars.into_iter().collect()
     }
 
+    /// Normalize multi-line field definitions by joining continuation lines.
+    /// When a newline is followed by whitespace then `.`, replace the newline
+    /// and leading whitespace with spaces, preserving byte offsets.
+    fn normalize_multiline_fields(&self, content: &str) -> String {
+        let mut bytes = content.as_bytes().to_vec();
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i] == b'\n' {
+                let mut j = i + 1;
+                while j < bytes.len() && (bytes[j] == b' ' || bytes[j] == b'\t') {
+                    j += 1;
+                }
+                if j < bytes.len() && bytes[j] == b'.' {
+                    // Replace \n + whitespace with spaces (same byte count)
+                    for k in i..j {
+                        bytes[k] = b' ';
+                    }
+                }
+            }
+            i += 1;
+        }
+        String::from_utf8(bytes).unwrap_or_else(|_| content.to_string())
+    }
+
     /// Extract fields within a message block.
     fn extract_message_fields(
         &self,
@@ -333,11 +514,20 @@ impl ProtoParser {
         // Remove nested message definitions to avoid extracting their fields
         // This preserves byte positions so field comment extraction still works
         let filtered_block = self.remove_nested_messages(message_block);
+        let filtered_block = self.normalize_multiline_fields(&filtered_block);
 
         let mut fields = Vec::new();
 
         for caps in self.field_pattern.captures_iter(&filtered_block) {
-            let type_name = caps.get(1).unwrap().as_str().to_string();
+            // Normalize whitespace around dots from multi-line type joins
+            let type_name = caps
+                .get(1)
+                .unwrap()
+                .as_str()
+                .split('.')
+                .map(|s| s.trim())
+                .collect::<Vec<_>>()
+                .join(".");
             let field_name = caps.get(2).unwrap().as_str().to_string();
             let field_number: u32 = caps.get(3).unwrap().as_str().parse().unwrap_or(0);
             let field_opts = caps.get(4).map(|m| m.as_str()).unwrap_or("");
@@ -479,8 +669,13 @@ pub fn parse_all_protos(
                 let content = std::fs::read_to_string(path)?;
                 let parsed = parser.parse_proto_file(&content);
 
-                for msg in parsed {
-                    messages.insert(msg.message_name.clone(), msg);
+                // The first (top-level) message per file is the GAQL resource.
+                // Subsequent entries are inline nested messages.
+                for (idx, mut msg) in parsed.into_iter().enumerate() {
+                    if idx == 0 {
+                        msg.is_resource = true;
+                    }
+                    messages.entry(msg.message_name.clone()).or_insert(msg);
                 }
             }
         }
@@ -496,6 +691,27 @@ pub fn parse_all_protos(
 
                 for enum_doc in parsed {
                     enums.insert(enum_doc.enum_name.clone(), enum_doc);
+                }
+            }
+        }
+    }
+
+    // Parse common proto files (shared message types used by resources).
+    // Use or_insert so resource-defined messages (parsed first) take priority.
+    let common_dir = proto_dir.join("common");
+    if common_dir.exists() {
+        for entry in WalkDir::new(&common_dir)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            let path = entry.path();
+            if path.extension().map_or(false, |ext| ext == "proto") {
+                let content = std::fs::read_to_string(path)?;
+                let parsed = parser.parse_proto_file(&content);
+
+                for msg in parsed {
+                    // is_resource stays false (default) for common types
+                    messages.entry(msg.message_name.clone()).or_insert(msg);
                 }
             }
         }
@@ -630,7 +846,8 @@ message AccessibleBiddingStrategy {
         let parser = ProtoParser::new();
         let messages = parser.parse_proto_file(NESTED_PROTO);
 
-        assert_eq!(messages.len(), 1);
+        // 1 top-level + 2 inline nested (TargetRoas, TargetCpa)
+        assert_eq!(messages.len(), 3);
         let strategy = &messages[0];
         assert_eq!(strategy.message_name, "AccessibleBiddingStrategy");
 
@@ -711,7 +928,8 @@ message Campaign {
         let parser = ProtoParser::new();
         let messages = parser.parse_proto_file(MULTIPLE_NESTED_PROTO);
 
-        assert_eq!(messages.len(), 1);
+        // 1 top-level + 2 inline nested (NestedBudget, NestedSetting)
+        assert_eq!(messages.len(), 3);
         let campaign = &messages[0];
         assert_eq!(campaign.message_name, "Campaign");
 
@@ -772,7 +990,8 @@ message Outer {
         let parser = ProtoParser::new();
         let messages = parser.parse_proto_file(DEEP_NESTED_PROTO);
 
-        assert_eq!(messages.len(), 1);
+        // 1 top-level (Outer) + 2 nested (Middle, Inner)
+        assert_eq!(messages.len(), 3);
         let outer = &messages[0];
         assert_eq!(outer.message_name, "Outer");
 
@@ -885,7 +1104,8 @@ message AccessibleBiddingStrategy {
         let parser = ProtoParser::new();
         let messages = parser.parse_proto_file(ACCESSIBLE_BIDDING_STRATEGY_PROTO);
 
-        assert_eq!(messages.len(), 1);
+        // 1 top-level + 5 inline nested (MaximizeConversions, TargetCpa, TargetImpressionShare, TargetRoas, TargetSpend)
+        assert_eq!(messages.len(), 6);
         let strategy = &messages[0];
         assert_eq!(strategy.message_name, "AccessibleBiddingStrategy");
 
@@ -1009,7 +1229,8 @@ message Campaign {
         let parser = ProtoParser::new();
         let messages = parser.parse_proto_file(NESTED_WITH_ONEOF_PROTO);
 
-        assert_eq!(messages.len(), 1);
+        // 1 top-level + 2 inline nested (NetworkSettings, HotelSettingInfo)
+        assert_eq!(messages.len(), 3);
         let campaign = &messages[0];
 
         // Should extract: resource_name, id, manual_cpc, manual_cpm, network_settings, hotel_setting = 6 fields
@@ -1038,5 +1259,160 @@ message Campaign {
         assert!(!field_names.contains(&"target_google_search"));
         assert!(!field_names.contains(&"target_search_network"));
         assert!(!field_names.contains(&"hotel_center_id"));
+    }
+
+    const REPEATED_FIELD_PROTO: &str = r#"
+message AdGroup {
+  // The resource name.
+  string resource_name = 1;
+
+  // The excluded parent asset field types.
+  repeated google.ads.googleads.v23.enums.AssetFieldTypeEnum.AssetFieldType
+      excluded_parent_asset_field_types = 54;
+
+  // The name of the ad group.
+  string name = 3;
+}
+"#;
+
+    #[test]
+    fn test_repeated_field_parsing() {
+        let parser = ProtoParser::new();
+        let messages = parser.parse_proto_file(REPEATED_FIELD_PROTO);
+
+        assert_eq!(messages.len(), 1);
+        let ad_group = &messages[0];
+        assert_eq!(ad_group.message_name, "AdGroup");
+        assert_eq!(ad_group.fields.len(), 3);
+
+        let field_names: Vec<&str> = ad_group
+            .fields
+            .iter()
+            .map(|f| f.field_name.as_str())
+            .collect();
+        assert!(field_names.contains(&"excluded_parent_asset_field_types"));
+
+        let repeated_field = ad_group
+            .fields
+            .iter()
+            .find(|f| f.field_name == "excluded_parent_asset_field_types")
+            .unwrap();
+        assert_eq!(repeated_field.field_number, 54);
+        assert_eq!(
+            repeated_field.type_name,
+            "google.ads.googleads.v23.enums.AssetFieldTypeEnum.AssetFieldType"
+        );
+        assert!(repeated_field.description.contains("excluded parent asset"));
+    }
+
+    const MULTILINE_TYPE_PROTO: &str = r#"
+message DemandGenAdGroupSettings {
+  // The channel controls.
+  message ChannelControls {
+    // The channel strategy.
+    google.ads.googleads.v23.enums.DemandGenChannelStrategyEnum
+        .DemandGenChannelStrategy channel_strategy = 2;
+  }
+
+  // The resource name.
+  string resource_name = 1;
+}
+"#;
+
+    #[test]
+    fn test_multiline_type_parsing() {
+        let parser = ProtoParser::new();
+        let messages = parser.parse_proto_file(MULTILINE_TYPE_PROTO);
+
+        // 1 top-level + 1 nested
+        assert_eq!(messages.len(), 2);
+
+        let controls = messages
+            .iter()
+            .find(|m| m.message_name == "ChannelControls")
+            .unwrap();
+        assert_eq!(controls.fields.len(), 1);
+
+        let field = &controls.fields[0];
+        assert_eq!(field.field_name, "channel_strategy");
+        assert_eq!(field.field_number, 2);
+        // Type name should be clean (no internal whitespace)
+        assert_eq!(
+            field.type_name,
+            "google.ads.googleads.v23.enums.DemandGenChannelStrategyEnum.DemandGenChannelStrategy"
+        );
+        assert!(field.description.contains("channel strategy"));
+    }
+
+    const REPEATED_MULTILINE_PROTO: &str = r#"
+message Campaign {
+  // The resource name.
+  string resource_name = 1;
+
+  // The excluded parent asset set types for this campaign.
+  repeated google.ads.googleads.v23.enums.AssetSetTypeEnum
+      .AssetSetType excluded_parent_asset_set_types = 80;
+}
+"#;
+
+    #[test]
+    fn test_repeated_multiline_combined() {
+        let parser = ProtoParser::new();
+        let messages = parser.parse_proto_file(REPEATED_MULTILINE_PROTO);
+
+        assert_eq!(messages.len(), 1);
+        let campaign = &messages[0];
+        assert_eq!(campaign.fields.len(), 2);
+
+        let field = campaign
+            .fields
+            .iter()
+            .find(|f| f.field_name == "excluded_parent_asset_set_types")
+            .unwrap();
+        assert_eq!(field.field_number, 80);
+        assert_eq!(
+            field.type_name,
+            "google.ads.googleads.v23.enums.AssetSetTypeEnum.AssetSetType"
+        );
+        assert!(field.description.contains("excluded parent asset set"));
+    }
+
+    #[test]
+    fn test_inline_nested_messages_captured() {
+        let parser = ProtoParser::new();
+        let messages = parser.parse_proto_file(NESTED_PROTO);
+
+        // Both outer and inner messages should appear as separate entries
+        let names: Vec<&str> = messages.iter().map(|m| m.message_name.as_str()).collect();
+        assert!(
+            names.contains(&"AccessibleBiddingStrategy"),
+            "Outer message should be present"
+        );
+        assert!(
+            names.contains(&"TargetRoas"),
+            "Nested TargetRoas should be present"
+        );
+        assert!(
+            names.contains(&"TargetCpa"),
+            "Nested TargetCpa should be present"
+        );
+    }
+
+    #[test]
+    fn test_inner_message_is_resource_false() {
+        let parser = ProtoParser::new();
+        let messages = parser.parse_proto_file(NESTED_PROTO);
+
+        // The top-level message has is_resource: false (set by parse_proto_file; callers set true)
+        // Nested messages must always have is_resource: false
+        for msg in &messages {
+            if msg.message_name != "AccessibleBiddingStrategy" {
+                assert!(
+                    !msg.is_resource,
+                    "Nested message {} should have is_resource = false",
+                    msg.message_name
+                );
+            }
+        }
     }
 }

@@ -56,3 +56,9 @@ Used by `mcc-gaql-common/src/paths.rs`:
 | Scraped docs | `~/Library/Caches/mcc-gaql/scraped_docs.json` | `~/.cache/mcc-gaql/scraped_docs.json` |
 | LanceDB | `~/Library/Caches/mcc-gaql/lancedb/` | `~/.cache/mcc-gaql/lancedb/` |
 | FastEmbed models | `~/Library/Caches/mcc-gaql/fastembed-models/` | `~/.cache/mcc-gaql/fastembed-models/` |
+
+# Rust Sandbox Instructions
+- Use `cargo check` instead of `cargo build` for quick validation.
+- When running tests, use `cargo test --lib` to limit scope.
+- The target directory is ignored by Git, but it persists in this sandbox.
+- You have permission to skip prompts using `--allow-dangerously-skip-permissions`.
