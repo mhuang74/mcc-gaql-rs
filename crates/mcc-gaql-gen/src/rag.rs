@@ -2298,9 +2298,14 @@ Respond ONLY with valid JSON:
                                 .to_string();
                             let value = f
                                 .get("value")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("")
-                                .to_string();
+                                .and_then(|v| {
+                                    v.as_str().map(String::from).or_else(|| {
+                                        v.as_i64()
+                                            .map(|n| n.to_string())
+                                            .or_else(|| v.as_f64().map(|n| n.to_string()))
+                                    })
+                                })
+                                .unwrap_or_default();
                             Some(mcc_gaql_common::field_metadata::FilterField {
                                 field_name: field,
                                 operator,
@@ -3203,5 +3208,255 @@ mod tests {
             hash1, hash_single,
             "Different query sets should produce different hashes"
         );
+    }
+
+    /// Parse LLM field selection response JSON into FieldSelectionResult
+    /// This is extracted for testability
+    fn parse_field_selection_response(
+        parsed: &serde_json::Value,
+        field_cache: &mcc_gaql_common::field_metadata::FieldMetadataCache,
+    ) -> Option<FieldSelectionResult> {
+        let select_fields: Vec<String> = parsed["select_fields"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .filter(|s| field_cache.fields.contains_key(s))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let filter_fields: Vec<mcc_gaql_common::field_metadata::FilterField> =
+            parsed["filter_fields"]
+                .as_array()
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|f| {
+                            let field = f.get("field")?.as_str()?.to_string();
+                            let operator = f
+                                .get("operator")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("=")
+                                .to_string();
+                            let value = f
+                                .get("value")
+                                .and_then(|v| {
+                                    v.as_str().map(String::from).or_else(|| {
+                                        v.as_i64()
+                                            .map(|n| n.to_string())
+                                            .or_else(|| v.as_f64().map(|n| n.to_string()))
+                                    })
+                                })
+                                .unwrap_or_default();
+                            Some(mcc_gaql_common::field_metadata::FilterField {
+                                field_name: field,
+                                operator,
+                                value,
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+
+        let order_by_fields: Vec<(String, String)> = parsed["order_by_fields"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|f| {
+                        let field = f.get("field").and_then(|v| v.as_str())?;
+                        let direction = f
+                            .get("direction")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("DESC");
+                        Some((field.to_string(), direction.to_string()))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let reasoning = parsed["reasoning"]
+            .as_str()
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+
+        Some(FieldSelectionResult {
+            select_fields,
+            filter_fields,
+            order_by_fields,
+            reasoning,
+        })
+    }
+
+    fn create_test_field_metadata(name: &str) -> mcc_gaql_common::field_metadata::FieldMetadata {
+        use mcc_gaql_common::field_metadata::FieldMetadata;
+
+        FieldMetadata {
+            name: name.to_string(),
+            category: "attributes".to_string(),
+            data_type: "STRING".to_string(),
+            selectable: true,
+            filterable: true,
+            sortable: true,
+            metrics_compatible: false,
+            resource_name: None,
+            selectable_with: Vec::new(),
+            enum_values: Vec::new(),
+            attribute_resources: Vec::new(),
+            description: Some("Test field".to_string()),
+            usage_notes: None,
+        }
+    }
+
+    fn create_test_cache(
+        field_names: &[&str],
+    ) -> mcc_gaql_common::field_metadata::FieldMetadataCache {
+        use chrono::Utc;
+        use mcc_gaql_common::field_metadata::FieldMetadataCache;
+        use std::collections::HashMap;
+
+        let mut fields = HashMap::new();
+        for name in field_names {
+            fields.insert(name.to_string(), create_test_field_metadata(name));
+        }
+
+        FieldMetadataCache {
+            last_updated: Utc::now(),
+            api_version: "v17".to_string(),
+            fields,
+            resources: None,
+            resource_metadata: None,
+        }
+    }
+
+    #[test]
+    fn test_parse_field_selection_with_numeric_filter_value() {
+        // This test verifies the fix for numeric filter values becoming blank
+        // Regression test for: LLM numeric filter values were parsed as empty strings
+        let json_response = serde_json::json!({
+            "select_fields": ["campaign.id", "campaign.name"],
+            "filter_fields": [
+                {
+                    "field": "campaign.target_cpa.cpc_bid_floor_micros",
+                    "operator": "=",
+                    "value": 3140000
+                }
+            ],
+            "order_by_fields": [],
+            "reasoning": "Test reasoning"
+        });
+
+        let cache = create_test_cache(&["campaign.id", "campaign.name"]);
+
+        let result = parse_field_selection_response(&json_response, &cache).unwrap();
+
+        assert_eq!(result.select_fields.len(), 2);
+        assert_eq!(result.filter_fields.len(), 1);
+        assert_eq!(
+            result.filter_fields[0].field_name,
+            "campaign.target_cpa.cpc_bid_floor_micros"
+        );
+        assert_eq!(result.filter_fields[0].operator, "=");
+        // This is the key assertion: numeric values should be preserved, not blank
+        assert_eq!(result.filter_fields[0].value, "3140000");
+        assert!(
+            !result.filter_fields[0].value.is_empty(),
+            "Numeric filter value should not be empty"
+        );
+    }
+
+    #[test]
+    fn test_parse_field_selection_with_float_filter_value() {
+        // Test that float values are also handled correctly
+        let json_response = serde_json::json!({
+            "select_fields": ["campaign.id"],
+            "filter_fields": [
+                {
+                    "field": "campaign.some_float_field",
+                    "operator": ">",
+                    "value": 3.14
+                }
+            ],
+            "order_by_fields": [],
+            "reasoning": "Test with float"
+        });
+
+        let cache = create_test_cache(&["campaign.id"]);
+
+        let result = parse_field_selection_response(&json_response, &cache).unwrap();
+
+        assert_eq!(result.filter_fields.len(), 1);
+        assert_eq!(result.filter_fields[0].value, "3.14");
+    }
+
+    #[test]
+    fn test_parse_field_selection_with_string_filter_value() {
+        // Test that string values still work (regression test)
+        let json_response = serde_json::json!({
+            "select_fields": ["campaign.id"],
+            "filter_fields": [
+                {
+                    "field": "campaign.status",
+                    "operator": "=",
+                    "value": "ENABLED"
+                }
+            ],
+            "order_by_fields": [],
+            "reasoning": "Test with string"
+        });
+
+        let cache = create_test_cache(&["campaign.id"]);
+
+        let result = parse_field_selection_response(&json_response, &cache).unwrap();
+
+        assert_eq!(result.filter_fields.len(), 1);
+        assert_eq!(result.filter_fields[0].value, "ENABLED");
+    }
+
+    #[test]
+    fn test_parse_field_selection_with_negative_integer() {
+        // Test negative integer values
+        let json_response = serde_json::json!({
+            "select_fields": ["campaign.id"],
+            "filter_fields": [
+                {
+                    "field": "campaign.some_negative_field",
+                    "operator": "<",
+                    "value": -100
+                }
+            ],
+            "order_by_fields": [],
+            "reasoning": "Test with negative integer"
+        });
+
+        let cache = create_test_cache(&["campaign.id"]);
+
+        let result = parse_field_selection_response(&json_response, &cache).unwrap();
+
+        assert_eq!(result.filter_fields.len(), 1);
+        assert_eq!(result.filter_fields[0].value, "-100");
+    }
+
+    #[test]
+    fn test_parse_field_selection_with_zero_value() {
+        // Test zero value (edge case - 0 is falsy in some contexts)
+        let json_response = serde_json::json!({
+            "select_fields": ["campaign.id"],
+            "filter_fields": [
+                {
+                    "field": "campaign.some_field",
+                    "operator": "=",
+                    "value": 0
+                }
+            ],
+            "order_by_fields": [],
+            "reasoning": "Test with zero"
+        });
+
+        let cache = create_test_cache(&["campaign.id"]);
+
+        let result = parse_field_selection_response(&json_response, &cache).unwrap();
+
+        assert_eq!(result.filter_fields.len(), 1);
+        assert_eq!(result.filter_fields[0].value, "0");
     }
 }
