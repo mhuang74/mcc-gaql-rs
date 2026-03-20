@@ -1,0 +1,29 @@
+# --- Rust Specific ---
+# Crucial: Prevent macOS 'target' from syncing with Linux Sandbox 'target'
+target/
+
+# --- Version Control ---
+.git
+.gitignore
+
+# --- OS / IDE Metadata ---
+.DS_Store
+.vscode/
+.idea/
+
+# --- Local Environment & Secrets ---
+# Don't let the sandbox see your host's local env files
+.env
+*.env.local
+.python-version
+
+# --- Large Assets / Caches ---
+# Since you are mounting the mcc-gaql cache manually via -v, 
+# ignore the default path to prevent a double-sync.
+Library/Caches/
+.cache/
+
+# --- Temporary Files ---
+*.swp
+*.tmp
+tmp/
