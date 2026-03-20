@@ -1708,24 +1708,39 @@ Choose from: "#
                 continue;
             }
 
-            let name_lower = field_name.to_lowercase();
+            // Split field name into words (by dot, underscore, etc.)
+            let name_words: Vec<&str> = field_name
+                .split(|c: char| !c.is_alphanumeric())
+                .filter(|w| !w.is_empty())
+                .collect();
+
+            // Split description into words
             let desc_lower = field
                 .description
                 .as_ref()
                 .map(|d| d.to_lowercase())
                 .unwrap_or_default();
+            let desc_words: Vec<&str> = desc_lower
+                .split(|c: char| !c.is_alphanumeric())
+                .filter(|w| !w.is_empty())
+                .collect();
 
-            // Check if any query term matches field name or description
+            // Check for FULL WORD matches only (not substrings like "id" in "valid")
             let term_matches: Vec<&str> = query_terms
                 .iter()
-                .filter(|term| name_lower.contains(*term) || desc_lower.contains(*term))
+                .filter(|term| {
+                    name_words.iter().any(|w| w.eq_ignore_ascii_case(term))
+                        || desc_words.iter().any(|w| *w == **term)
+                })
                 .copied()
                 .collect();
 
             // Require at least one term match
             if !term_matches.is_empty() {
                 // Prioritize fields with multiple term matches or name matches
-                let has_name_match = query_terms.iter().any(|term| name_lower.contains(term));
+                let has_name_match = query_terms
+                    .iter()
+                    .any(|term| name_words.iter().any(|w| w.eq_ignore_ascii_case(term)));
                 let match_score = term_matches.len() + if has_name_match { 2 } else { 0 };
 
                 // Only add fields with reasonable match scores
@@ -1743,16 +1758,21 @@ Choose from: "#
             }
         }
 
-        // Also check metrics and segments with keyword matching
+        // Also check metrics and segments with keyword matching (full word only)
         for field_name in selectable_with {
             if seen.contains(field_name) {
                 continue;
             }
 
             if let Some(field) = self.field_cache.fields.get(field_name) {
-                let name_lower = field_name.to_lowercase();
+                let name_words: Vec<&str> = field_name
+                    .split(|c: char| !c.is_alphanumeric())
+                    .filter(|w| !w.is_empty())
+                    .collect();
 
-                let has_name_match = query_terms.iter().any(|term| name_lower.contains(term));
+                let has_name_match = query_terms
+                    .iter()
+                    .any(|term| name_words.iter().any(|w| w.eq_ignore_ascii_case(term)));
                 if has_name_match && seen.insert(field_name.clone()) {
                     matches.push(field.clone());
                 }
