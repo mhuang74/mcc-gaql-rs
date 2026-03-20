@@ -530,11 +530,10 @@ async fn cmd_enrich(
 
     let _ = scrape_delay_ms; // Not used - we don't scrape
     let _ = scrape_ttl_days; // Not used - we don't scrape
-    let _ = batch_size; // Used by MetadataEnricher::with_batch_size if configured
 
     // Run LLM enrichment
     println!("Enriching {} fields using LLM...", cache.fields.len());
-    let enricher = enricher::MetadataEnricher::new(model_pool);
+    let enricher = enricher::MetadataEnricher::new(model_pool).with_batch_size(batch_size);
     enricher.enrich(&mut cache, &scraped).await?;
 
     // Save enriched cache

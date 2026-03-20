@@ -82,7 +82,6 @@ impl MetadataEnricher {
     }
 
     /// Override the number of fields sent per LLM batch (default: 15).
-    #[allow(dead_code)]
     pub fn with_batch_size(mut self, batch_size: usize) -> Self {
         self.batch_size = batch_size;
         self
