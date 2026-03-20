@@ -1642,8 +1642,11 @@ Choose from the following resources (organized by category):
         // Run all 3 searches in parallel
         log::debug!("Phase 2: Running 3 parallel vector searches...");
         let search_start = std::time::Instant::now();
-        let (attr_results, metric_results, segment_results) =
-            tokio::join!(attr_search, metric_search, segment_search);
+        let (attr_results, metric_results, segment_results): (
+            anyhow::Result<_>,
+            anyhow::Result<_>,
+            anyhow::Result<_>,
+        ) = tokio::join!(attr_search, metric_search, segment_search);
         log::debug!(
             "Phase 2: Vector searches complete in {}ms",
             search_start.elapsed().as_millis()
