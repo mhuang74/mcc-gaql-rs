@@ -33,6 +33,7 @@ regex = "1.10"
 walkdir = "2"
 num_cpus = "1.16"
 twox-hash = "1.6"
+rand = "0.8"
 
 [build-dependencies]
 chrono = { workspace = true }

@@ -24,8 +24,9 @@ use crate::rag::{format_llm_request_debug, format_llm_response_debug};
 use crate::model_pool::{ModelLease, ModelPool};
 use crate::scraper::ScrapedDocs;
 
-/// Retry an async operation with exponential backoff.
-/// Delays: 1s, 2s, 4s (doubling each retry)
+/// Retry an async operation with exponential backoff and jitter.
+/// Base delays: 1s, 2s, 4s (doubling each retry) with ±50% random jitter
+/// to prevent thundering herd when multiple concurrent tasks fail together.
 async fn retry_with_backoff<T, E, Fut, F>(
     operation_name: &str,
     max_retries: u32,
@@ -36,6 +37,8 @@ where
     Fut: std::future::Future<Output = Result<T, E>>,
     E: std::fmt::Display,
 {
+    use rand::Rng;
+
     let mut attempt = 0;
     loop {
         match f().await {
@@ -51,15 +54,21 @@ where
                     );
                     return Err(e);
                 }
-                let delay_secs = 1u64 << (attempt - 1); // 1, 2, 4 seconds
+                // Base delay in milliseconds: 1000, 2000, 4000
+                let base_delay_ms = 1000u64 << (attempt - 1);
+                // Add jitter: ±50% of base delay
+                let jitter_range = base_delay_ms / 2;
+                let jitter = rand::thread_rng().gen_range(0..=jitter_range * 2) as i64
+                    - jitter_range as i64;
+                let delay_ms = (base_delay_ms as i64 + jitter).max(100) as u64;
                 log::info!(
-                    "{} failed (attempt {}), retrying in {}s: {}",
+                    "{} failed (attempt {}), retrying in {}ms: {}",
                     operation_name,
                     attempt,
-                    delay_secs,
+                    delay_ms,
                     e
                 );
-                sleep(Duration::from_secs(delay_secs)).await;
+                sleep(Duration::from_millis(delay_ms)).await;
             }
         }
     }

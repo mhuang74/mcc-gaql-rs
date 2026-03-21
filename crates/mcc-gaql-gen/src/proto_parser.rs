@@ -221,6 +221,20 @@ impl ProtoParser {
         let lines: Vec<&str> = full_content.lines().collect();
 
         let chars: Vec<char> = body.chars().collect();
+
+        // Pre-compute cumulative byte offsets for O(1) char-to-byte conversion
+        // This avoids O(N²) behavior from repeated chars[..i].iter().collect::<String>().len()
+        let char_to_byte: Vec<usize> = {
+            let mut offsets = Vec::with_capacity(chars.len() + 1);
+            let mut byte_pos = 0;
+            for c in &chars {
+                offsets.push(byte_pos);
+                byte_pos += c.len_utf8();
+            }
+            offsets.push(byte_pos);
+            offsets
+        };
+
         let mut i = 0;
         let mut brace_depth = 0usize;
 
@@ -231,7 +245,7 @@ impl ProtoParser {
                 let is_word_start = i == 0 || !chars[i - 1].is_alphanumeric();
                 if is_word_start {
                     // Convert char position to byte position for byte-based slicing
-                    let byte_pos: usize = chars[..i].iter().collect::<String>().len();
+                    let byte_pos: usize = char_to_byte[i];
 
                     // Extract message name
                     let mut j = i + 7;
@@ -272,10 +286,8 @@ impl ProtoParser {
 
                         // Compute byte offsets for header start and body
                         let global_header_start = body_offset + byte_pos;
-                        let open_brace_byte_in_body: usize =
-                            chars[..open_brace_char].iter().collect::<String>().len();
-                        let close_brace_byte_in_body: usize =
-                            chars[..close_brace_char].iter().collect::<String>().len();
+                        let open_brace_byte_in_body: usize = char_to_byte[open_brace_char];
+                        let close_brace_byte_in_body: usize = char_to_byte[close_brace_char];
                         let body_start_byte = open_brace_byte_in_body + 1; // after `{`
                         let body_end_byte = close_brace_byte_in_body;
 

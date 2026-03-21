@@ -3,8 +3,6 @@ use std::hash::{Hash, Hasher};
 use std::vec;
 use twox_hash::XxHash64;
 
-use chrono::Datelike;
-
 use futures::stream::{self, StreamExt};
 use log::info;
 
@@ -172,6 +170,99 @@ impl LlmConfig {
             .temperature(self.temperature as f64)
             .build();
         Ok(agent)
+    }
+}
+
+/// Pre-computed date ranges for LLM prompt context.
+/// Extracts date arithmetic from the main function for clarity and testability.
+struct DateContext {
+    today: chrono::NaiveDate,
+    // Period boundaries
+    this_year_start: chrono::NaiveDate,
+    prev_year_start: chrono::NaiveDate,
+    prev_year_end: chrono::NaiveDate,
+    this_quarter_start: chrono::NaiveDate,
+    prev_quarter_start: chrono::NaiveDate,
+    prev_quarter_end: chrono::NaiveDate,
+    last_60_start: chrono::NaiveDate,
+    last_90_start: chrono::NaiveDate,
+    // Seasons (as formatted strings for prompt interpolation)
+    this_summer: (String, String),
+    last_summer: (String, String),
+    this_winter: (String, String),
+    last_winter: (String, String),
+    this_spring: (String, String),
+    last_spring: (String, String),
+    this_fall: (String, String),
+    last_fall: (String, String),
+    this_christmas: (String, String),
+}
+
+impl DateContext {
+    fn new() -> Self {
+        use chrono::Datelike;
+
+        let today = chrono::Local::now().date_naive();
+
+        // Simple offsets
+        let last_60_start = today - chrono::Duration::days(60);
+        let last_90_start = today - chrono::Duration::days(90);
+
+        // Month/quarter/year calculations
+        let this_month_start = today.with_day(1).unwrap_or(today);
+        let prev_month_end = this_month_start - chrono::Duration::days(1);
+
+        let month = today.month();
+        let quarter_start_month = ((month - 1) / 3) * 3 + 1;
+        let this_quarter_start =
+            chrono::NaiveDate::from_ymd_opt(today.year(), quarter_start_month, 1).unwrap_or(today);
+        let prev_quarter_end = this_quarter_start - chrono::Duration::days(1);
+        let prev_quarter_month = ((prev_quarter_end.month() - 1) / 3) * 3 + 1;
+        let prev_quarter_start =
+            chrono::NaiveDate::from_ymd_opt(prev_quarter_end.year(), prev_quarter_month, 1)
+                .unwrap_or(prev_quarter_end);
+
+        let this_year_start =
+            chrono::NaiveDate::from_ymd_opt(today.year(), 1, 1).unwrap_or(today);
+        let prev_year_end = this_year_start - chrono::Duration::days(1);
+        let prev_year_start =
+            chrono::NaiveDate::from_ymd_opt(prev_year_end.year(), 1, 1).unwrap_or(prev_year_end);
+
+        // Season calculations (fixed dates)
+        let year = today.year();
+        let this_summer = (format!("{year}-06-01"), format!("{year}-08-31"));
+        let last_summer = (format!("{}-06-01", year - 1), format!("{}-08-31", year - 1));
+        let this_winter = (format!("{year}-12-01"), format!("{year}-02-28"));
+        let last_winter = (format!("{}-12-01", year - 1), format!("{year}-02-28"));
+        let this_spring = (format!("{year}-03-01"), format!("{year}-05-31"));
+        let last_spring = (format!("{}-03-01", year - 1), format!("{}-05-31", year - 1));
+        let this_fall = (format!("{year}-09-01"), format!("{year}-11-30"));
+        let last_fall = (format!("{}-09-01", year - 1), format!("{}-11-30", year - 1));
+        let this_christmas = (format!("{year}-12-20"), format!("{year}-12-31"));
+
+        // Suppress unused variable warnings for computed but unused dates
+        let _ = prev_month_end;
+
+        Self {
+            today,
+            this_year_start,
+            prev_year_start,
+            prev_year_end,
+            this_quarter_start,
+            prev_quarter_start,
+            prev_quarter_end,
+            last_60_start,
+            last_90_start,
+            this_summer,
+            last_summer,
+            this_winter,
+            last_winter,
+            this_spring,
+            last_spring,
+            this_fall,
+            last_fall,
+            this_christmas,
+        }
     }
 }
 
@@ -1993,70 +2084,26 @@ Choose from the following resources (organized by category):
             }
         }
 
-        // Get today's date for temporal calculations
-        let today = chrono::Local::now().date_naive();
-        let _yesterday = today - chrono::Duration::days(1);
-        let _last_7_start = today - chrono::Duration::days(7);
-        let _last_30_start = today - chrono::Duration::days(30);
-        let last_60_start = today - chrono::Duration::days(60);
-        let last_90_start = today - chrono::Duration::days(90);
-        let _last_365_start = today - chrono::Duration::days(365);
-
-        // Calculate this/previous period start dates
-        let this_month_start = today.with_day(1).unwrap_or(today);
-        let prev_month_end = this_month_start - chrono::Duration::days(1);
-        let _prev_month_start = prev_month_end.with_day(1).unwrap_or(prev_month_end);
-
-        // Quarter calculations (months 1,4,7,10 are quarter starts)
-        let month = today.month();
-        let quarter_start_month = ((month - 1) / 3) * 3 + 1;
-        let this_quarter_start =
-            chrono::NaiveDate::from_ymd_opt(today.year(), quarter_start_month, 1).unwrap_or(today);
-        let prev_quarter_end = this_quarter_start - chrono::Duration::days(1);
-        let prev_quarter_month = ((prev_quarter_end.month() - 1) / 3) * 3 + 1;
-        let prev_quarter_start =
-            chrono::NaiveDate::from_ymd_opt(prev_quarter_end.year(), prev_quarter_month, 1)
-                .unwrap_or(prev_quarter_end);
-
-        // Year calculations
-        let this_year_start = chrono::NaiveDate::from_ymd_opt(today.year(), 1, 1).unwrap_or(today);
-        let prev_year_end = this_year_start - chrono::Duration::days(1);
-        let prev_year_start =
-            chrono::NaiveDate::from_ymd_opt(prev_year_end.year(), 1, 1).unwrap_or(prev_year_end);
-
-        // Week calculations (Monday start)
-        let weekday = today.weekday().num_days_from_monday();
-        let this_week_start = today - chrono::Duration::days(weekday as i64);
-        let _prev_week_end = this_week_start - chrono::Duration::days(1);
-        let _prev_week_start = this_week_start - chrono::Duration::days(6);
-
-        // Season calculations (fixed dates)
-        let year = today.year();
-        let (this_summer_start, this_summer_end) =
-            (format!("{year}-06-01"), format!("{year}-08-31"));
-        let (last_summer_start, last_summer_end) =
-            (format!("{}-06-01", year - 1), format!("{}-08-31", year - 1));
-        let (this_winter_start, this_winter_end) =
-            (format!("{year}-12-01"), format!("{year}-02-28"));
-        let (last_winter_start, last_winter_end) =
-            (format!("{}-12-01", year - 1), format!("{year}-02-28"));
-        let (this_spring_start, this_spring_end) =
-            (format!("{year}-03-01"), format!("{year}-05-31"));
-        let (last_spring_start, last_spring_end) =
-            (format!("{}-03-01", year - 1), format!("{}-05-31", year - 1));
-        let (this_fall_start, this_fall_end) = (format!("{year}-09-01"), format!("{year}-11-30"));
-        let (last_fall_start, last_fall_end) =
-            (format!("{}-09-01", year - 1), format!("{}-11-30", year - 1));
-
-        // Christmas holiday period (Dec 20-31)
-        let this_christmas_start = format!("{year}-12-20");
-        let this_christmas_end = format!("{year}-12-31");
-        let _last_christmas_start = format!("{}-12-20", year - 1);
-        let _last_christmas_end = format!("{}-12-31", year - 1);
-
-        // Fixed-date holidays
-        let _valentines = format!("{year}-02-14");
-        let _halloween = format!("{year}-10-31");
+        // Pre-computed date ranges for prompt interpolation
+        let dates = DateContext::new();
+        let today = dates.today;
+        let this_year_start = dates.this_year_start;
+        let prev_year_start = dates.prev_year_start;
+        let prev_year_end = dates.prev_year_end;
+        let this_quarter_start = dates.this_quarter_start;
+        let prev_quarter_start = dates.prev_quarter_start;
+        let prev_quarter_end = dates.prev_quarter_end;
+        let last_60_start = dates.last_60_start;
+        let last_90_start = dates.last_90_start;
+        let (this_summer_start, this_summer_end) = dates.this_summer;
+        let (last_summer_start, last_summer_end) = dates.last_summer;
+        let (this_winter_start, this_winter_end) = dates.this_winter;
+        let (last_winter_start, last_winter_end) = dates.last_winter;
+        let (this_spring_start, this_spring_end) = dates.this_spring;
+        let (last_spring_start, last_spring_end) = dates.last_spring;
+        let (this_fall_start, this_fall_end) = dates.this_fall;
+        let (last_fall_start, last_fall_end) = dates.last_fall;
+        let (this_christmas_start, this_christmas_end) = dates.this_christmas;
 
         // Build prompt conditionally based on whether cookbook is enabled
         let (system_prompt, user_prompt) = if self.pipeline_config.use_query_cookbook {
@@ -2413,6 +2460,22 @@ Respond ONLY with valid JSON:
             "DURING",
         ];
 
+        // Valid Google Ads date literals for DURING operator
+        const VALID_DATE_LITERALS: &[&str] = &[
+            "TODAY",
+            "YESTERDAY",
+            "LAST_7_DAYS",
+            "LAST_14_DAYS",
+            "LAST_30_DAYS",
+            "LAST_BUSINESS_WEEK",
+            "LAST_WEEK_MON_SUN",
+            "LAST_WEEK_SUN_SAT",
+            "THIS_WEEK_SUN_TODAY",
+            "THIS_WEEK_MON_TODAY",
+            "THIS_MONTH",
+            "LAST_MONTH",
+        ];
+
         // Add explicit filter fields from LLM
         for ff in &field_selection.filter_fields {
             let op = ff.operator.to_uppercase();
@@ -2428,56 +2491,64 @@ Respond ONLY with valid JSON:
             let escaped_value = ff.value.replace('\'', "\\'");
             let clause = match op.as_str() {
                 "IS NULL" | "IS NOT NULL" => format!("{} {}", ff.field_name, op),
-                "DURING" => format!("{} {} {}", ff.field_name, op, escaped_value), // No quotes for DURING
+                "DURING" => {
+                    // Validate against allowlist of Google Ads date literals
+                    let upper_value = escaped_value.to_uppercase();
+                    if !VALID_DATE_LITERALS.contains(&upper_value.as_str()) {
+                        log::warn!(
+                            "Invalid DURING literal '{}', defaulting to LAST_30_DAYS",
+                            escaped_value
+                        );
+                        format!("{} DURING LAST_30_DAYS", ff.field_name)
+                    } else {
+                        format!("{} DURING {}", ff.field_name, upper_value)
+                    }
+                }
                 "BETWEEN" => {
                     // BETWEEN value should be "start AND end" without the field name
+                    // Date format regex: YYYY-MM-DD
+                    let date_re = regex::Regex::new(r"^\d{4}-\d{2}-\d{2}$").unwrap();
+
                     if let Some((start, end)) = escaped_value.split_once(" AND ") {
                         let start_clean = start.trim();
                         let end_clean = end.trim();
-                        // Validate that neither part contains the field name or nested BETWEEN
+
+                        // Reject malformed values containing field names or nested BETWEEN
                         if start_clean.contains("segments.date")
                             || start_clean.contains("BETWEEN")
                             || end_clean.contains("segments.date")
                             || end_clean.contains("BETWEEN")
                         {
                             log::error!(
-                                "Malformed BETWEEN value contains field name or nested BETWEEN: '{}'",
+                                "Malformed BETWEEN value for '{}': contains field name or nested BETWEEN, skipping: '{}'",
+                                ff.field_name,
                                 escaped_value
                             );
-                            // Attempt to extract just the dates
-                            let fixed = escaped_value
-                                .replace("segments.date", "")
-                                .replace("BETWEEN", "")
-                                .replace("'", "");
-                            if let Some((s, e)) = fixed.split_once(" AND ") {
-                                format!(
-                                    "{} BETWEEN '{}' AND '{}'",
-                                    ff.field_name,
-                                    s.trim(),
-                                    e.trim()
-                                )
-                            } else {
-                                format!(
-                                    "{} BETWEEN '{}' AND '{}'",
-                                    ff.field_name, start_clean, end_clean
-                                )
-                            }
-                        } else {
-                            format!(
-                                "{} BETWEEN '{}' AND '{}'",
-                                ff.field_name, start_clean, end_clean
-                            )
+                            continue;
                         }
+
+                        // Validate date format
+                        if !date_re.is_match(start_clean) || !date_re.is_match(end_clean) {
+                            log::error!(
+                                "Invalid date format in BETWEEN for '{}': expected YYYY-MM-DD, got '{}' AND '{}', skipping",
+                                ff.field_name,
+                                start_clean,
+                                end_clean
+                            );
+                            continue;
+                        }
+
+                        format!(
+                            "{} BETWEEN '{}' AND '{}'",
+                            ff.field_name, start_clean, end_clean
+                        )
                     } else {
                         log::error!(
-                            "Invalid BETWEEN format for '{}': expected 'start AND end', got '{}'",
+                            "Invalid BETWEEN format for '{}': expected 'start AND end', got '{}', skipping",
                             ff.field_name,
                             escaped_value
                         );
-                        format!(
-                            "{} BETWEEN '{}' AND '{}'",
-                            ff.field_name, escaped_value, escaped_value
-                        )
+                        continue;
                     }
                 }
                 _ => format!("{} {} '{}'", ff.field_name, op, escaped_value), // Quoted for other operators
