@@ -5159,6 +5159,7 @@ dependencies = [
  "log",
  "mcc-gaql-common",
  "num_cpus",
+ "rand 0.8.5",
  "regex",
  "reqwest 0.11.27",
  "rig-core",
