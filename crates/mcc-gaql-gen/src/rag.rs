@@ -1931,11 +1931,15 @@ impl MultiStepRAGAgent {
         let categorized_resources = self.build_categorized_resource_list(&resources);
 
         let resource_list_header = if used_rag {
-            "Choose from the following semantically relevant resources:\n\
-             Note: selected by semantic similarity to your query. \
-             If the correct resource is missing, describe it.\n"
+            "IMPORTANT: You MUST select resources ONLY from the list below. \
+             Do NOT invent or hallucinate resource names.\n\
+             If no resource matches perfectly, choose the closest available option \
+             and explain in reasoning.\n\
+             Resources (selected by semantic similarity to your query):\n"
         } else {
-            "Choose from the following resources (organized by category):\n"
+            "IMPORTANT: You MUST select resources ONLY from the list below. \
+             Do NOT invent or hallucinate resource names.\n\
+             Resources (organized by category):\n"
         };
 
         let system_prompt = format!(
@@ -1989,6 +1993,23 @@ Respond ONLY with valid JSON:
             .as_str()
             .unwrap_or("campaign")
             .to_string();
+
+        // Validate primary resource exists in the known resource list
+        let primary = {
+            let all_resources = self.field_cache.get_resources();
+            if all_resources.contains(&primary) {
+                primary
+            } else {
+                log::warn!(
+                    "Phase 1: LLM returned invalid resource '{}', falling back to first candidate",
+                    primary
+                );
+                resources
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| "campaign".to_string())
+            }
+        };
 
         let related: Vec<String> = parsed["related_resources"]
             .as_array()
