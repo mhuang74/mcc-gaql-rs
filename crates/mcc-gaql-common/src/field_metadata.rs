@@ -324,11 +324,10 @@ impl FieldMetadataCache {
         // 3. Are metrics/segments compatible with any kept resource
         self.fields.retain(|_, field| {
             // Keep if field belongs to a retained resource (e.g., "keyword_view.resource_name")
-            if let Some(r) = field.get_resource() {
-                if keep_set.contains(&r) {
+            if let Some(r) = field.get_resource()
+                && keep_set.contains(&r) {
                     return true;
                 }
-            }
 
             // Keep RESOURCE-category fields whose name matches a kept resource (e.g., "keyword_view")
             if field.is_resource() && keep_set.contains(&field.name) {

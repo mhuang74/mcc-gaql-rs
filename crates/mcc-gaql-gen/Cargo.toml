@@ -30,7 +30,7 @@ hex = { workspace = true }
 flate2 = { workspace = true }
 tar = { workspace = true }
 tempfile = { workspace = true }
-clap = { version = "4.0", features = ["derive", "cargo"] }
+clap = { version = "4.0", features = ["derive", "cargo", "env"] }
 flexi_logger = { version = "0.22", features = ["compress"] }
 regex = "1.10"
 walkdir = "2"

@@ -1,6 +1,16 @@
 use std::env;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
+
+/// Version string including git hash and build time (computed lazily at first use)
+static VERSION: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "{} ({}) built {}",
+        env!("CARGO_PKG_VERSION"),
+        env!("GIT_HASH"),
+        env!("BUILD_TIME")
+    )
+});
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -48,7 +58,7 @@ fn filter_test_resources(resources: Vec<String>) -> Vec<String> {
 
 /// GAQL generation tool using LLM and RAG from Google Ads field metadata
 #[derive(Parser)]
-#[command(name = "mcc-gaql-gen", version, about)]
+#[command(name = "mcc-gaql-gen", version = VERSION.as_str(), about)]
 struct Cli {
     /// Enable verbose debug logging
     #[arg(short, long)]
