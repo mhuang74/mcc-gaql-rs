@@ -689,6 +689,11 @@ mod tests {
 
     #[test]
     fn test_hash_save_and_load() {
+        // Create a temp directory and override HOME so dirs::cache_dir() returns it
+        let temp_dir = tempfile::TempDir::new().expect("create temp dir");
+        let home_path = temp_dir.path().to_path_buf();
+        unsafe { std::env::set_var("HOME", &home_path) };
+
         let cache_type = "test_cache";
         let test_hash: u64 = 12345678;
 
@@ -699,9 +704,7 @@ mod tests {
         assert!(load_result.is_ok());
         assert_eq!(load_result.unwrap(), Some(test_hash));
 
-        // Clean up
-        let hash_path = get_hash_path(cache_type).unwrap();
-        let _ = std::fs::remove_file(hash_path);
+        // Clean up happens automatically when temp_dir is dropped
     }
 }
 
