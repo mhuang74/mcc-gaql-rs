@@ -139,12 +139,17 @@ fn test_validate_succeeds_with_existing_token_cache() {
     use std::fs;
     use std::io::Write;
 
+    // Create a temp directory and override HOME so dirs::config_dir() returns it
+    let temp_dir = tempfile::TempDir::new().expect("create temp dir");
+    let home_path = temp_dir.path().to_path_buf();
+    unsafe { std::env::set_var("HOME", &home_path) };
+
     // Get the proper token cache path using config_file_path
     let token_cache_path = config_file_path("tokencache_test_temp.json").expect("token cache path");
 
     // Ensure config directory exists
     if let Some(parent) = token_cache_path.parent() {
-        fs::create_dir_all(parent).ok();
+        fs::create_dir_all(parent).expect("create config dir");
     }
 
     // Create the token cache file
