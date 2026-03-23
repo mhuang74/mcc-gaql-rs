@@ -1763,7 +1763,7 @@ impl MultiStepRAGAgent {
 
     /// Minimum similarity score (from top_n) required to trust RAG candidates.
     /// Below this threshold the full resource list is used as fallback.
-    const SIMILARITY_THRESHOLD: f64 = 0.5;
+    const SIMILARITY_THRESHOLD: f64 = 0.3;
 
     /// Search the resource_entries vector index and return scored results.
     async fn search_resource_embeddings(
@@ -2528,6 +2528,9 @@ Respond ONLY with valid JSON:
             String::new()
         };
 
+        // Build candidate name set for validation (LLM may hallucinate fields not in candidates)
+        let candidate_names: HashSet<String> = candidates.iter().map(|f| f.name.clone()).collect();
+
         // Build candidate list for LLM
         let mut candidate_text = String::new();
         let mut categories = std::collections::HashMap::new();
@@ -2777,7 +2780,17 @@ Respond ONLY with valid JSON:
             .map(|arr| {
                 arr.iter()
                     .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                    .filter(|s| self.field_cache.fields.contains_key(s))
+                    .filter(|s| {
+                        if candidate_names.contains(s) {
+                            true
+                        } else {
+                            log::debug!(
+                                "Phase 3: Rejecting select field '{}' - not in candidates",
+                                s
+                            );
+                            false
+                        }
+                    })
                     .collect()
             })
             .unwrap_or_default();
@@ -2820,6 +2833,14 @@ Respond ONLY with valid JSON:
                     arr.iter()
                         .filter_map(|f| {
                             let field = f.get("field")?.as_str()?.to_string();
+                            // Validate field is in candidate set (LLM may hallucinate)
+                            if !candidate_names.contains(&field) {
+                                log::debug!(
+                                    "Phase 3: Rejecting filter field '{}' - not in candidates",
+                                    field
+                                );
+                                return None;
+                            }
                             let operator = f
                                 .get("operator")
                                 .and_then(|v| v.as_str())
@@ -2851,6 +2872,14 @@ Respond ONLY with valid JSON:
                 arr.iter()
                     .filter_map(|f| {
                         let field = f.get("field").and_then(|v| v.as_str())?;
+                        // Validate field is in candidate set (LLM may hallucinate)
+                        if !candidate_names.contains(field) {
+                            log::debug!(
+                                "Phase 3: Rejecting order_by field '{}' - not in candidates",
+                                field
+                            );
+                            return None;
+                        }
                         let direction = f
                             .get("direction")
                             .and_then(|v| v.as_str())
