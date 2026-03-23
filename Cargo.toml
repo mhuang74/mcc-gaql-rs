@@ -9,7 +9,7 @@ resolver = "2"
 [workspace.package]
 authors = ["Michael S. Huang <mhuang74@gmail.com>"]
 edition = "2024"
-version = "0.16.2"
+version = "0.16.3"
 
 [workspace.dependencies]
 anyhow = "1.0"
@@ -39,7 +39,6 @@ tar = "0.4"
 tempfile = "3.8"
 
 [profile.dev]
-codegen-units = 128
 opt-level = 1
 
 [profile.dev.package."*"]
