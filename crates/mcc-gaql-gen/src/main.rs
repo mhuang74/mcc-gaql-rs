@@ -19,6 +19,7 @@ fn print_startup_banner() {
     log::info!("═════════════════════════════════════════════════════════════════");
 }
 
+use mcc_gaql_gen::bundle;
 use mcc_gaql_gen::enricher;
 use mcc_gaql_gen::formatter;
 use mcc_gaql_gen::model_pool;
@@ -150,30 +151,42 @@ enum Commands {
         explain: bool,
     },
 
-    /// Upload enriched metadata to Cloudflare R2
-    Upload {
-        /// Path to enriched metadata file to upload
-        #[arg(long)]
-        file: Option<PathBuf>,
+    /// Download pre-built RAG resources for instant GAQL generation
+    Bootstrap {
+        /// Public URL for the bundle
+        #[arg(long, env = "MCC_GAQL_BUNDLE_URL")]
+        url: Option<String>,
 
-        /// R2 object key (default: field_metadata_enriched.json)
-        #[arg(long, default_value = "field_metadata_enriched.json")]
-        key: String,
+        /// API version to download
+        #[arg(long, default_value = "v23")]
+        version: String,
+
+        /// Overwrite existing cache even if valid
+        #[arg(long)]
+        force: bool,
+
+        /// Skip SHA256 checksum validation
+        #[arg(long)]
+        skip_validation: bool,
+
+        /// Check current cache validity without downloading
+        #[arg(long)]
+        verify_only: bool,
     },
 
-    /// Download enriched metadata from Cloudflare R2
-    Download {
-        /// R2 public base URL
-        #[arg(long)]
-        public_url: Option<String>,
-
-        /// R2 object key (default: field_metadata_enriched.json)
-        #[arg(long, default_value = "field_metadata_enriched.json")]
+    /// Create and upload a RAG bundle to R2 storage
+    Publish {
+        /// Object key name
+        #[arg(long, default_value = "mcc-gaql-rag-bundle-v23.tar.gz")]
         key: String,
 
-        /// Destination path (defaults to standard enriched cache path)
+        /// Create bundle locally without uploading
         #[arg(long)]
-        output: Option<PathBuf>,
+        dry_run: bool,
+
+        /// Path to query_cookbook.toml to include
+        #[arg(long)]
+        queries: Option<PathBuf>,
     },
 
     /// Parse proto files from googleads-rs to extract field documentation
@@ -302,16 +315,22 @@ async fn main() -> Result<()> {
             .await?;
         }
 
-        Commands::Upload { file, key } => {
-            cmd_upload(file, key).await?;
+        Commands::Bootstrap {
+            url,
+            version,
+            force,
+            skip_validation,
+            verify_only,
+        } => {
+            cmd_bootstrap(url, version, force, skip_validation, verify_only).await?;
         }
 
-        Commands::Download {
-            public_url,
+        Commands::Publish {
             key,
-            output,
+            dry_run,
+            queries,
         } => {
-            cmd_download(public_url, key, output).await?;
+            cmd_publish(key, dry_run, queries).await?;
         }
 
         Commands::ParseProtos { output, force } => {
@@ -921,36 +940,156 @@ async fn cmd_index(queries: Option<String>, metadata: Option<PathBuf>) -> Result
     Ok(())
 }
 
-/// Upload enriched metadata to Cloudflare R2
-async fn cmd_upload(file: Option<PathBuf>, key: String) -> Result<()> {
-    let source_path = file
-        .or_else(|| mcc_gaql_common::paths::field_metadata_enriched_path().ok())
-        .context("Could not determine enriched metadata path")?;
+/// Download pre-built RAG resources for instant GAQL generation
+async fn cmd_bootstrap(
+    url: Option<String>,
+    _version: String,
+    force: bool,
+    skip_validation: bool,
+    verify_only: bool,
+) -> Result<()> {
+    // Get bundle URL
+    let bundle_url = url
+        .or_else(|| env::var("MCC_GAQL_BUNDLE_URL").ok())
+        .context("Bundle URL not configured. Set MCC_GAQL_BUNDLE_URL or use --url")?;
 
-    println!("Uploading {:?} as '{}' to R2...", source_path, key);
-    r2::upload(&key, &source_path).await?;
-    println!("Upload complete.");
+    // Check current cache status if verify-only or to determine if download needed
+    let verification = bundle::verify_cache().await?;
+
+    if verify_only {
+        println!("\nCache status:");
+        println!(
+            "  Field metadata: {}",
+            if verification.field_metadata_valid {
+                "valid"
+            } else {
+                "missing"
+            }
+        );
+        println!(
+            "  Query cookbook: {}",
+            if verification.query_cookbook_valid {
+                "valid"
+            } else {
+                "missing"
+            }
+        );
+        println!(
+            "  LanceDB: {}",
+            if verification.lancedb_valid {
+                "valid"
+            } else {
+                "missing"
+            }
+        );
+
+        if verification.is_valid() {
+            println!(
+                "\n  Fields: {} ({} enriched)",
+                verification.field_count, verification.enriched_field_count
+            );
+            println!("  Resources: {}", verification.resource_count);
+            println!("  Queries: {}", verification.query_count);
+            println!("\nReady for 'mcc-gaql-gen generate'");
+        } else {
+            println!("\nCache incomplete. Run 'mcc-gaql-gen bootstrap' to download.");
+        }
+        return Ok(());
+    }
+
+    // Check if we need to download
+    if !force && verification.is_valid() {
+        println!("Cache already valid (use --force to re-download).");
+        println!("\nRun 'mcc-gaql-gen generate' to create GAQL queries.");
+        return Ok(());
+    }
+
+    // Download bundle
+    println!("Downloading bundle from {}...", bundle_url);
+    let bundle_path = bundle::download_bundle(&bundle_url).await?;
+    println!("Download complete.");
+
+    // Extract bundle
+    println!("Extracting bundle...");
+    let extracted = bundle::extract_bundle(&bundle_path, skip_validation).await?;
+    println!("Bundle extracted successfully.");
+    println!("  API version: {}", extracted.manifest.api_version);
+    println!(
+        "  Created: {}",
+        extracted
+            .manifest
+            .created_at
+            .format("%Y-%m-%d %H:%M:%S UTC")
+    );
+    println!(
+        "  Fields: {} ({} enriched)",
+        extracted.manifest.contents.field_count, extracted.manifest.contents.enriched_field_count
+    );
+    println!(
+        "  Resources: {}",
+        extracted.manifest.contents.resource_count
+    );
+    println!(
+        "  Queries: {}",
+        extracted.manifest.contents.query_cookbook_count
+    );
+
+    // Install bundle to cache and config directories
+    println!("\nInstalling to local cache...");
+    bundle::install_bundle(&extracted, force).await?;
+
+    println!("\n✓ Bootstrap complete!");
+    println!("\nReady for 'mcc-gaql-gen generate'");
+    println!("\nExample:");
+    println!("  export MCC_GAQL_LLM_API_KEY=sk-...");
+    println!("  mcc-gaql-gen generate \"show campaign performance last week\"");
 
     Ok(())
 }
 
-/// Download enriched metadata from Cloudflare R2
-async fn cmd_download(
-    public_url: Option<String>,
-    key: String,
-    output: Option<PathBuf>,
-) -> Result<()> {
-    let base_url = public_url
-        .or_else(|| env::var("R2_PUBLIC_URL").ok())
-        .context("R2 public URL must be specified via --public-url or R2_PUBLIC_URL env var")?;
+/// Create and upload a RAG bundle to R2 storage
+async fn cmd_publish(key: String, dry_run: bool, queries: Option<PathBuf>) -> Result<()> {
+    // Get query cookbook path
+    let queries_path = if let Some(path) = queries {
+        path
+    } else {
+        mcc_gaql_common::paths::config_file_path("query_cookbook.toml")
+            .context("Could not find query_cookbook.toml. Specify with --queries")?
+    };
 
-    let dest_path = output
-        .or_else(|| mcc_gaql_common::paths::field_metadata_enriched_path().ok())
-        .context("Could not determine destination path")?;
+    if !queries_path.exists() {
+        anyhow::bail!("Query cookbook not found at {:?}", queries_path);
+    }
 
-    println!("Downloading '{}' from R2 to {:?}...", key, dest_path);
-    r2::download(&base_url, &key, &dest_path).await?;
-    println!("Download complete.");
+    println!("Creating bundle with query cookbook: {:?}", queries_path);
+
+    // Create bundle
+    let bundle_path = std::env::current_dir()?.join(&key);
+    let manifest = bundle::create_bundle(&bundle_path, &queries_path).await?;
+
+    println!("\nBundle created: {}", bundle_path.display());
+    println!("  API version: {}", manifest.api_version);
+    println!(
+        "  Fields: {} ({} enriched)",
+        manifest.contents.field_count, manifest.contents.enriched_field_count
+    );
+    println!("  Resources: {}", manifest.contents.resource_count);
+    println!("  Queries: {}", manifest.contents.query_cookbook_count);
+
+    if dry_run {
+        println!("\nDry run - bundle created locally but not uploaded.");
+        println!("To upload, run again without --dry-run.");
+        return Ok(());
+    }
+
+    // Upload to R2
+    println!("\nUploading to R2...");
+    let public_url = r2::upload_bundle(&bundle_path, &key).await?;
+
+    println!("\n✓ Publish complete!");
+    println!("  Public URL: {}", public_url);
+    println!("\nUsers can now run:");
+    println!("  mcc-gaql-gen bootstrap --url {}", public_url);
 
     Ok(())
 }
