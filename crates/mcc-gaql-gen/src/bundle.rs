@@ -7,7 +7,7 @@ use flate2::write::GzEncoder;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs::File;
-use std::io::{BufReader, BufWriter, Read, Write};
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use tar::{Archive, Builder};
 use tokio::fs;
@@ -289,8 +289,6 @@ pub async fn extract_bundle(bundle_path: &Path, skip_validation: bool) -> Result
 
 /// Download bundle from URL to temp file
 pub async fn download_bundle(url: &str) -> Result<PathBuf> {
-    use std::io::Cursor;
-
     log::info!("Downloading bundle from {}", url);
 
     // Handle file:// URLs for local testing
@@ -547,7 +545,7 @@ async fn copy_dir_all(src: &Path, dst: &Path) -> Result<()> {
 
         let metadata = entry.metadata().await?;
         if metadata.is_dir() {
-            copy_dir_all(&src_path, &dst_path).await?;
+            Box::pin(copy_dir_all(&src_path, &dst_path)).await?;
         } else {
             fs::copy(&src_path, &dst_path).await?;
         }
