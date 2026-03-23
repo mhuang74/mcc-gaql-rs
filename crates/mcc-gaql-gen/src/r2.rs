@@ -86,6 +86,80 @@ pub async fn download(public_base_url: &str, object_key: &str, dest_path: &Path)
     Ok(())
 }
 
+/// Upload a bundle file to R2 and return the public URL.
+///
+/// Requires MCC_GAQL_R2_ENDPOINT_URL, MCC_GAQL_R2_ACCESS_KEY_ID, and MCC_GAQL_R2_SECRET_ACCESS_KEY environment variables.
+pub async fn upload_bundle(local_path: &Path, object_key: &str) -> Result<String> {
+    upload(object_key, local_path).await?;
+
+    // Construct public URL
+    let public_url = format!(
+        "https://pub-{}.r2.dev/{}",
+        get_account_hash().unwrap_or_else(|_| "dev".to_string()),
+        object_key
+    );
+
+    Ok(public_url)
+}
+
+/// Get a hash of the account ID for public URL construction
+fn get_account_hash() -> Result<String> {
+    // In practice, this would come from the R2 configuration
+    // For now, we return a placeholder that users can customize
+    // The actual public URL is provided by R2 and can be configured via env var
+    std::env::var("MCC_GAQL_R2_PUBLIC_ID")
+        .map_err(|_| anyhow::anyhow!("MCC_GAQL_R2_PUBLIC_ID not set (used for public URL)"))
+}
+
+/// Download a bundle from a public URL (no auth required)
+pub async fn download_bundle(url: &str, dest_path: &Path) -> Result<()> {
+    log::info!("Downloading bundle from {} to {:?}", url, dest_path);
+
+    // Handle file:// URLs for local testing
+    if url.starts_with("file://") {
+        let source_path = url.trim_start_matches("file://");
+        tokio::fs::copy(source_path, dest_path)
+            .await
+            .with_context(|| format!("Failed to copy from {}", source_path))?;
+        return Ok(());
+    }
+
+    let client = reqwest::Client::builder()
+        .user_agent("mcc-gaql-gen (bundle downloader)")
+        .timeout(std::time::Duration::from_secs(300))
+        .build()
+        .context("Failed to build HTTP client")?;
+
+    let response = client
+        .get(url)
+        .send()
+        .await
+        .with_context(|| format!("Failed to download bundle from {}", url))?;
+
+    if !response.status().is_success() {
+        anyhow::bail!("Download failed: HTTP {} for {}", response.status(), url);
+    }
+
+    let bytes = response
+        .bytes()
+        .await
+        .context("Failed to read response body")?;
+
+    // Create parent directories if needed
+    if let Some(parent) = dest_path.parent() {
+        fs::create_dir_all(parent)
+            .await
+            .context("Failed to create destination directory")?;
+    }
+
+    fs::write(dest_path, &bytes)
+        .await
+        .with_context(|| format!("Failed to write to {:?}", dest_path))?;
+
+    log::info!("Downloaded {} bytes to {:?}", bytes.len(), dest_path);
+    Ok(())
+}
+
 /// Upload a local file to R2 using the S3-compatible API with AWS Signature Version 4.
 ///
 /// Requires MCC_GAQL_R2_ENDPOINT_URL, MCC_GAQL_R2_ACCESS_KEY_ID, and MCC_GAQL_R2_SECRET_ACCESS_KEY environment variables.

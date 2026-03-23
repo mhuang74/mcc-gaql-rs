@@ -1,5 +1,6 @@
 // Library target for integration tests and external access.
 #![recursion_limit = "512"]
+pub mod bundle;
 pub mod enricher;
 pub mod formatter;
 pub mod model_pool;
