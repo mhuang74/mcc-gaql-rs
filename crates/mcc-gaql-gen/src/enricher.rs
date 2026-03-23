@@ -58,8 +58,8 @@ where
                 let base_delay_ms = 1000u64 << (attempt - 1);
                 // Add jitter: ±50% of base delay
                 let jitter_range = base_delay_ms / 2;
-                let jitter = rand::thread_rng().gen_range(0..=jitter_range * 2) as i64
-                    - jitter_range as i64;
+                let jitter =
+                    rand::thread_rng().gen_range(0..=jitter_range * 2) as i64 - jitter_range as i64;
                 let delay_ms = (base_delay_ms as i64 + jitter).max(100) as u64;
                 log::info!(
                     "{} failed (attempt {}), retrying in {}ms: {}",

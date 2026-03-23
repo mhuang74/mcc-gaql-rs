@@ -222,8 +222,7 @@ impl DateContext {
             chrono::NaiveDate::from_ymd_opt(prev_quarter_end.year(), prev_quarter_month, 1)
                 .unwrap_or(prev_quarter_end);
 
-        let this_year_start =
-            chrono::NaiveDate::from_ymd_opt(today.year(), 1, 1).unwrap_or(today);
+        let this_year_start = chrono::NaiveDate::from_ymd_opt(today.year(), 1, 1).unwrap_or(today);
         let prev_year_end = this_year_start - chrono::Duration::days(1);
         let prev_year_start =
             chrono::NaiveDate::from_ymd_opt(prev_year_end.year(), 1, 1).unwrap_or(prev_year_end);
