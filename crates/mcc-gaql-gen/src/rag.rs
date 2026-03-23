@@ -481,10 +481,21 @@ pub async fn build_embeddings(
     let query_start = std::time::Instant::now();
     log::info!("Building query cookbook embeddings...");
     let _query_index =
-        build_or_load_query_vector_store(example_queries, resources.embedding_model).await?;
+        build_or_load_query_vector_store(example_queries, resources.embedding_model.clone())
+            .await?;
     log::info!(
         "Query cookbook embeddings ready (took {:.2}s)",
         query_start.elapsed().as_secs_f64()
+    );
+
+    // Build resource entries vector store (this will use cache if valid)
+    let resource_start = std::time::Instant::now();
+    log::info!("Building resource entries embeddings...");
+    let _resource_index =
+        build_or_load_resource_vector_store(field_cache, resources.embedding_model).await?;
+    log::info!(
+        "Resource entries embeddings ready (took {:.2}s)",
+        resource_start.elapsed().as_secs_f64()
     );
 
     log::info!("Embeddings build complete");
@@ -831,6 +842,233 @@ pub async fn build_or_load_field_vector_store(
     Ok(index)
 }
 
+/// Map a resource name to a human-readable category label
+fn categorize_resource(resource_name: &str) -> &'static str {
+    if resource_name.starts_with("campaign_budget") || resource_name.contains("budget") {
+        "Budget Resources"
+    } else if resource_name.starts_with("campaign") {
+        "Campaign Resources"
+    } else if resource_name.starts_with("ad_group_ad") {
+        "Ad Resources"
+    } else if resource_name.starts_with("ad_group") {
+        "Ad Group Resources"
+    } else if resource_name.contains("keyword") || resource_name.contains("search_term") {
+        "Keyword & Search Resources"
+    } else if resource_name.contains("asset") {
+        "Asset Resources"
+    } else if resource_name.contains("audience") || resource_name.contains("demographic") {
+        "Audience Resources"
+    } else if resource_name.contains("conversion") {
+        "Conversion Resources"
+    } else if resource_name.starts_with("customer") {
+        "Customer Resources"
+    } else if resource_name.contains("bidding") {
+        "Bidding Resources"
+    } else if resource_name.contains("shopping") || resource_name.contains("product") {
+        "Shopping Resources"
+    } else if resource_name.contains("hotel") {
+        "Hotel Resources"
+    } else if resource_name.contains("local_services") {
+        "Local Services Resources"
+    } else if resource_name.contains("video") {
+        "Video Resources"
+    } else if resource_name.contains("label") {
+        "Label Resources"
+    } else if resource_name.contains("user_list") {
+        "User List Resources"
+    } else if resource_name.contains("offline") {
+        "Offline Conversion Resources"
+    } else if resource_name.contains("shared") {
+        "Shared Set Resources"
+    } else if resource_name.contains("experiment") {
+        "Experiment Resources"
+    } else if resource_name.contains("geo") {
+        "Geographic Resources"
+    } else {
+        "Other Resources"
+    }
+}
+
+/// Compute a deterministic hash of the resource metadata for cache invalidation
+pub fn compute_resource_metadata_hash(field_cache: &FieldMetadataCache) -> u64 {
+    let mut hasher = XxHash64::with_seed(0x1234_5678_9abc_def0);
+    "RESOURCE_VERSION_1".hash(&mut hasher);
+
+    if let Some(resource_metadata) = &field_cache.resource_metadata {
+        let mut names: Vec<&String> = resource_metadata.keys().collect();
+        names.sort();
+        for name in names {
+            if let Some(rm) = resource_metadata.get(name) {
+                name.hash(&mut hasher);
+                if let Some(desc) = &rm.description {
+                    desc.hash(&mut hasher);
+                }
+                rm.selectable_with.len().hash(&mut hasher);
+                rm.field_count.hash(&mut hasher);
+            }
+        }
+    }
+
+    hasher.finish()
+}
+
+/// Build or load resource entries vector store with LanceDB caching
+pub async fn build_or_load_resource_vector_store(
+    field_cache: &FieldMetadataCache,
+    embedding_model: rig_fastembed::EmbeddingModel,
+) -> Result<LanceDbVectorIndex<rig_fastembed::EmbeddingModel>, anyhow::Error> {
+    let total_start = std::time::Instant::now();
+    let current_hash = compute_resource_metadata_hash(field_cache);
+
+    // Try to load from LanceDB cache
+    if let Ok(Some(cached_hash)) = lancedb_utils::load_hash("resource_entries")
+        && cached_hash == current_hash
+    {
+        log::info!("Resource entries cache valid, loading from LanceDB...");
+
+        match lancedb_utils::get_lancedb_connection().await {
+            Ok(db) => match lancedb_utils::open_table(&db, "resource_entries").await {
+                Ok(table) => {
+                    let index = LanceDbVectorIndex::new(
+                        table,
+                        embedding_model,
+                        "resource_name",
+                        SearchParams::default().distance_type(DistanceType::Cosine),
+                    )
+                    .await
+                    .map_err(|e| anyhow::anyhow!("Failed to create resource vector index: {}", e))?;
+
+                    log::info!(
+                        "Successfully loaded resource entries from cache ({:.2}s)",
+                        total_start.elapsed().as_secs_f64()
+                    );
+                    return Ok(index);
+                }
+                Err(e) => {
+                    log::warn!("Failed to open cached resource table: {}, rebuilding...", e);
+                }
+            },
+            Err(e) => {
+                log::warn!(
+                    "Failed to connect to LanceDB for resources: {}, rebuilding...",
+                    e
+                );
+            }
+        }
+    }
+
+    // Cache miss or invalid - build resource documents and embeddings
+    let resource_metadata = match &field_cache.resource_metadata {
+        Some(m) => m,
+        None => {
+            return Err(anyhow::anyhow!(
+                "resource_metadata is None in field cache; run mcc-gaql-gen to populate it"
+            ));
+        }
+    };
+
+    log::info!(
+        "Building embeddings for {} resources...",
+        resource_metadata.len()
+    );
+    let embedding_start = std::time::Instant::now();
+
+    let resource_docs: Vec<ResourceDocument> = resource_metadata
+        .iter()
+        .map(|(name, rm)| {
+            // Gather sample field names from the fields map (up to 10)
+            let sample_fields: Vec<&str> = field_cache
+                .fields
+                .values()
+                .filter(|f| f.get_resource().as_deref() == Some(name.as_str()))
+                .take(10)
+                .map(|f| f.name.as_str())
+                .collect();
+
+            let has_metrics = rm.has_metrics();
+            let category = categorize_resource(name).to_string();
+            let description = rm.description.clone().unwrap_or_default();
+
+            let embedding_text = format!(
+                "Resource: {}. Category: {}. Description: {}. \
+                 Has metrics: {}. Field count: {}. \
+                 Sample fields: {}.",
+                name,
+                category,
+                description,
+                has_metrics,
+                rm.field_count,
+                sample_fields.join(", "),
+            );
+
+            ResourceDocument {
+                id: name.clone(),
+                resource_name: name.clone(),
+                category,
+                description,
+                has_metrics,
+                field_count: rm.field_count as i32,
+                embedding_text,
+            }
+        })
+        .collect();
+
+    let resource_embeddings = generate_embeddings_parallel(
+        resource_docs.clone(),
+        embedding_model.clone(),
+        50,
+    )
+    .await?;
+
+    log::info!(
+        "Resource embeddings generated in {:.2}s",
+        embedding_start.elapsed().as_secs_f64()
+    );
+
+    // Map id -> embedding
+    let mut id_to_embedding = HashMap::new();
+    for (document, embeddings) in resource_embeddings.iter() {
+        for emb in embeddings.iter() {
+            id_to_embedding.insert(document.id.clone(), emb.clone());
+        }
+    }
+
+    // Extract in document order
+    let mut embedding_vecs = Vec::with_capacity(resource_docs.len());
+    for doc in &resource_docs {
+        if let Some(emb) = id_to_embedding.get(&doc.id) {
+            embedding_vecs.push(emb.clone());
+        } else {
+            log::warn!("Missing embedding for resource: {}", doc.id);
+            embedding_vecs.push(rig::embeddings::Embedding {
+                vec: vec![0.0_f64; lancedb_utils::EMBEDDING_DIM as usize],
+                document: String::new(),
+            });
+        }
+    }
+
+    // Save to LanceDB and wrap in index
+    let table =
+        lancedb_utils::build_or_load_resource_table(resource_docs, embedding_vecs, current_hash)
+            .await?;
+
+    let index = LanceDbVectorIndex::new(
+        table,
+        embedding_model,
+        "resource_name",
+        SearchParams::default().distance_type(DistanceType::Cosine),
+    )
+    .await
+    .map_err(|e| anyhow::anyhow!("Failed to create resource vector index: {}", e))?;
+
+    log::info!(
+        "Resource entries initialization complete ({:.2}s total)",
+        total_start.elapsed().as_secs_f64()
+    );
+
+    Ok(index)
+}
+
 /// Strip markdown code block notation from LLM responses
 fn strip_markdown_code_blocks(text: &str) -> String {
     let trimmed = text.trim();
@@ -1002,6 +1240,101 @@ impl From<FieldDocumentFlat> for FieldMetadata {
     }
 }
 
+/// Document for a resource entry, used for embedding generation
+#[derive(Clone, Serialize, Deserialize)]
+pub struct ResourceDocument {
+    /// Resource name (also used as embedding ID)
+    pub id: String,
+    pub resource_name: String,
+    pub category: String,
+    pub description: String,
+    pub has_metrics: bool,
+    pub field_count: i32,
+    /// Text used for embedding (built from resource metadata + sample fields)
+    pub embedding_text: String,
+}
+
+impl Embed for ResourceDocument {
+    fn embed(&self, embedder: &mut TextEmbedder) -> Result<(), EmbedError> {
+        embedder.embed(self.embedding_text.clone());
+        Ok(())
+    }
+}
+
+/// Flat representation of ResourceDocument for LanceDB deserialization
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct ResourceDocumentFlat {
+    pub resource_name: String,
+    pub category: String,
+    pub description: String,
+    pub has_metrics: bool,
+    pub field_count: i32,
+}
+
+/// Result of a resource vector search
+#[derive(Debug, Clone)]
+pub struct ResourceSearchResult {
+    pub resource_name: String,
+    pub score: f64,
+    pub has_metrics: bool,
+    pub category: String,
+    pub description: String,
+}
+
+/// Keywords indicating a performance/metrics query
+const PERFORMANCE_KEYWORDS: &[&str] = &[
+    "clicks",
+    "impressions",
+    "views",
+    "conversions",
+    "revenue",
+    "cost",
+    "spend",
+    "cpc",
+    "cpm",
+    "ctr",
+    "roas",
+    "performance",
+    "performing",
+    "trends",
+    "report",
+    "analytics",
+    "compare",
+    "growth",
+    "decline",
+    "increase",
+    "decrease",
+    "last week",
+    "last month",
+    "yesterday",
+    "date range",
+];
+
+/// Classifies the intent of a query for resource pre-filtering
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum QueryIntent {
+    /// Needs resources with metrics (performance data)
+    Performance,
+    /// Settings, configurations, attributes only
+    Structural,
+    /// Could be either - don't filter
+    Unknown,
+}
+
+impl QueryIntent {
+    pub fn classify(query: &str) -> Self {
+        let query_lower = query.to_lowercase();
+        if PERFORMANCE_KEYWORDS
+            .iter()
+            .any(|kw| query_lower.contains(kw))
+        {
+            QueryIntent::Performance
+        } else {
+            QueryIntent::Unknown
+        }
+    }
+}
+
 impl FieldDocument {
     /// Create a new field document.
     pub fn new(field: FieldMetadata) -> Self {
@@ -1143,6 +1476,7 @@ pub struct MultiStepRAGAgent {
     field_cache: FieldMetadataCache,
     field_index: LanceDbVectorIndex<rig_fastembed::EmbeddingModel>,
     query_index: LanceDbVectorIndex<rig_fastembed::EmbeddingModel>,
+    resource_index: LanceDbVectorIndex<rig_fastembed::EmbeddingModel>,
     pipeline_config: PipelineConfig,
     // Keep embed client alive to prevent premature resource dropping
     _embed_client: rig_fastembed::Client,
@@ -1176,13 +1510,19 @@ impl MultiStepRAGAgent {
 
         // Build or load query vector store
         let query_index =
-            build_or_load_query_vector_store(example_queries, resources.embedding_model).await?;
+            build_or_load_query_vector_store(example_queries, resources.embedding_model.clone())
+                .await?;
+
+        // Build or load resource entries vector store
+        let resource_index =
+            build_or_load_resource_vector_store(&field_cache, resources.embedding_model).await?;
 
         Ok(Self {
             llm_config: config.clone(),
             field_cache,
             field_index,
             query_index,
+            resource_index,
             pipeline_config,
             _embed_client: resources.embed_client,
         })
@@ -1421,6 +1761,112 @@ impl MultiStepRAGAgent {
     // Phase 1: Resource Selection
     // =========================================================================
 
+    /// Minimum similarity score (from top_n) required to trust RAG candidates.
+    /// Below this threshold the full resource list is used as fallback.
+    const SIMILARITY_THRESHOLD: f64 = 0.5;
+
+    /// Search the resource_entries vector index and return scored results.
+    async fn search_resource_embeddings(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<ResourceSearchResult>, anyhow::Error> {
+        let search_request = VectorSearchRequest::builder()
+            .query(query)
+            .samples(limit as u64)
+            .build()
+            .map_err(|e| anyhow::anyhow!("Failed to build resource search request: {}", e))?;
+
+        let raw_results = self
+            .resource_index
+            .top_n::<ResourceDocumentFlat>(search_request)
+            .await
+            .map_err(|e| anyhow::anyhow!("Resource vector search failed: {}", e))?;
+
+        Ok(raw_results
+            .into_iter()
+            .map(|(score, _id, doc)| ResourceSearchResult {
+                resource_name: doc.resource_name,
+                score,
+                has_metrics: doc.has_metrics,
+                category: doc.category,
+                description: doc.description,
+            })
+            .collect())
+    }
+
+    /// Retrieve relevant resources using semantic search + intent filtering.
+    /// Returns up to `top_n` results, ordered by similarity score.
+    pub async fn retrieve_relevant_resources(
+        &self,
+        query: &str,
+        top_n: usize,
+    ) -> Result<Vec<ResourceSearchResult>, anyhow::Error> {
+        let intent = QueryIntent::classify(query);
+
+        // Step 1: Broad search, then intent-filter and truncate
+        let mut results = self.search_resource_embeddings(query, top_n * 2).await?;
+
+        if intent == QueryIntent::Performance {
+            results.retain(|r| r.has_metrics);
+            log::debug!(
+                "QueryIntent::Performance: retained {} resources with metrics",
+                results.len()
+            );
+        }
+
+        results.truncate(top_n);
+
+        // Step 2: Backfill underrepresented categories
+        self.ensure_category_diversity(&mut results, top_n);
+
+        Ok(results)
+    }
+
+    /// Promote resources from underrepresented categories until `target` is reached.
+    fn ensure_category_diversity(&self, results: &mut Vec<ResourceSearchResult>, target: usize) {
+        if results.len() >= target {
+            return;
+        }
+
+        let existing_names: HashSet<String> =
+            results.iter().map(|r| r.resource_name.clone()).collect();
+        let existing_categories: HashSet<String> =
+            results.iter().map(|r| r.category.clone()).collect();
+
+        let Some(resource_metadata) = &self.field_cache.resource_metadata else {
+            return;
+        };
+
+        let mut seen_new_categories: HashSet<String> = HashSet::new();
+        let mut sorted_names: Vec<&String> = resource_metadata.keys().collect();
+        sorted_names.sort();
+
+        for name in sorted_names {
+            if results.len() >= target {
+                break;
+            }
+            if existing_names.contains(name) {
+                continue;
+            }
+            let category = categorize_resource(name);
+            if existing_categories.contains(category)
+                || seen_new_categories.contains(category)
+            {
+                continue;
+            }
+            let rm = &resource_metadata[name];
+            seen_new_categories.insert(category.to_string());
+            results.push(ResourceSearchResult {
+                resource_name: name.clone(),
+                score: 0.0,
+                has_metrics: rm.has_metrics(),
+                category: category.to_string(),
+                description: rm.description.clone().unwrap_or_default(),
+            });
+        }
+    }
+
     async fn select_resource(
         &self,
         user_query: &str,
@@ -1434,7 +1880,35 @@ impl MultiStepRAGAgent {
         ),
         anyhow::Error,
     > {
-        let resources = self.field_cache.get_resources();
+        // --- RAG pre-filter ---
+        let (resources, used_rag) =
+            match self.retrieve_relevant_resources(user_query, 20).await {
+                Ok(candidates) if !candidates.is_empty() => {
+                    let top_score = candidates[0].score;
+                    if top_score >= Self::SIMILARITY_THRESHOLD {
+                        log::info!(
+                            "Phase 1: RAG pre-filter selected {} resources (top score={:.3})",
+                            candidates.len(),
+                            top_score
+                        );
+                        let names: Vec<String> =
+                            candidates.into_iter().map(|c| c.resource_name).collect();
+                        (names, true)
+                    } else {
+                        log::warn!(
+                            "Phase 1: Low RAG confidence ({:.3}), falling back to full resource list",
+                            top_score
+                        );
+                        (self.field_cache.get_resources(), false)
+                    }
+                }
+                Ok(_) | Err(_) => {
+                    log::warn!(
+                        "Phase 1: RAG resource search unavailable, using full resource list"
+                    );
+                    (self.field_cache.get_resources(), false)
+                }
+            };
 
         // Build resource information for sampling
         let resource_info: Vec<(String, String)> = resources
@@ -1456,6 +1930,14 @@ impl MultiStepRAGAgent {
         // Build categorized resource list for LLM
         let categorized_resources = self.build_categorized_resource_list(&resources);
 
+        let resource_list_header = if used_rag {
+            "Choose from the following semantically relevant resources:\n\
+             Note: selected by semantic similarity to your query. \
+             If the correct resource is missing, describe it.\n"
+        } else {
+            "Choose from the following resources (organized by category):\n"
+        };
+
         let system_prompt = format!(
             r#"You are a Google Ads Query Language (GAQL) expert. Given a user query, determine:
 1. The primary resource to query FROM (e.g., campaign, ad_group, keyword_view)
@@ -1469,10 +1951,10 @@ Respond ONLY with valid JSON:
   "reasoning": "brief explanation"
 }}
 
-Choose from the following resources (organized by category):
-
+{}
+{}
 {}"#,
-            categorized_resources
+            resource_list_header, categorized_resources
         );
 
         let user_prompt = format!("User query: {}", user_query);

@@ -129,6 +129,14 @@ pub struct ResourceMetadata {
     pub uses_fallback: bool,
 }
 
+impl ResourceMetadata {
+    /// Returns true if this resource supports metrics (performance data).
+    /// Derived from selectable_with: any field starting with "metrics." indicates metrics support.
+    pub fn has_metrics(&self) -> bool {
+        self.selectable_with.iter().any(|f| f.starts_with("metrics."))
+    }
+}
+
 /// Cache for Google Ads field metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FieldMetadataCache {
