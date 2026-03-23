@@ -346,7 +346,7 @@ pub fn get_cache_path() -> Result<PathBuf> {
 }
 
 /// Build the cache by parsing all proto files.
-pub fn build_cache(proto_dir: &PathBuf, api_version: &str, commit: &str) -> Result<ProtoDocsCache> {
+pub fn build_cache(proto_dir: &Path, api_version: &str, commit: &str) -> Result<ProtoDocsCache> {
     let (messages, enums) = crate::proto_parser::parse_all_protos(proto_dir)?;
 
     let mut cache = ProtoDocsCache::new(api_version.to_string(), commit.to_string());
@@ -415,12 +415,11 @@ pub fn merge_into_field_metadata_cache(
         };
 
         // Look up proto field doc
-        if let Some(proto_field) = proto_cache.get_field_doc(&message_name, &field_name_proto) {
-            if !proto_field.description.is_empty() {
+        if let Some(proto_field) = proto_cache.get_field_doc(&message_name, &field_name_proto)
+            && !proto_field.description.is_empty() {
                 field_meta.description = Some(proto_field.description.clone());
                 enriched_count += 1;
             }
-        }
     }
 
     // Also enrich resource-level metadata
@@ -429,13 +428,12 @@ pub fn merge_into_field_metadata_cache(
             // Convert snake_case to PascalCase
             let message_name = snake_to_pascal_case(resource_name);
 
-            if let Some(proto_desc) = proto_cache.get_resource_description(&message_name) {
-                if res_meta.description.is_none()
-                    || res_meta.description.as_ref().map_or(true, |d| d.is_empty())
+            if let Some(proto_desc) = proto_cache.get_resource_description(&message_name)
+                && (res_meta.description.is_none()
+                    || res_meta.description.as_ref().is_none_or(|d| d.is_empty()))
                 {
                     res_meta.description = Some(proto_desc.to_string());
                 }
-            }
         }
     }
 
@@ -450,8 +448,8 @@ fn extract_commit_from_path(path: &Path) -> Result<String> {
     let components: Vec<_> = path.components().collect();
 
     for (i, component) in components.iter().enumerate() {
-        if let Component::Normal(name) = component {
-            if name.to_str() == Some("checkouts") && i + 2 < components.len() {
+        if let Component::Normal(name) = component
+            && name.to_str() == Some("checkouts") && i + 2 < components.len() {
                 // The component after googleads-rs-* should be the commit hash
                 if let Component::Normal(commit) = &components[i + 2] {
                     let commit_str = commit.to_string_lossy();
@@ -464,7 +462,6 @@ fn extract_commit_from_path(path: &Path) -> Result<String> {
                     }
                 }
             }
-        }
     }
 
     // Fallback: use "unknown" - cache will still work but won't invalidate on updates

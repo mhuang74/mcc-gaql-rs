@@ -4,7 +4,7 @@
 //! authoritative field-level documentation for the Google Ads API.
 
 use anyhow::Result;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Locates the googleads-rs proto directory containing V23 proto files.
 ///
@@ -78,7 +78,7 @@ fn find_in_cargo_cache() -> Option<PathBuf> {
 }
 
 /// Returns the path to a specific proto subdirectory.
-pub fn get_resources_dir(proto_root: &PathBuf) -> Result<PathBuf> {
+pub fn get_resources_dir(proto_root: &Path) -> Result<PathBuf> {
     let resources = proto_root.join("resources");
     if !resources.exists() {
         anyhow::bail!("Resources directory not found at {:?}", resources);
@@ -87,7 +87,7 @@ pub fn get_resources_dir(proto_root: &PathBuf) -> Result<PathBuf> {
 }
 
 /// Returns the path to the enums proto subdirectory.
-pub fn get_enums_dir(proto_root: &PathBuf) -> Result<PathBuf> {
+pub fn get_enums_dir(proto_root: &Path) -> Result<PathBuf> {
     let enums = proto_root.join("enums");
     if !enums.exists() {
         anyhow::bail!("Enums directory not found at {:?}", enums);

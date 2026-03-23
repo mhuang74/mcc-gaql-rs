@@ -643,7 +643,7 @@ async fn generate_embeddings_parallel<T: Embed + Clone + Send + Sync + 'static>(
 
     let concurrency = num_cpus::get().max(2);
     let total_docs = documents.len();
-    let total_chunks = (total_docs + chunk_size - 1) / chunk_size;
+    let total_chunks = total_docs.div_ceil(chunk_size);
 
     log::info!(
         "Generating embeddings for {} documents in {} chunks (concurrency: {})",
@@ -655,6 +655,7 @@ async fn generate_embeddings_parallel<T: Embed + Clone + Send + Sync + 'static>(
     let chunks: Vec<Vec<T>> = documents.chunks(chunk_size).map(|c| c.to_vec()).collect();
 
     // Process chunks concurrently and collect results
+    #[allow(clippy::type_complexity)]
     let results: Vec<Result<Vec<(T, Vec<rig::embeddings::Embedding>)>, anyhow::Error>> =
         stream::iter(chunks.into_iter().enumerate())
             .map(|(idx, chunk)| {
@@ -1591,8 +1592,8 @@ impl MultiStepRAGAgent {
 
         // Add categorized resources in order
         for (_, category_name) in &categories {
-            if let Some(items) = categorized.get(*category_name) {
-                if !items.is_empty() {
+            if let Some(items) = categorized.get(*category_name)
+                && !items.is_empty() {
                     output.push_str(&format!("\n--- {} ---\n", category_name));
                     for (name, desc) in items {
                         if desc.is_empty() {
@@ -1608,7 +1609,6 @@ impl MultiStepRAGAgent {
                         }
                     }
                 }
-            }
         }
 
         // Add uncategorized resources
@@ -1953,7 +1953,7 @@ Respond ONLY with valid JSON:
 
 {}
 {}
-{}"#,
+{{}}"#,
             resource_list_header, categorized_resources
         );
 
@@ -2127,13 +2127,12 @@ Respond ONLY with valid JSON:
                 for attr in &rm.key_attributes {
                     if let Some(field) = self.field_cache.fields.get(attr) {
                         // Only add if compatible with primary resource
-                        if let Some(resource) = field.get_resource() {
-                            if (resource == primary || selectable_with.contains(&resource))
+                        if let Some(resource) = field.get_resource()
+                            && (resource == primary || selectable_with.contains(&resource))
                                 && seen.insert(field.name.clone())
                             {
                                 candidates.push(field.clone());
                             }
-                        }
                     }
                 }
             }
@@ -2180,7 +2179,7 @@ Respond ONLY with valid JSON:
         };
 
         // Search for metrics (pre-filtered to metrics.* fields)
-        let metric_filter = LanceDBFilter::like("id".to_string(), "metrics.%".to_string());
+        let metric_filter = LanceDBFilter::like("id".to_string(), "metrics.%");
         let metric_search = async {
             let search_request = VectorSearchRequest::builder()
                 .query(user_query)
@@ -2196,7 +2195,7 @@ Respond ONLY with valid JSON:
         };
 
         // Search for segments (pre-filtered to segments.* fields)
-        let segment_filter = LanceDBFilter::like("id".to_string(), "segments.%".to_string());
+        let segment_filter = LanceDBFilter::like("id".to_string(), "segments.%");
         let segment_search = async {
             let search_request = VectorSearchRequest::builder()
                 .query(user_query)
@@ -2401,8 +2400,8 @@ Respond ONLY with valid JSON:
                 let match_score = term_matches.len() + if has_name_match { 2 } else { 0 };
 
                 // Only add fields with reasonable match scores
-                if match_score >= 2 || has_name_match {
-                    if seen.insert(field_name.clone()) {
+                if (match_score >= 2 || has_name_match)
+                    && seen.insert(field_name.clone()) {
                         log::trace!(
                             "Phase 2: Keyword match '{}' (score={}, terms={:?})",
                             field_name,
@@ -2411,7 +2410,6 @@ Respond ONLY with valid JSON:
                         );
                         matches.push(field.clone());
                     }
-                }
             }
         }
 
@@ -2957,6 +2955,9 @@ Respond ONLY with valid JSON:
             "LAST_MONTH",
         ];
 
+        // Date format regex: YYYY-MM-DD (compiled once outside loop)
+        let date_re = regex::Regex::new(r"^\d{4}-\d{2}-\d{2}$").unwrap();
+
         // Add explicit filter fields from LLM
         for ff in &field_selection.filter_fields {
             let op = ff.operator.to_uppercase();
@@ -2986,10 +2987,6 @@ Respond ONLY with valid JSON:
                     }
                 }
                 "BETWEEN" => {
-                    // BETWEEN value should be "start AND end" without the field name
-                    // Date format regex: YYYY-MM-DD
-                    let date_re = regex::Regex::new(r"^\d{4}-\d{2}-\d{2}$").unwrap();
-
                     if let Some((start, end)) = escaped_value.split_once(" AND ") {
                         let start_clean = start.trim();
                         let end_clean = end.trim();
@@ -3142,7 +3139,7 @@ impl GaqlBuilder {
             query.push_str("  ");
             query.push_str(field);
             if i < self.select_fields.len() - 1 {
-                query.push_str(",");
+                query.push(',');
             }
             query.push('\n');
         }

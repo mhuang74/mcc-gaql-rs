@@ -409,7 +409,7 @@ impl ProtoParser {
                     {
                         // Check if it's a word boundary (start of "message" keyword)
                         let is_word_start =
-                            i == 0 || chars.get(i - 1).map_or(true, |c| !c.is_alphanumeric());
+                            i == 0 || chars.get(i - 1).is_none_or(|c| !c.is_alphanumeric());
 
                         if is_word_start {
                             // Find the opening brace after message name
@@ -484,8 +484,8 @@ impl ProtoParser {
                 }
                 if j < bytes.len() && bytes[j] == b'.' {
                     // Replace \n + whitespace with spaces (same byte count)
-                    for k in i..j {
-                        bytes[k] = b' ';
+                    for byte in bytes.iter_mut().take(j).skip(i) {
+                        *byte = b' ';
                     }
                 }
             }
@@ -676,7 +676,7 @@ pub fn parse_all_protos(
             .filter_map(|e| e.ok())
         {
             let path = entry.path();
-            if path.extension().map_or(false, |ext| ext == "proto") {
+            if path.extension().is_some_and(|ext| ext == "proto") {
                 let content = std::fs::read_to_string(path)?;
                 let parsed = parser.parse_proto_file(&content);
 
@@ -696,7 +696,7 @@ pub fn parse_all_protos(
     if enums_dir.exists() {
         for entry in WalkDir::new(&enums_dir).into_iter().filter_map(|e| e.ok()) {
             let path = entry.path();
-            if path.extension().map_or(false, |ext| ext == "proto") {
+            if path.extension().is_some_and(|ext| ext == "proto") {
                 let content = std::fs::read_to_string(path)?;
                 let parsed = parser.parse_enum_file(&content);
 
@@ -713,7 +713,7 @@ pub fn parse_all_protos(
     if common_dir.exists() {
         for entry in WalkDir::new(&common_dir).into_iter().filter_map(|e| e.ok()) {
             let path = entry.path();
-            if path.extension().map_or(false, |ext| ext == "proto") {
+            if path.extension().is_some_and(|ext| ext == "proto") {
                 let content = std::fs::read_to_string(path)?;
                 let parsed = parser.parse_proto_file(&content);
 
