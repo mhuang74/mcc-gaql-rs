@@ -25,7 +25,7 @@ fn print_startup_banner() {
     );
 
     log::info!("═════════════════════════════════════════════════════════════════");
-    log::info!("{}", format!(" mcc-gaql-gen {} ", version_info));
+    log::info!(" mcc-gaql-gen {} ", version_info);
     log::info!("═════════════════════════════════════════════════════════════════");
 }
 
@@ -438,6 +438,7 @@ async fn cmd_scrape(
 }
 
 /// Enrich field metadata with LLM descriptions
+#[allow(clippy::too_many_arguments)]
 async fn cmd_enrich(
     resource: Option<String>,
     metadata_cache: Option<PathBuf>,
@@ -486,7 +487,7 @@ async fn cmd_enrich(
                 cache.get_resources().join(", ")
             );
         }
-        cache.retain_resources(&[res.clone()]);
+        cache.retain_resources(std::slice::from_ref(res));
         println!(
             "Enriching single resource '{}': {} fields",
             res,
@@ -1153,6 +1154,7 @@ async fn cmd_parse_protos(output: Option<PathBuf>, force: bool) -> Result<()> {
 }
 
 /// Display enriched field metadata for debugging RAG pipeline
+#[allow(clippy::too_many_arguments)]
 async fn cmd_metadata(
     query: String,
     metadata: Option<PathBuf>,

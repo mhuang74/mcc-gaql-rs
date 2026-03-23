@@ -59,7 +59,7 @@ impl ModelPool {
         }
 
         let model_count = self.config.model_count().max(1);
-        let permits_per_model = (total_concurrency + model_count - 1) / model_count; // Ceiling division
+        let permits_per_model = total_concurrency.div_ceil(model_count); // Ceiling division
 
         log::info!(
             "Setting total concurrency to {} ({} permits per model across {} models)",

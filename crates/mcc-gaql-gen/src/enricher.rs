@@ -321,15 +321,14 @@ impl MetadataEnricher {
         // Apply results to cache
         for result in resource_desc_results.into_iter().flatten() {
             let (resource, desc) = result;
-            if !desc.is_empty() {
-                if let Some(rm) = cache
+            if !desc.is_empty()
+                && let Some(rm) = cache
                     .resource_metadata
                     .as_mut()
                     .and_then(|m| m.get_mut(&resource))
                 {
                     rm.description = Some(desc);
                 }
-            }
         }
 
         let enriched = cache.enriched_field_count();

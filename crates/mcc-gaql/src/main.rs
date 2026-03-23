@@ -39,7 +39,7 @@ fn print_startup_banner() {
     );
 
     log::info!("═════════════════════════════════════════════════════════════════");
-    log::info!("{}", format!(" mcc-gaql {} ", version_info));
+    log::info!(" mcc-gaql {} ", version_info);
     log::info!("═════════════════════════════════════════════════════════════════");
 }
 

@@ -50,8 +50,8 @@ pub fn match_query(cache: &FieldMetadataCache, query: &str) -> Result<QueryResul
     let is_full_field_name = query.contains('.');
 
     // If NOT a full field name, check resource match FIRST
-    if !is_full_field_name {
-        if cache
+    if !is_full_field_name
+        && cache
             .resource_metadata
             .as_ref()
             .map(|rm| rm.contains_key(query))
@@ -94,7 +94,6 @@ pub fn match_query(cache: &FieldMetadataCache, query: &str) -> Result<QueryResul
                 segments,
             });
         }
-    }
 
     // If full field name OR no resource match, try field match
     if let Some(field) = cache.get_field(query) {
@@ -263,7 +262,7 @@ pub fn filter_by_category(query_result: QueryResult, category: &str) -> QueryRes
         }
         QueryResult::Pattern { mut fields } => {
             let cat = category.to_uppercase();
-            fields = fields.into_iter().filter(|(c, _)| c == &cat).collect();
+            fields.retain(|c, _| c == &cat);
             QueryResult::Pattern { fields }
         }
     }
@@ -341,7 +340,7 @@ pub fn filter_no_description(query_result: QueryResult) -> QueryResult {
     match query_result {
         QueryResult::Field(field) => {
             if field.description.is_none()
-                || field.description.as_ref().map_or(true, |d| d.is_empty())
+                || field.description.as_ref().is_none_or(|d| d.is_empty())
             {
                 QueryResult::Field(field)
             } else {
@@ -361,7 +360,7 @@ pub fn filter_no_description(query_result: QueryResult) -> QueryResult {
                     .into_iter()
                     .filter(|f| {
                         f.description.is_none()
-                            || f.description.as_ref().map_or(true, |d| d.is_empty())
+                            || f.description.as_ref().is_none_or(|d| d.is_empty())
                     })
                     .collect()
             };
@@ -376,7 +375,7 @@ pub fn filter_no_description(query_result: QueryResult) -> QueryResult {
         QueryResult::Pattern { mut fields } => {
             for field_list in fields.values_mut() {
                 field_list.retain(|f| {
-                    f.description.is_none() || f.description.as_ref().map_or(true, |d| d.is_empty())
+                    f.description.is_none() || f.description.as_ref().is_none_or(|d| d.is_empty())
                 });
             }
             QueryResult::Pattern { fields }
@@ -389,7 +388,7 @@ pub fn filter_no_usage_notes(query_result: QueryResult) -> QueryResult {
     match query_result {
         QueryResult::Field(field) => {
             if field.usage_notes.is_none()
-                || field.usage_notes.as_ref().map_or(true, |n| n.is_empty())
+                || field.usage_notes.as_ref().is_none_or(|n| n.is_empty())
             {
                 QueryResult::Field(field)
             } else {
@@ -409,7 +408,7 @@ pub fn filter_no_usage_notes(query_result: QueryResult) -> QueryResult {
                     .into_iter()
                     .filter(|f| {
                         f.usage_notes.is_none()
-                            || f.usage_notes.as_ref().map_or(true, |n| n.is_empty())
+                            || f.usage_notes.as_ref().is_none_or(|n| n.is_empty())
                     })
                     .collect()
             };
@@ -424,7 +423,7 @@ pub fn filter_no_usage_notes(query_result: QueryResult) -> QueryResult {
         QueryResult::Pattern { mut fields } => {
             for field_list in fields.values_mut() {
                 field_list.retain(|f| {
-                    f.usage_notes.is_none() || f.usage_notes.as_ref().map_or(true, |n| n.is_empty())
+                    f.usage_notes.is_none() || f.usage_notes.as_ref().is_none_or(|n| n.is_empty())
                 });
             }
             QueryResult::Pattern { fields }
@@ -527,7 +526,7 @@ pub fn format_llm(query_result: &QueryResult, show_all: bool) -> String {
                 ));
             }
 
-            output.push_str("\n");
+            output.push('\n');
 
             // Apply category limit
             let limit = if show_all {
@@ -726,7 +725,7 @@ pub fn format_full(query_result: &QueryResult) -> String {
 /// Format a single field with all metadata
 fn format_field_full(field: &FieldMetadata) -> String {
     let desc_indicator = if field.description.is_none()
-        || field.description.as_ref().map_or(true, |d| d.is_empty())
+        || field.description.as_ref().is_none_or(|d| d.is_empty())
     {
         format!(" {}", NO_DESCRIPTION)
     } else {
@@ -734,7 +733,7 @@ fn format_field_full(field: &FieldMetadata) -> String {
     };
 
     let notes_indicator = if field.usage_notes.is_none()
-        || field.usage_notes.as_ref().map_or(true, |n| n.is_empty())
+        || field.usage_notes.as_ref().is_none_or(|n| n.is_empty())
     {
         format!(" {}", NO_USAGE_NOTES)
     } else {
@@ -786,17 +785,15 @@ fn format_field_full(field: &FieldMetadata) -> String {
         output.push_str(&format!("  Resource: {}\n", item));
     }
 
-    if let Some(desc) = &field.description {
-        if !desc.is_empty() {
+    if let Some(desc) = &field.description
+        && !desc.is_empty() {
             output.push_str(&format!("  Description: {}\n", desc));
         }
-    }
 
-    if let Some(notes) = &field.usage_notes {
-        if !notes.is_empty() {
+    if let Some(notes) = &field.usage_notes
+        && !notes.is_empty() {
             output.push_str(&format!("  Usage notes: {}\n", notes));
         }
-    }
 
     output
 }
@@ -847,7 +844,7 @@ pub fn format_diff_llm(
         100.0 - enrichment_rate
     ));
 
-    output.push_str("\n");
+    output.push('\n');
 
     // Get query result from enriched cache
     let query_result = match_query(enriched, query)?;
@@ -905,7 +902,7 @@ pub fn format_diff_llm(
                 ));
             }
 
-            result_with_markers.push_str("\n");
+            result_with_markers.push('\n');
 
             let limit = if show_all {
                 usize::MAX
@@ -1019,15 +1016,14 @@ fn format_field_with_llm_marker(
     );
 
     // Add before/after if enriched
-    if was_enriched {
-        if let Some(ne_field) = non_enriched_field {
+    if was_enriched
+        && let Some(ne_field) = non_enriched_field {
             output.push_str(&format!(
                 "  Before: {}\n",
                 ne_field.description.as_deref().unwrap_or("")
             ));
             output.push_str(&format!("  After: {}\n", desc));
         }
-    }
 
     output
 }

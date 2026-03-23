@@ -1,6 +1,6 @@
 use anyhow::Result;
 use arrow_array::{
-    ArrayRef, BooleanArray, FixedSizeListArray, Float64Array, RecordBatch, StringArray,
+    ArrayRef, BooleanArray, FixedSizeListArray, Float64Array, Int32Array, RecordBatch, StringArray,
 };
 use arrow_schema::{DataType, Field, Schema};
 use lancedb::{Connection, Table, connect};
@@ -8,7 +8,7 @@ use rig::embeddings::Embedding;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::rag::FieldDocument;
+use crate::rag::{FieldDocument, ResourceDocument};
 use mcc_gaql_common::config::QueryEntry;
 
 /// Embedding dimension for BGESmallENV15 model
@@ -58,7 +58,11 @@ pub fn clear_cache() -> Result<()> {
     }
 
     // Remove hash files
-    let hash_files = ["query_cookbook.hash", "field_metadata.hash"];
+    let hash_files = [
+        "query_cookbook.hash",
+        "field_metadata.hash",
+        "resource_entries.hash",
+    ];
     for hash_file in &hash_files {
         let hash_path = cache_dir.join(hash_file);
         if hash_path.exists() {
@@ -402,6 +406,128 @@ pub async fn build_or_load_query_vector_store(
     log::info!(
         "Query cookbook cache built and saved in {:.2}s",
         start.elapsed().as_secs_f64()
+    );
+
+    Ok(table)
+}
+
+/// Schema for resource entries table
+pub fn resource_entries_schema() -> Arc<Schema> {
+    Arc::new(Schema::new(vec![
+        Field::new("resource_name", DataType::Utf8, false),
+        Field::new("category", DataType::Utf8, false),
+        Field::new("description", DataType::Utf8, false),
+        Field::new("has_metrics", DataType::Boolean, false),
+        Field::new("field_count", DataType::Int32, false),
+        Field::new(
+            "vector",
+            DataType::FixedSizeList(
+                Arc::new(Field::new("item", DataType::Float64, true)),
+                EMBEDDING_DIM,
+            ),
+            false,
+        ),
+    ]))
+}
+
+/// Convert resource documents and embeddings to Arrow RecordBatch
+pub fn resources_to_record_batch(
+    resources: &[ResourceDocument],
+    embeddings: &[Embedding],
+) -> Result<RecordBatch> {
+    if resources.len() != embeddings.len() {
+        anyhow::bail!("Resources and embeddings length mismatch");
+    }
+
+    let schema = resource_entries_schema();
+
+    let resource_names: StringArray =
+        StringArray::from_iter_values(resources.iter().map(|r| r.resource_name.as_str()));
+
+    let categories: StringArray =
+        StringArray::from_iter_values(resources.iter().map(|r| r.category.as_str()));
+
+    let descriptions: StringArray =
+        StringArray::from_iter_values(resources.iter().map(|r| r.description.as_str()));
+
+    let has_metrics: BooleanArray = resources.iter().map(|r| Some(r.has_metrics)).collect();
+
+    let field_counts: Int32Array = resources.iter().map(|r| Some(r.field_count)).collect();
+
+    let embedding_values: Vec<f64> = embeddings.iter().flat_map(|e| e.vec.clone()).collect();
+
+    let embedding_array = FixedSizeListArray::try_new(
+        Arc::new(Field::new("item", DataType::Float64, true)),
+        EMBEDDING_DIM,
+        Arc::new(Float64Array::from(embedding_values)),
+        None,
+    )?;
+
+    RecordBatch::try_new(
+        schema,
+        vec![
+            Arc::new(resource_names) as ArrayRef,
+            Arc::new(categories) as ArrayRef,
+            Arc::new(descriptions) as ArrayRef,
+            Arc::new(has_metrics) as ArrayRef,
+            Arc::new(field_counts) as ArrayRef,
+            Arc::new(embedding_array) as ArrayRef,
+        ],
+    )
+    .map_err(|e| anyhow::anyhow!("Failed to create RecordBatch: {}", e))
+}
+
+/// Build or load resource entries LanceDB table (returns raw Table for wrapping in vector index)
+pub async fn build_or_load_resource_table(
+    resources: Vec<ResourceDocument>,
+    embeddings: Vec<Embedding>,
+    current_hash: u64,
+) -> Result<Table> {
+    let cache_type = "resource_entries";
+    let table_name = "resource_entries";
+
+    if let Ok(Some(cached_hash)) = load_hash(cache_type) {
+        if cached_hash == current_hash {
+            log::info!(
+                "Resource entries cache is valid (hash: {}), loading from LanceDB...",
+                current_hash
+            );
+
+            match get_lancedb_connection().await {
+                Ok(db) => match open_table(&db, table_name).await {
+                    Ok(table) => {
+                        log::info!("Successfully loaded resource entries from cache");
+                        return Ok(table);
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to open table: {}, rebuilding...", e);
+                    }
+                },
+                Err(e) => {
+                    log::warn!("Failed to connect to LanceDB: {}, rebuilding...", e);
+                }
+            }
+        } else {
+            log::info!(
+                "Resource entries cache is stale (hash mismatch: {} vs {}), rebuilding...",
+                cached_hash,
+                current_hash
+            );
+        }
+    } else {
+        log::info!("No resource entries cache found, building embeddings...");
+    }
+
+    let start = std::time::Instant::now();
+    let record_batch = resources_to_record_batch(&resources, &embeddings)?;
+    let db = get_lancedb_connection().await?;
+    let table = create_table(&db, table_name, record_batch).await?;
+    save_hash(cache_type, current_hash)?;
+
+    log::info!(
+        "Resource entries cache built and saved in {:.2}s ({} resources)",
+        start.elapsed().as_secs_f64(),
+        resources.len()
     );
 
     Ok(table)

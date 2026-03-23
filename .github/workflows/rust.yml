@@ -47,11 +47,11 @@ jobs:
     - name: Install deps
       run: sudo apt-get -y install protobuf-compiler
     - name: Build mcc-gaql-common
-      run: cargo build --verbose -p mcc-gaql-common
+      run: cargo build --profile ci --verbose -p mcc-gaql-common
     - name: Build mcc-gaql
-      run: cargo build --verbose -p mcc-gaql
+      run: cargo build --profile ci --verbose -p mcc-gaql
     - name: Run tests for core crates
-      run: cargo test --verbose -p mcc-gaql-common -p mcc-gaql -- --test-threads=1
+      run: cargo test --profile ci --verbose -p mcc-gaql-common -p mcc-gaql -- --test-threads=1
 
   build-gen:
     name: Build GAQL Generator (mcc-gaql-gen)
@@ -71,9 +71,17 @@ jobs:
       with:
         shared-key: "mcc-gaql-rs-gen"
         cache-on-failure: true
+        # Exclude ort.pyke.io cache from rust-cache - it corrupts easily
+        cache-directories: |
+          ~/.cargo/registry/cache
+          ~/.cargo/registry/src
+          ~/.cargo/git/db
+          target
+    - name: Clear ort cache
+      run: rm -rf ~/.cache/ort.pyke.io
     - name: Install deps
       run: sudo apt-get -y install protobuf-compiler
     - name: Build mcc-gaql-gen
-      run: cargo build --verbose -p mcc-gaql-gen
+      run: cargo build --profile ci --verbose -p mcc-gaql-gen
     - name: Run tests for mcc-gaql-gen
-      run: cargo test --verbose -p mcc-gaql-gen -- --test-threads=1
+      run: cargo test --profile ci --verbose -p mcc-gaql-gen -- --test-threads=1

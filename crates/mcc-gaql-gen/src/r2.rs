@@ -229,6 +229,7 @@ struct SignedRequest {
 /// Sign an S3 request using AWS Signature Version 4.
 ///
 /// Reference: https://docs.aws.amazon.com/general/latest/gr/sigv4-create-canonical-request.html
+#[allow(clippy::too_many_arguments)]
 fn sign_s3_request(
     method: &str,
     endpoint: &str,
