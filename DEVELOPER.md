@@ -76,8 +76,8 @@ mcc-gaql-rs/
 │   ├── mcc-gaql-gen/             # GAQL generation tool
 │   │   ├── Cargo.toml
 │   │   └── src/
-│   │       ├── main.rs           # CLI: scrape, enrich, generate, upload
-│   │       ├── scraper.rs        # HTTP scraper for API docs
+│   │       ├── main.rs           # CLI: parse-protos, enrich, generate, upload (scrape: deprecated)
+│   │       ├── scraper.rs        # HTTP scraper for API docs (deprecated - use proto_parser.rs)
 │   │       ├── enricher.rs       # LLM-based field enrichment
 │   │       ├── rag.rs            # RAG pipeline for prompt→GAQL
 │   │       ├── vector_store.rs   # LanceDB vector store
@@ -117,7 +117,7 @@ mcc-gaql-rs/
 
 | Module | Purpose |
 |--------|---------|
-| `scraper.rs` | HTTP scraper for Google Ads API documentation |
+| `scraper.rs` | HTTP scraper for API docs (deprecated - use proto_parser.rs) |
 | `enricher.rs` | LLM-based enrichment of field descriptions |
 | `rag.rs` | RAG pipeline: embeddings + LLM for natural language queries |
 | `vector_store.rs` | LanceDB vector store management |

@@ -70,7 +70,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Scrape Google Ads API documentation to build field descriptions
+    /// DEPRECATED: Scrape Google Ads API documentation from the web. Use `parse-protos` instead.
     Scrape {
         /// Path to the field metadata cache (JSON). Defaults to the standard cache path.
         #[arg(long)]
@@ -387,7 +387,8 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-/// Scrape Google Ads API reference documentation
+/// DEPRECATED: Scrape Google Ads API documentation from the web.
+/// Use `parse-protos` instead for reliable, authoritative field documentation.
 async fn cmd_scrape(
     metadata_cache: Option<PathBuf>,
     output: Option<PathBuf>,
@@ -395,6 +396,11 @@ async fn cmd_scrape(
     ttl_days: i64,
     test_run: bool,
 ) -> Result<()> {
+    // Print deprecation warning
+    eprintln!("⚠️  WARNING: The 'scrape' command is deprecated and may be removed in a future version.");
+    eprintln!("   Use 'mcc-gaql-gen parse-protos' instead for reliable, authoritative field documentation.");
+    eprintln!();
+
     // Load metadata cache to get the list of resources
     let cache_path = metadata_cache
         .or_else(|| mcc_gaql_common::paths::field_metadata_cache_path().ok())
