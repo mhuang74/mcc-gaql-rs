@@ -62,6 +62,8 @@ jobs:
       github.event_name == 'push' ||
       github.event_name == 'workflow_dispatch' ||
       needs.changes.outputs.gen == 'true'
+    env:
+      MCC_GAQL_R2_PUBLIC_ID: ${{ vars.MCC_GAQL_R2_PUBLIC_ID }}
     steps:
     - uses: actions/checkout@v3
     - name: Install Rust toolchain
