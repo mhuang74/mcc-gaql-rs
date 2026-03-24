@@ -395,23 +395,30 @@ OPTIONS:
 ```
 
 ```
-mcc-gaql-gen 0.15.0
-Generate GAQL from natural language using LLM/RAG
+mcc-gaql-gen 0.16.3
+Generate GAQL queries using LLM and Google Ads metadata.
 
 USAGE:
-    mcc-gaql-gen [SUBCOMMAND]
+    mcc-gaql-gen [OPTIONS] <COMMAND>
 
-SUBCOMMANDS:
+OPTIONS:
+    -v, --verbose    Enable verbose debug logging
+    -h, --help       Print help
+    -V, --version    Print version
+
+COMMANDS:
     parse-protos    Parse proto files from googleads-rs to extract field documentation
-    enrich          Enrich field metadata with LLM descriptions or proto docs
-    generate        Generate GAQL from natural language prompt
-    upload          Upload metadata to Cloudflare R2
-    download        Download metadata from Cloudflare R2
-    clear-cache     Clear local caches
+    enrich          Enrich field metadata with LLM-generated descriptions
+    generate        Generate a GAQL query from a natural language prompt
+    bootstrap       Download pre-built Google Ads metadata for instant GAQL generation
+    publish         Create and upload metadata bundle to R2 (ADMIN only)
+    index           Index embeddings for fast generation (pre-build local cache)
+    metadata        Display enriched field metadata for debugging
+    clear-cache     Clear the local vector cache
     help            Print this message or the help of the given subcommand
 
-DEPRECATED SUBCOMMANDS:
-    scrape           Scraping web docs is deprecated; use parse-protos instead
+DEPRECATED COMMANDS:
+    scrape          Scraping web docs is deprecated; use parse-protos instead
 ```
 
 #### parse-protos Command
@@ -440,7 +447,19 @@ mcc-gaql-gen parse-protos --force
 - **Include filtering criteria**: Add conditions like "where clicks > 100" or "only active campaigns"
 - **Use high-quality field metadata**: Run the full metadata pipeline before generating queries
 
-### Recommended Metadata Pipeline
+### Quick Start: Download Pre-built Metadata
+
+The fastest way to get started with natural language GAQL generation is to download pre-built metadata:
+
+```bash
+# Download pre-built metadata bundle
+mcc-gaql-gen bootstrap
+
+# Generate your first query
+mcc-gaql-gen generate "campaign performance last 30 days"
+```
+
+### Recommended Metadata Pipeline (Manual)
 
 For best natural language query results, prepare your metadata using this workflow:
 
@@ -451,7 +470,10 @@ mcc-gaql-gen parse-protos
 # 2. Enrich field metadata cache with proto docs
 mcc-gaql-gen enrich --use-proto
 
-# 3. Generate queries with rich context
+# 3. (Optional) Pre-build the vector cache for faster generation
+mcc-gaql-gen index
+
+# 4. Generate queries with rich context
 mcc-gaql-gen generate "campaign performance last 30 days including impressions, clicks, and cost"
 ```
 
@@ -466,7 +488,7 @@ This ensures the LLM has complete field documentation including:
 ### mcc-gaql (Query Tool)
 
 ```
-mcc-gaql 0.15.0
+mcc-gaql 0.16.3
 Efficiently run Google Ads GAQL query across one or more child accounts linked to MCC.
 
 USAGE:
@@ -489,11 +511,15 @@ OPTIONS:
     -o, --output <OUTPUT>              GAQL output filename
     -p, --profile <PROFILE>            Query using profile from config
     -q, --stored-query <STORED_QUERY>  Load named query from file
+        --refresh-field-cache          Refresh field metadata cache from Google Ads API
+        --remote-auth                  Use remote OAuth flow (paste authorization code from another device)
         --setup                        Set up configuration with interactive wizard
         --show-config                  Display current configuration and exit
-        --show-fields <SHOW_FIELDS>    Show available fields for a specific resource
+        --show-fields <SHOW_FIELDS>    Show available fields for a specific resource (e.g., campaign, ad_group)
+        --show-resources               Show resource hierarchy: all available resources with field counts
         --sortby <SORTBY>              Sort by columns
     -u, --user-email <USER_EMAIL>      User email for OAuth2 authentication
+        --validate                     Validate the query against Google Ads API without executing
     -V, --version                      Print version information
 ```
 
@@ -528,14 +554,116 @@ Use `--use-proto` to populate metadata with official proto documentation without
 | `-q <query_name>` | Use stored query from queries file |
 | `-f, --field-service` | Query Google Ads field service |
 | `--show-fields <resource>` | Show available fields for a resource |
+| `--show-resources` | Show resource hierarchy with field counts |
 | `--export-field-metadata` | Export field metadata summary to stdout |
+| `--refresh-field-cache` | Refresh field metadata cache from Google Ads API |
+| `--validate` | Validate query without executing (requires credentials) |
+| `--remote-auth` | Use remote OAuth flow (paste code from another device) |
 | `--setup` | Run interactive setup wizard |
 | `--show-config` | Show configuration |
 | `--version` | Show version |
 
-### mcc-gaql-gen (Generation Tool)
+### mcc-gaql-gen Commands
 
-See [Natural Language Queries (mcc-gaql-gen)](#natural-language-queries-mcc-gaql-gen) for usage.
+#### bootstrap
+
+Download pre-built Google Ads metadata for instant GAQL generation. This is the quickest way to get started with natural language query generation.
+
+```bash
+# Download metadata bundle
+mcc-gaql-gen bootstrap
+
+# Download specific version
+mcc-gaql-gen bootstrap --version v23
+
+# Force re-download even if cache exists
+mcc-gaql-gen bootstrap --force
+
+# Verify cache without downloading
+mcc-gaql-gen bootstrap --verify-only
+```
+
+#### generate
+
+Generate GAQL from natural language:
+
+```bash
+mcc-gaql-gen generate "campaign performance last 30 days" --validate
+```
+
+**Options:**
+- `--validate` - Validate the generated query against Google Ads API
+- `--profile <name>` - Profile to use for validation credentials
+- `--no-defaults` - Skip implicit default filters
+- `--use-query-cookbook` - Enable RAG search for query examples
+- `--explain` - Print explanation of the LLM selection process
+
+#### parse-protos
+
+Parse Google's official proto files to extract field documentation:
+
+```bash
+# Parse all proto files
+mcc-gaql-gen parse-protos
+
+# Force rebuild
+mcc-gaql-gen parse-protos --force
+```
+
+#### enrich
+
+Enrich field metadata with descriptions:
+
+```bash
+# Using proto documentation (fastest, no LLM calls)
+mcc-gaql-gen enrich --use-proto
+
+# Enrich specific resource
+mcc-gaql-gen enrich campaign
+```
+
+#### index
+
+Pre-build the local vector cache for faster query generation:
+
+```bash
+mcc-gaql-gen index
+```
+
+#### metadata
+
+Display enriched field metadata for debugging:
+
+```bash
+# Show metadata for a resource
+mcc-gaql-gen metadata campaign
+
+# Show all fields (not just LLM-limited subset)
+mcc-gaql-gen metadata campaign --show-all
+
+# Compare enriched vs non-enriched
+mcc-gaql-gen metadata campaign --diff
+```
+
+#### clear-cache
+
+Clear the local vector cache:
+
+```bash
+mcc-gaql-gen clear-cache
+```
+
+#### publish (ADMIN only)
+
+Create and upload metadata bundle to R2 storage:
+
+```bash
+# Create and upload bundle
+mcc-gaql-gen publish
+
+# Create locally without uploading
+mcc-gaql-gen publish --dry-run
+```
 
 ## Configuration
 
@@ -771,9 +899,13 @@ All configuration values can be overridden via environment variables with prefix
 | `MCC_GAQL_LLM_BASE_URL` | LLM provider base URL (mcc-gaql-gen) |
 | `MCC_GAQL_LLM_MODEL` | Model name (mcc-gaql-gen) |
 | `MCC_GAQL_LLM_TEMPERATURE` | LLM temperature (default: 0.1) |
+| `MCC_GAQL_R2_ACCESS_KEY_ID` | Cloudflare R2 access key (runtime, for publish) |
+| `MCC_GAQL_R2_SECRET_ACCESS_KEY` | Cloudflare R2 secret key (runtime, for publish) |
+| `MCC_GAQL_R2_BUCKET` | Cloudflare R2 bucket name (runtime, for publish) |
+| `MCC_GAQL_R2_ENDPOINT_URL` | Cloudflare R2 endpoint URL (runtime, for publish) |
+| `MCC_GAQL_R2_PUBLIC_ID` | Hashed Cloudflare R2 public bucket ID (build time, for bootstrap) |
+| `MCC_GAQL_EMBED_CLIENT_SECRET` | OAuth2 client secret for embeddings (JSON format) |
 | `OPENROUTER_API_KEY` | Alternative to MCC_GAQL_LLM_API_KEY |
-| `R2_ACCESS_KEY` | Cloudflare R2 access key (mcc-gaql-gen upload) |
-| `R2_SECRET_KEY` | Cloudflare R2 secret key (mcc-gaql-gen upload) |
 
 ### Example Configuration Override
 
@@ -896,12 +1028,12 @@ mcc-gaql-gen enrich --use-proto
 # This populates FieldMetadata.description for all fields with proto docs
 ```
 
-#### Step 3: Download from Cloudflare R2 (Alternative)
+#### Step 3: Download Pre-built Metadata (Alternative)
 
-Instead of parsing proto files locally, you can download pre-enriched metadata from the public Cloudflare R2 bucket:
+Instead of parsing proto files locally, you can download pre-built metadata using `bootstrap`:
 
 ```bash
-mcc-gaql-gen download --api-version v19
+mcc-gaql-gen bootstrap
 ```
 
 #### Show Fields for a Resource (mcc-gaql)
@@ -934,12 +1066,12 @@ mcc-gaql --export-field-metadata > field_metadata.txt
 mcc-gaql --export-field-metadata | grep "campaign"
 ```
 
-#### Upload to Cloudflare R2 (mcc-gaql-gen)
+#### Publish Metadata Bundle (mcc-gaql-gen, ADMIN only)
 
-Upload enriched metadata to Cloudflare R2 for public access:
+Create and upload enriched metadata bundle to Cloudflare R2 for distribution:
 
 ```bash
-R2_ACCESS_KEY="your_key" R2_SECRET_KEY="your_secret" mcc-gaql-gen upload
+MCC_GAQL_R2_ACCESS_KEY_ID="your_key" MCC_GAQL_R2_SECRET_ACCESS_KEY="your_secret" mcc-gaql-gen publish
 ```
 
 ## When to Use Each Tool
@@ -952,7 +1084,8 @@ R2_ACCESS_KEY="your_key" R2_SECRET_KEY="your_secret" mcc-gaql-gen upload
 | Parse proto files for metadata | `mcc-gaql-gen parse-protos` |
 | Enrich field metadata | `mcc-gaql-gen enrich --use-proto` |
 | Generate GAQL from natural language | `mcc-gaql-gen generate` |
-| Download/upload enriched metadata | `mcc-gaql-gen download/upload` |
+| Download Google Ads metadata | `mcc-gaql-gen bootstrap` |
+| Upload metadata bundle (ADMIN) | `mcc-gaql-gen publish` |
 
 ## Alternatives
 

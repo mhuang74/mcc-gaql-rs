@@ -208,7 +208,17 @@ cargo clippy --workspace
 | `reqwest` | HTTP client for scraping |
 | `scraper` | HTML parsing for API docs |
 
-## Embedding Credentials in Release Builds
+## Build-Time Environment Variables
+
+The following variables are embedded in the binary at build time:
+
+| Variable | Purpose |
+|----------|---------|
+| `MCC_GAQL_DEV_TOKEN` | Google Ads developer token (optional) |
+| `MCC_GAQL_EMBED_CLIENT_SECRET` | OAuth2 client secret JSON (optional) |
+| `MCC_GAQL_R2_PUBLIC_ID` | Hashed Cloudflare R2 public bucket ID for bootstrap downloads |
+
+### Embedding Credentials in Release Builds
 
 For distribution within an organization, you can embed credentials directly in the binary:
 
@@ -216,6 +226,15 @@ For distribution within an organization, you can embed credentials directly in t
 export MCC_GAQL_DEV_TOKEN="your_dev_token"
 export MCC_GAQL_EMBED_CLIENT_SECRET="$(cat clientsecret.json)"
 cargo build -p mcc-gaql --release
+```
+
+### Embedding R2 Public ID for Bootstrap
+
+The `bootstrap` command downloads pre-built metadata from a public R2 bucket. The public bucket ID must be embedded at build time:
+
+```bash
+export MCC_GAQL_R2_PUBLIC_ID="your_public_bucket_id"
+cargo build -p mcc-gaql-gen --release
 ```
 
 ## Contributing
