@@ -5,6 +5,7 @@
 // MCC_GAQL_R2_ACCESS_KEY_ID and MCC_GAQL_R2_SECRET_ACCESS_KEY environment variables.
 
 use anyhow::{Context, Result};
+use mcc_gaql_common::http_client;
 use std::path::Path;
 use tokio::fs;
 
@@ -58,11 +59,10 @@ pub async fn download(public_base_url: &str, object_key: &str, dest_path: &Path)
     let url = format!("{}/{}", public_base_url.trim_end_matches('/'), object_key);
     log::info!("Downloading {} to {:?}", url, dest_path);
 
-    let client = reqwest::Client::builder()
-        .user_agent("mcc-gaql-gen (metadata downloader)")
-        .timeout(std::time::Duration::from_secs(120))
-        .build()
-        .context("Failed to build HTTP client")?;
+        let client = http_client::create_http_client(
+        "mcc-gaql-gen (metadata downloader)",
+        120,
+    )?;
 
     let response = client
         .get(&url)
@@ -119,11 +119,10 @@ pub async fn download_bundle(url: &str, dest_path: &Path) -> Result<()> {
         return Ok(());
     }
 
-    let client = reqwest::Client::builder()
-        .user_agent("mcc-gaql-gen (bundle downloader)")
-        .timeout(std::time::Duration::from_secs(300))
-        .build()
-        .context("Failed to build HTTP client")?;
+        let client = http_client::create_http_client(
+        "mcc-gaql-gen (bundle downloader)",
+        300,
+    )?;
 
     let response = client
         .get(url)
@@ -192,11 +191,10 @@ pub async fn upload(object_key: &str, source_path: &Path) -> Result<()> {
         &config.secret_key,
     )?;
 
-    let client = reqwest::Client::builder()
-        .user_agent("mcc-gaql-gen (metadata uploader)")
-        .timeout(std::time::Duration::from_secs(300))
-        .build()
-        .context("Failed to build HTTP client")?;
+    let client = http_client::create_http_client(
+        "mcc-gaql-gen (metadata uploader)",
+        300,
+    )?;
 
     let response = client
         .put(&url)

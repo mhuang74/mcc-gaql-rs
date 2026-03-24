@@ -23,6 +23,7 @@
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Duration, Utc};
+use mcc_gaql_common::http_client;
 use scraper::{Html, Selector};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -142,11 +143,11 @@ impl ScrapedDocs {
         delay_ms: u64,
         base_url: &str,
     ) -> Result<Self> {
-        let client = reqwest::Client::builder()
-            .user_agent("mcc-gaql metadata scraper (educational/documentation use)")
-            .timeout(std::time::Duration::from_secs(15))
-            .build()
-            .context("Failed to build HTTP client")?;
+        let client = http_client::create_http_client(
+            "mcc-gaql metadata scraper (educational/documentation use)",
+            15,
+        )?;
+
 
         let mut docs: HashMap<String, ScrapedFieldDoc> = HashMap::new();
         let mut resources_scraped = 0usize;
