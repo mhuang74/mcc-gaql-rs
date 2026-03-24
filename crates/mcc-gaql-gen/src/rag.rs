@@ -2647,7 +2647,7 @@ Respond ONLY with valid JSON:
   - "last 30 days" → operator: "DURING", value: "LAST_30_DAYS"
   - "this month" → operator: "DURING", value: "THIS_MONTH"
   - "last month" → operator: "DURING", value: "LAST_MONTH"
-  - "last week" → operator: "DURING", value: "LAST_WEEK"
+  - "last week" → operator: "DURING", value: "LAST_WEEK_MON_SUN"
   - "last business week" → operator: "DURING", value: "LAST_BUSINESS_WEEK"
 
   **Use BETWEEN with computed dates** (value format: "YYYY-MM-DD AND YYYY-MM-DD") for:
@@ -2726,7 +2726,7 @@ Respond ONLY with valid JSON:
   - "last 30 days" → operator: "DURING", value: "LAST_30_DAYS"
   - "this month" → operator: "DURING", value: "THIS_MONTH"
   - "last month" → operator: "DURING", value: "LAST_MONTH"
-  - "last week" → operator: "DURING", value: "LAST_WEEK"
+  - "last week" → operator: "DURING", value: "LAST_WEEK_MON_SUN"
   - "last business week" → operator: "DURING", value: "LAST_BUSINESS_WEEK"
 
   **Use BETWEEN with computed dates** (value format: "YYYY-MM-DD AND YYYY-MM-DD") for:
