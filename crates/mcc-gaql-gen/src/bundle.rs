@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 use flate2::Compression;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
+use mcc_gaql_common::http_client;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs::File;
@@ -304,11 +305,11 @@ pub async fn download_bundle(url: &str) -> Result<PathBuf> {
         return Ok(PathBuf::from(path));
     }
 
-    let client = reqwest::Client::builder()
-        .user_agent("mcc-gaql-gen (bundle downloader)")
-        .timeout(std::time::Duration::from_secs(300))
-        .build()
-        .context("Failed to build HTTP client")?;
+    let client = http_client::create_http_client(
+        "mcc-gaql-gen (bundle downloader)",
+        300,
+    )?;
+
 
     let response = client
         .get(url)

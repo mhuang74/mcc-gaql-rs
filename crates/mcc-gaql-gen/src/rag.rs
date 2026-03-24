@@ -140,9 +140,14 @@ impl LlmConfig {
 impl LlmConfig {
     /// Create an OpenAI-compatible completions client from this config.
     pub fn create_llm_client(&self) -> Result<openai::CompletionsClient, anyhow::Error> {
+        use mcc_gaql_common::http_client;
+
+        let client = http_client::create_http_client("mcc-gaql-gen (LLM client)", 120)?;
+
         openai::CompletionsClient::builder()
             .api_key(&self.api_key)
             .base_url(&self.base_url)
+            .http_client(client)
             .build()
             .map_err(|e| anyhow::anyhow!("Failed to create LLM client: {}", e))
     }
