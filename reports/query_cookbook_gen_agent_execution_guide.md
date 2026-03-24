@@ -138,14 +138,20 @@ Write results to `reports/query_cookbook_gen_comparison.md` with this structure:
 
 **Classification:** EXCELLENT/GOOD/FAIR/POOR
 
+**LLM Explanation Analysis:**
+- Reasoning Summary: <high-level summary from --explain output>
+- Key Decision Points: <list of decisions made by LLM>
+- Comparison to Intent: <did reasoning match expected behavior?>
+- Where It Diverged: <any discrepancy between explanation and actual output>
+
 **Analysis:**
 - Selected Fields: <comparison>
 - Data Scope: <comparison>
 - Semantic Equivalence: <assessment>
 
-**Key Differences:**
-- <difference 1>
-- <difference 2>
+**Key Differences (with Reasoning Context):**
+- <difference 1> - <relevant explanation snippet>
+- <difference 2> - <relevant explanation snippet>
 
 ---
 
@@ -161,21 +167,28 @@ Write results to `reports/query_cookbook_gen_comparison.md` with this structure:
    - Only use `--queries <path>` if the cookbook is in a non-standard location
    - When `--use-query-cookbook` is enabled, the system retrieves similar queries as RAG context
 
-2. **Additional Generate Options**
-   - `--explain`: Print explanation of the LLM selection process to stdout (useful for debugging)
+2. **Using Subagents for Execution**
+   - Use the Claude Code Agent tool (with subagent type `general-purpose`) to run generation commands
+   - Subagents can execute `mcc-gaql-gen generate` commands and capture both output and explanation
+   - This enables automated execution for all 26 cookbook entries
+   - The `--explain` flag provides crucial context for understanding LLM decision-making
+
+3. **Additional Generate Options**
+   - `--explain`: Print explanation of the LLM selection process to stdout (REQUIRED for this analysis)
    - `--no-defaults`: Skip implicit default filters like `status = 'ENABLED'`
    - `--validate`: Validate the generated query against Google Ads API (requires credentials)
    - `--profile <name>`: Specify which credentials profile to use for validation
 
-3. **Date Literal Handling**
+4. **Date Literal Handling**
    - Google Ads API has multiple date literal formats (LAST_7_DAYS, LAST_WEEK_MON_SUN, etc.)
    - These are semantically equivalent for testing purposes
 
-4. **Field Selection Differences**
+5. **Field Selection Differences**
    - The generate command may include additional fields that enhance query utility
    - Focus on whether required identifying fields are present
+   - Use the explanation output to understand WHY additional fields were added
 
-5. **Error Handling**
+6. **Error Handling**
    - If generation fails for an entry, document the error and classify as POOR
    - Continue with remaining entries
    - Common issues: missing embeddings cache, missing enriched metadata, LLM connectivity
@@ -213,6 +226,7 @@ From `resources/query_cookbook.toml`:
 
 ## Time Estimate
 
-- 26 entries × ~30 seconds per generation = ~13 minutes of generation time
-- Analysis and writeup: ~30 minutes
-- Total: ~45 minutes
+- 26 entries × ~30 seconds per generation (with `--explain`) = ~13 minutes of generation time
+- Subagent automation can leverage explanation output to reduce analysis time: ~15 minutes
+- Report writeup: ~15 minutes
+- Total: ~40-45 minutes
