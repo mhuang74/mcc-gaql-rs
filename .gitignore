@@ -17,3 +17,5 @@ perf.data*
 
 .fastembed_cache
 .DS_StoreDevNotes.md
+
+*.gz
