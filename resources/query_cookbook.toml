@@ -419,7 +419,7 @@ query = """
 
 [smart_campaign_search_terms_with_top_spend]
 description = """
-Search Term Top CPA for Smart Campaigns
+Top 100 search terms by spend from Smart Campaigns in the last 30 days with at least 1 click. Includes search term text, match type, and performance metrics.
 """
 query = """
 	SELECT 
@@ -445,7 +445,7 @@ query = """
 
 [all_search_terms_with_clicks]
 description = """
-Search Terms with Clicks
+All search terms with clicks in the last 30 days, including match type, device, keyword status, and full conversion metrics. Sorted by spend.
 """
 query = """
 	SELECT 
@@ -473,7 +473,7 @@ query = """
 
 [search_terms_with_top_cpa]
 description = """
-Search Term Top CPA
+Top 50 search terms with highest CPA (>$200) and significant spend (>$1000) in the last 30 days. Useful for identifying expensive, underperforming search terms.
 """
 query = """
 	SELECT 
@@ -503,7 +503,7 @@ query = """
 
 [search_terms_with_low_roas]
 description = """
-Search Term Low ROAS
+Top 50 search terms with low ROAS (<0.25) and significant spend (>$1000) in the last 30 days. Useful for identifying poor-performing search terms that may need negative keywording.
 """
 query = """
 	SELECT 
@@ -533,7 +533,7 @@ query = """
 
 [locations_with_highest_revenue_per_conversion]
 description = """
-top locations by revenue per conversion
+Top 1000 location targets by revenue per conversion in the last 7 days, with at least 10 conversions. Includes geo target constant ID and location performance metrics.
 """
 query = """
 	SELECT 
@@ -566,7 +566,7 @@ query = """
 
 [asset_performance_rsa]
 description = """
-Asset performance of Responsive Search Ads
+Responsive Search Ad (RSA) performance in the last 30 days, including headline and description copy, path text, and engagement metrics. Limited to 1000 results sorted by CTR.
 """
 query = """
 SELECT 
@@ -599,78 +599,9 @@ ORDER BY
 LIMIT 1000 
 """
 
-[asset_performance_rsa_nordstrom_drilldown]
-description = """
-investigate RSA and drill down on single adgroup for Nordstrom account
-"""
-query = """
-SELECT 
-  customer.id, 
-  customer.descriptive_name, 
-  campaign.id, 
-  campaign.name, 
-  campaign.advertising_channel_type, 
-  ad_group.id, 
-  ad_group.name, 
-  ad_group.type, 
-  ad_group_ad.ad.id,
-  ad_group_ad.ad.responsive_search_ad.headlines, 
-  ad_group_ad.ad.responsive_search_ad.descriptions, 
-  ad_group_ad.ad.responsive_search_ad.path1, 
-  ad_group_ad.ad.responsive_search_ad.path2, 
-  metrics.impressions, 
-  metrics.clicks, 
-  metrics.ctr, 
-  metrics.cost_micros, 
-  metrics.average_cpc 
-FROM ad_group_ad 
-WHERE 
-  ad_group_ad.ad.type IN ('RESPONSIVE_SEARCH_AD') 
-  AND segments.date DURING LAST_30_DAYS 
-  AND ad_group.id IN (98163443460)
-  AND campaign.id IN (9533454454)
-ORDER BY 
-  campaign.name, 
-  ad_group.name, 
-  metrics.ctr DESC 
-LIMIT 1000 
-"""
-
-[asset_performance_rsa_assets_nordstrom_drilldown]
-description = """
-investigate RSA assets and drill down on single adgroup for Nordstrom account
-"""
-query = """
-SELECT 
-  customer.id, 
-  campaign.id, 
-  ad_group.id, 
-  ad_group_ad.ad.id, 
-  ad_group_ad_asset_view.asset, 
-  ad_group_ad_asset_view.performance_label,
-  ad_group_ad_asset_view.field_type, 
-  ad_group_ad_asset_view.pinned_field, 
-  metrics.impressions,
-  metrics.clicks, 
-  metrics.ctr,
-  metrics.cost_micros
-FROM ad_group_ad_asset_view 
-WHERE 
-  ad_group_ad.ad.type IN ('RESPONSIVE_SEARCH_AD') 
-  AND segments.date DURING LAST_30_DAYS 
-  AND ad_group.id IN (98163443460)
-  AND campaign.id IN (9533454454)
-ORDER BY 
-  campaign.name, 
-  ad_group.name,
-  ad_group_ad.ad.id, 
-  metrics.impressions DESC
-LIMIT 1000 
-"""
-
 [recent_campaign_changes]
 description = """
-recent campaign changes with user, changed fields, and datetime of change event
+Last 100 campaign modifications from the last 14 days, including timestamp, user email, client type, and which fields were changed. Useful for audit trails and change tracking.
 """
 query = """
 SELECT
@@ -720,7 +651,7 @@ LIMIT 100
 
 [all_campaigns]
 description = """
-returns basic info of all campaigns
+Basic campaign information including ID, name, channel type, status, and primary status. Limited to 100 campaigns.
 """
 query = """
 SELECT
@@ -738,7 +669,7 @@ LIMIT 100
 
 [performance_max_impression_share]
 description = """
-returns impression share metrics for Performance Max campaigns from last 30 days
+Daily impression share metrics for Performance Max campaigns over the last 30 days, including absolute top impression share, budget lost share, rank lost share, and top impression percentage.
 """
 query = """
 SELECT 
