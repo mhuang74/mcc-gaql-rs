@@ -32,6 +32,7 @@ jobs:
         env:
           MCC_GAQL_EMBED_CLIENT_SECRET: ${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}
           MCC_GAQL_DEV_TOKEN: ${{ secrets.GOOGLE_ADS_DEV_TOKEN }}
+          MCC_GAQL_R2_PUBLIC_ID: ${{ vars.MCC_GAQL_R2_PUBLIC_ID }}
         run: cargo build -p mcc-gaql-gen --release --target aarch64-apple-darwin
 
       - name: Extract version from tag
