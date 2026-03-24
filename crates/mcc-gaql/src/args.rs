@@ -130,6 +130,10 @@ pub struct Cli {
     /// Show resource hierarchy: all available resources with field counts, key attributes, and compatibility info
     #[clap(long)]
     pub show_resources: bool,
+
+    /// Validate the query against Google Ads API without executing it (requires credentials)
+    #[clap(long)]
+    pub validate: bool,
 }
 
 pub fn parse() -> Cli {
@@ -166,6 +170,13 @@ impl Cli {
                 "Use --customer-id to query a specific account.\n\
                     Use --mcc-id with --all-linked-child-accounts to query all child accounts under mcc.\n\
                     Please don't use --customer-id and --all-linked-child-accounts together."
+            ));
+        }
+
+        // --validate requires a query source
+        if self.validate && self.gaql_query.is_none() && self.stored_query.is_none() {
+            return Err(anyhow::anyhow!(
+                "--validate requires a query. Provide a query as a positional argument, via -q/--stored-query, or pipe one via stdin."
             ));
         }
 

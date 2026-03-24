@@ -73,6 +73,16 @@ async fn main() -> Result<()> {
     {
         let config = if let Some(profile) = &args.profile {
             Some(config::load(profile).context(format!("Loading config for profile: {profile}"))?)
+        } else if let Ok(profiles) = config::list_profiles() {
+            if let Some(profile) = profiles.last() {
+                eprintln!("Using profile '{}'", profile);
+                Some(
+                    config::load(profile)
+                        .context(format!("Loading config for profile: {profile}"))?,
+                )
+            } else {
+                None
+            }
         } else {
             None
         };
@@ -183,10 +193,25 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Only load config if profile is explicitly specified
+    // Only load config if profile is explicitly specified, or for account-agnostic operations
     let config = if let Some(profile) = &args.profile {
         log::info!("Config profile: {profile}");
         Some(config::load(profile).context(format!("Loading config for profile: {profile}"))?)
+    } else if args.validate || args.field_service {
+        if let Ok(profiles) = config::list_profiles() {
+            if let Some(profile) = profiles.last() {
+                eprintln!("Using profile '{}'", profile);
+                log::info!("Auto-selected profile: {profile}");
+                Some(
+                    config::load(profile)
+                        .context(format!("Loading config for profile: {profile}"))?,
+                )
+            } else {
+                None
+            }
+        } else {
+            None
+        }
     } else {
         log::info!("No profile specified, using CLI arguments only");
         None
@@ -292,6 +317,22 @@ async fn main() -> Result<()> {
             ))?
         }
     };
+
+    // Validate query without executing it
+    if args.validate {
+        if let Some(query) = args.gaql_query.as_deref() {
+            match googleads::validate_gaql_query(api_context, mcc_customer_id, query).await {
+                Ok(()) => {
+                    eprintln!("Validation PASSED");
+                }
+                Err(e) => {
+                    eprintln!("Validation FAILED: {e}");
+                    process::exit(1);
+                }
+            }
+        }
+        return Ok(());
+    }
 
     // Handle 3 types of Google Ads query: list child accounts, field service, and GAQL query
     if args.list_child_accounts {
