@@ -5158,6 +5158,7 @@ dependencies = [
  "hmac",
  "lancedb",
  "log",
+ "mcc-gaql",
  "mcc-gaql-common",
  "num_cpus",
  "rand 0.8.5",
