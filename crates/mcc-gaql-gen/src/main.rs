@@ -163,10 +163,6 @@ enum Commands {
 
     /// Download pre-built RAG resources for instant GAQL generation
     Bootstrap {
-        /// Public URL for the bundle
-        #[arg(long, env = "MCC_GAQL_BUNDLE_URL")]
-        url: Option<String>,
-
         /// API version to download
         #[arg(long, default_value = "v23")]
         version: String,
@@ -326,13 +322,12 @@ async fn main() -> Result<()> {
         }
 
         Commands::Bootstrap {
-            url,
             version,
             force,
             skip_validation,
             verify_only,
         } => {
-            cmd_bootstrap(url, version, force, skip_validation, verify_only).await?;
+            cmd_bootstrap(version, force, skip_validation, verify_only).await?;
         }
 
         Commands::Publish {
@@ -953,16 +948,12 @@ async fn cmd_index(queries: Option<String>, metadata: Option<PathBuf>) -> Result
 
 /// Download pre-built RAG resources for instant GAQL generation
 async fn cmd_bootstrap(
-    url: Option<String>,
-    _version: String,
+    version: String,
     force: bool,
     skip_validation: bool,
     verify_only: bool,
 ) -> Result<()> {
-    // Get bundle URL
-    let bundle_url = url
-        .or_else(|| env::var("MCC_GAQL_BUNDLE_URL").ok())
-        .context("Bundle URL not configured. Set MCC_GAQL_BUNDLE_URL or use --url")?;
+    let bundle_url = r2::public_bundle_url(&format!("mcc-gaql-rag-bundle-{}.tar.gz", version));
 
     // Check current cache status if verify-only or to determine if download needed
     let verification = bundle::verify_cache().await?;
@@ -1100,7 +1091,7 @@ async fn cmd_publish(key: String, dry_run: bool, queries: Option<PathBuf>) -> Re
     println!("\n✓ Publish complete!");
     println!("  Public URL: {}", public_url);
     println!("\nUsers can now run:");
-    println!("  mcc-gaql-gen bootstrap --url {}", public_url);
+    println!("  mcc-gaql-gen bootstrap");
 
     Ok(())
 }

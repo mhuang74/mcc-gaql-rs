@@ -11,6 +11,11 @@ use tokio::fs;
 /// R2 public bucket ID, required at build time
 const R2_PUBLIC_ID: &str = env!("MCC_GAQL_R2_PUBLIC_ID");
 
+/// Returns the public URL for a bundle object in R2.
+pub fn public_bundle_url(object_key: &str) -> String {
+    format!("https://pub-{}.r2.dev/{}", R2_PUBLIC_ID, object_key)
+}
+
 /// R2 bucket configuration
 struct R2Config {
     endpoint_url: String,
