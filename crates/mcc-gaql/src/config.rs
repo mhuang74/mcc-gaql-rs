@@ -555,6 +555,7 @@ mod tests {
             export_field_metadata: false,
             show_resources: false,
             remote_auth: false,
+            validate: false,
         };
 
         let resolved_config = ResolvedConfig {
