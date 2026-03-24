@@ -8,6 +8,9 @@ use anyhow::{Context, Result};
 use std::path::Path;
 use tokio::fs;
 
+/// R2 public bucket ID, required at build time
+const R2_PUBLIC_ID: &str = env!("MCC_GAQL_R2_PUBLIC_ID");
+
 /// R2 bucket configuration
 struct R2Config {
     endpoint_url: String,
@@ -93,22 +96,9 @@ pub async fn upload_bundle(local_path: &Path, object_key: &str) -> Result<String
     upload(object_key, local_path).await?;
 
     // Construct public URL
-    let public_url = format!(
-        "https://pub-{}.r2.dev/{}",
-        get_account_hash().unwrap_or_else(|_| "dev".to_string()),
-        object_key
-    );
+    let public_url = format!("https://pub-{}.r2.dev/{}", R2_PUBLIC_ID, object_key);
 
     Ok(public_url)
-}
-
-/// Get a hash of the account ID for public URL construction
-fn get_account_hash() -> Result<String> {
-    // In practice, this would come from the R2 configuration
-    // For now, we return a placeholder that users can customize
-    // The actual public URL is provided by R2 and can be configured via env var
-    std::env::var("MCC_GAQL_R2_PUBLIC_ID")
-        .map_err(|_| anyhow::anyhow!("MCC_GAQL_R2_PUBLIC_ID not set (used for public URL)"))
 }
 
 /// Download a bundle from a public URL (no auth required)
