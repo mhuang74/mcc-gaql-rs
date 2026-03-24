@@ -2635,6 +2635,8 @@ Respond ONLY with valid JSON:
 
 - Use ONLY fields from the provided list
 - Add filter_fields for any WHERE clauses
+- **IMPORTANT: For IN and NOT IN operators, wrap values in parentheses: IN ('VALUE1', 'VALUE2') not IN 'VALUE'**
+- Example: {{"field": "campaign.status", "operator": "IN", "value": "('ENABLED', 'PAUSED')"}}
 - Add order_by_fields for sorting (use DESC for "top", "best", "worst"; ASC for "first" if ascending)
 - Include segments.date if temporal period is specified
 - For date ranges, use the APPROPRIATE method based on the period:
@@ -2714,6 +2716,8 @@ Respond ONLY with valid JSON:
 
 - Use ONLY fields from the provided list
 - Add filter_fields for any WHERE clauses
+- **IMPORTANT: For IN and NOT IN operators, wrap values in parentheses: IN ('VALUE1', 'VALUE2') not IN 'VALUE'**
+- Example: {{"field": "campaign.status", "operator": "IN", "value": "('ENABLED', 'PAUSED')"}}
 - Add order_by_fields for sorting (use DESC for "top", "best", "worst"; ASC for "first" if ascending)
 - Include segments.date if temporal period is specified
 - For date ranges, use the APPROPRIATE method based on the period:
