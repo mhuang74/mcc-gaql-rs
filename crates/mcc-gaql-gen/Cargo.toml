@@ -6,6 +6,7 @@ edition.workspace = true
 description = "Generate GAQL queries using LLM and RAG from Google Ads field metadata."
 
 [dependencies]
+mcc-gaql = { workspace = true }
 mcc-gaql-common = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }

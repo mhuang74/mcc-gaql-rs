@@ -20,7 +20,7 @@ use googleads_rs::google::ads::googleads::v23::services::google_ads_field_servic
 use googleads_rs::google::ads::googleads::v23::services::google_ads_service_client::GoogleAdsServiceClient;
 use googleads_rs::google::ads::googleads::v23::services::{
     GoogleAdsRow, SearchGoogleAdsFieldsRequest, SearchGoogleAdsFieldsResponse,
-    SearchGoogleAdsStreamRequest, SearchGoogleAdsStreamResponse,
+    SearchGoogleAdsRequest, SearchGoogleAdsStreamRequest, SearchGoogleAdsStreamResponse,
 };
 
 use mcc_gaql_common::paths::config_file_path;
@@ -427,6 +427,41 @@ pub async fn gaql_query(
         GoogleAdsServiceClient::with_interceptor(api_context.channel.clone(), api_context);
 
     gaql_query_with_client(client, customer_id, query).await
+}
+
+/// Validate a GAQL query against Google Ads API without executing it.
+/// Uses SearchGoogleAdsRequest with validate_only: true.
+/// Returns Ok(()) if valid, Err with API error message if invalid.
+pub async fn validate_gaql_query(
+    api_context: GoogleAdsAPIAccess,
+    customer_id: &str,
+    query: &str,
+) -> Result<()> {
+    let mut client: GoogleAdsServiceClient<InterceptedService<Channel, GoogleAdsAPIAccess>> =
+        GoogleAdsServiceClient::with_interceptor(api_context.channel.clone(), api_context);
+
+    client
+        .search(SearchGoogleAdsRequest {
+            customer_id: customer_id.to_string(),
+            query: query.to_string(),
+            validate_only: true,
+            ..Default::default()
+        })
+        .await
+        .map(|_| ())
+        .map_err(|status| {
+            let details = String::from_utf8_lossy(status.details())
+                .trim()
+                .replace(|c: char| !c.is_ascii(), "")
+                .replace("%", " ")
+                .replace("\n", " ")
+                .replace("\r", " ");
+            if details.is_empty() {
+                anyhow::anyhow!("{}", status.message())
+            } else {
+                anyhow::anyhow!("{}: {}", status.message(), details)
+            }
+        })
 }
 
 /// Run query via GoogleAdsFieldService to obtain field metadata

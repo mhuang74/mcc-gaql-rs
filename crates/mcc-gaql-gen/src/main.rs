@@ -159,6 +159,14 @@ enum Commands {
         /// Print explanation of the LLM selection process to stdout
         #[arg(long)]
         explain: bool,
+
+        /// Validate the generated query against Google Ads API (requires credentials)
+        #[arg(long)]
+        validate: bool,
+
+        /// Profile to use for validation credentials (auto-detected if only one profile exists)
+        #[arg(long)]
+        profile: Option<String>,
     },
 
     /// Download pre-built RAG resources for instant GAQL generation
@@ -312,6 +320,8 @@ async fn main() -> Result<()> {
             no_defaults,
             use_query_cookbook,
             explain,
+            validate,
+            profile,
         } => {
             cmd_generate(
                 prompt,
@@ -321,6 +331,8 @@ async fn main() -> Result<()> {
                 use_query_cookbook,
                 explain,
                 cli.verbose,
+                validate,
+                profile,
             )
             .await?;
         }
@@ -690,6 +702,8 @@ async fn cmd_generate(
     use_query_cookbook: bool,
     explain: bool,
     verbose: bool,
+    validate: bool,
+    profile: Option<String>,
 ) -> Result<()> {
     validate_llm_env()?;
 
@@ -782,6 +796,29 @@ async fn cmd_generate(
 
     println!("{}", result.query);
 
+    // Validate generated query against Google Ads API if requested
+    if validate {
+        let exit_code = match run_validation(&result.query, profile).await {
+            Ok(()) => {
+                eprintln!("Validation: PASSED");
+                0
+            }
+            Err(e) => {
+                let msg = e.to_string();
+                if msg.starts_with("__config_error__:") {
+                    eprintln!("Validation error: {}", &msg["__config_error__:".len()..]);
+                    2
+                } else {
+                    eprintln!("Validation: FAILED – {}", msg);
+                    1
+                }
+            }
+        };
+        if exit_code != 0 {
+            std::process::exit(exit_code);
+        }
+    }
+
     // Print explanation if flag is set
     if explain {
         rag::print_selection_explanation(&result.pipeline_trace, &prompt);
@@ -853,6 +890,95 @@ async fn cmd_generate(
     }
 
     Ok(())
+}
+
+/// Run Google Ads API validation for a GAQL query using mcc-gaql credentials.
+/// Returns Ok(()) if valid.
+/// Returns Err with message prefixed "__config_error__:" for auth/config issues (exit 2).
+/// Returns Err with API error message for invalid queries (exit 1).
+async fn run_validation(query: &str, profile: Option<String>) -> Result<()> {
+    use mcc_gaql::config as mcc_config;
+    use mcc_gaql::googleads::{ApiAccessConfig, generate_token_cache_filename, get_api_access, validate_gaql_query};
+    use mcc_gaql_common::paths::config_file_path;
+
+    // Resolve profile name
+    let profile_name = match profile {
+        Some(p) => p,
+        None => {
+            let profiles = mcc_config::list_profiles().map_err(|e| {
+                anyhow::anyhow!("__config_error__:Failed to list profiles: {}", e)
+            })?;
+            match profiles.len() {
+                0 => {
+                    return Err(anyhow::anyhow!(
+                        "__config_error__:No profiles found in config. Run 'mcc-gaql --setup' first."
+                    ));
+                }
+                1 => profiles.into_iter().next().unwrap(),
+                _ => {
+                    let profile = profiles.last().unwrap().clone();
+                    eprintln!("Using profile '{}'", profile);
+                    profile
+                }
+            }
+        }
+    };
+
+    // Load config for the profile
+    let config = mcc_config::load(&profile_name).map_err(|e| {
+        anyhow::anyhow!("__config_error__:Failed to load profile '{}': {}", profile_name, e)
+    })?;
+
+    // Resolve token cache filename
+    let token_cache_filename = if let Some(explicit) = config.token_cache_filename.as_ref() {
+        explicit.clone()
+    } else if let Some(email) = config.user_email.as_ref() {
+        generate_token_cache_filename(email)
+    } else {
+        return Err(anyhow::anyhow!(
+            "__config_error__:Profile '{}' has no user_email or token_cache_filename. Run 'mcc-gaql --setup' first.",
+            profile_name
+        ));
+    };
+
+    // Check token cache exists
+    let token_cache_exists = config_file_path(&token_cache_filename)
+        .map(|p| p.exists())
+        .unwrap_or(false);
+    if !token_cache_exists {
+        return Err(anyhow::anyhow!(
+            "__config_error__:Token cache '{}' not found. Run 'mcc-gaql --setup' first to authenticate.",
+            token_cache_filename
+        ));
+    }
+
+    // Resolve MCC customer ID
+    let mcc_customer_id = config
+        .mcc_id
+        .as_ref()
+        .or(config.customer_id.as_ref())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "__config_error__:Profile '{}' has no mcc_id or customer_id.",
+                profile_name
+            )
+        })?
+        .clone();
+
+    // Get API access
+    let api_config = ApiAccessConfig {
+        mcc_customer_id: mcc_customer_id.clone(),
+        token_cache_filename,
+        user_email: config.user_email.clone(),
+        dev_token: config.dev_token.clone(),
+        use_remote_auth: false,
+    };
+
+    let access = get_api_access(&api_config).await.map_err(|e| {
+        anyhow::anyhow!("__config_error__:Authentication failed: {}", e)
+    })?;
+
+    validate_gaql_query(access, &mcc_customer_id, query).await
 }
 
 /// Index embeddings for fast query generation

@@ -30,6 +30,7 @@ rig-lancedb = "0.4"
 lancedb = { version = "0.23", default-features = false }
 arrow-array = "56.2.0"
 arrow-schema = "56.2.0"
+mcc-gaql = { path = "crates/mcc-gaql" }
 mcc-gaql-common = { path = "crates/mcc-gaql-common" }
 hmac = "0.12"
 sha2 = "0.10"
