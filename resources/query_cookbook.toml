@@ -21,20 +21,20 @@
 
 [account_ids_with_access_and_traffic_last_week]
 description = """
-Get me account IDs with clicks in the last 7 days
+Get me account IDs with clicks in the last week
 """
 query = """
 SELECT 
 	customer.id
 FROM customer 
 WHERE 
-	segments.date during LAST_7_DAYS
+	segments.date during LAST_WEEK_MON_SUN
 	AND metrics.clicks > 1
 """
 
 [accounts_with_traffic_last_week]
 description = """
-Show me account-level performance last 7 days - need impressions, clicks, spend, and currency
+Show me account-level performance last week - need impressions, clicks, spend, and currency
 """
 query = """
 SELECT 
@@ -46,7 +46,7 @@ SELECT
 	customer.currency_code 
 FROM customer 
 WHERE 
-	segments.date during LAST_7_DAYS
+	segments.date during LAST_WEEK_MON_SUN
 	AND metrics.impressions > 1
 """
 
@@ -72,7 +72,7 @@ SELECT
 	customer.currency_code 
 FROM keyword_view
 WHERE
-	segments.date DURING LAST_7_DAYS
+	segments.date DURING LAST_WEEK_MON_SUN
 	and metrics.clicks > 10000
 ORDER BY
 	metrics.clicks DESC
@@ -81,7 +81,7 @@ LIMIT 10
 
 [accounts_with_perf_max_campaigns_last_week]
 description = """
-Get me the top PMax campaign by clicks (>100) per account last 7 days - need acct and campaign IDs + names, channel type, and currency
+Get me the top PMax campaign by clicks (>100) per account last week - need acct and campaign IDs + names, channel type, and currency
 """
 query = """
 SELECT 
@@ -96,7 +96,7 @@ SELECT
   customer.currency_code 
 FROM campaign 
 WHERE 
-  segments.date DURING LAST_7_DAYS 
+  segments.date DURING LAST_WEEK_MON_SUN 
   AND campaign.advertising_channel_type IN ('PERFORMANCE_MAX') 
   AND metrics.clicks > 100
 ORDER BY 
@@ -121,7 +121,7 @@ query = """
 	  customer.currency_code 
 	FROM campaign 
 	WHERE 
-	  segments.date DURING LAST_7_DAYS 
+	  segments.date DURING LAST_WEEK_MON_SUN 
 	  AND campaign.advertising_channel_type IN ('SMART') 
 	  AND metrics.clicks > 100
 	ORDER BY 
@@ -131,7 +131,7 @@ query = """
 
 [accounts_with_local_campaigns_last_week]
 description = """
-Pull the top Local campaign by clicks (>500) per account last 7 days - need acct and campaign info with currency
+Pull the top Local campaign by clicks (>500) per account last week - need acct and campaign info with currency
 """
 query = """
 	SELECT 
@@ -146,7 +146,7 @@ query = """
 	  customer.currency_code 
 	FROM campaign 
 	WHERE 
-	  segments.date DURING LAST_7_DAYS 
+	  segments.date DURING LAST_WEEK_MON_SUN 
 	  AND campaign.advertising_channel_type IN ('LOCAL') 
 	  AND metrics.clicks > 500
 	ORDER BY 
@@ -171,7 +171,7 @@ query = """
 	  customer.currency_code 
 	FROM campaign 
 	WHERE 
-	  segments.date DURING LAST_7_DAYS 
+	  segments.date DURING LAST_WEEK_MON_SUN 
 	  AND campaign.advertising_channel_type IN ('SHOPPING') 
 	  AND metrics.clicks > 100
 	ORDER BY 
@@ -181,7 +181,7 @@ query = """
 
 [accounts_with_multichannel_campaigns_last_week]
 description = """
-Show me the top Multi-Channel campaign by clicks (>100) per account last 7 days - need acct and campaign info with currency
+Show me the top Multi-Channel campaign by clicks (>100) per account last week - need acct and campaign info with currency
 """
 query = """
 	SELECT 
@@ -196,7 +196,7 @@ query = """
 	  customer.currency_code 
 	FROM campaign 
 	WHERE 
-	  segments.date DURING LAST_7_DAYS 
+	  segments.date DURING LAST_WEEK_MON_SUN 
 	  AND campaign.advertising_channel_type IN ('MULTI_CHANNEL') 
 	  AND metrics.clicks > 100
 	ORDER BY 
@@ -207,7 +207,7 @@ query = """
 
 [accounts_with_asset_sitelink_last_week]
 description = """
-Pull the top Sitelink by impressions (>20K clicks) per account last week - need acct and campaign details with currency
+Pull the top Sitelinks by impressions (>20K clicks) per account last week - need acct and campaign details with currency
 """
 query = """
 	SELECT 
@@ -216,24 +216,26 @@ query = """
 	  campaign.id, 
 	  campaign.advertising_channel_type, 
 	  campaign.name, 
-	  asset_field_type_view.field_type, 
+	  asset.id,
+	  asset.name,
+	  asset.sitelink_asset.link_text,
 	  metrics.impressions, 
 	  metrics.clicks, 
 	  metrics.cost_micros,
 		customer.currency_code  
-	FROM asset_field_type_view 
+	FROM campaign_asset 
 	WHERE 
-	  segments.date DURING LAST_7_DAYS 
-	  AND asset_field_type_view.field_type IN ('SITELINK') 
+	  segments.date DURING LAST_WEEK_MON_SUN 
+	  AND campaign_asset.field_type = 'SITELINK'
 	  AND metrics.clicks > 20000
 	ORDER BY 
 	  metrics.impressions DESC 
-	LIMIT 1
+	LIMIT 10
 """
 
 [accounts_with_asset_call_last_week]
 description = """
-Get me the top Call Extension by impressions (>100) per account last 7 days - need acct and campaign info with currency
+Get me the top Call Extensions by impressions (>100) per account last week - need acct and campaign info with currency
 """
 query = """
 	SELECT 
@@ -242,24 +244,27 @@ query = """
 	  campaign.id, 
 	  campaign.advertising_channel_type, 
 	  campaign.name, 
-	  asset_field_type_view.field_type, 
+	  asset.id,
+	  asset.name,
+	  asset.type,
+	  asset.call_asset.phone_number,
 	  metrics.impressions, 
 	  metrics.clicks, 
 	  metrics.cost_micros,
 		customer.currency_code  
-	FROM asset_field_type_view 
+	FROM campaign_asset 
 	WHERE 
-	  segments.date DURING LAST_7_DAYS 
-	  AND asset_field_type_view.field_type IN ('CALL') 
+	  segments.date DURING LAST_WEEK_MON_SUN 
+	  AND campaign_asset.field_type = 'CALL'
 	  AND metrics.impressions > 100
 	ORDER BY 
 	  metrics.impressions DESC 
-	LIMIT 1
+	LIMIT 10
 """
 
 [accounts_with_asset_callout_last_week]
 description = """
-Show me the top Callout Extension by impressions (>30K clicks) per account last week - need acct and campaign details with currency
+Show me the top Callout Extensions by impressions (>30K clicks) per account last week - need acct and campaign details with currency
 """
 query = """
 	SELECT 
@@ -268,24 +273,24 @@ query = """
 	  campaign.id, 
 	  campaign.advertising_channel_type, 
 	  campaign.name, 
-	  asset_field_type_view.field_type, 
+	  campaign_asset.asset, 
 	  metrics.impressions, 
 	  metrics.clicks, 
 	  metrics.cost_micros,
 	  customer.currency_code  
-	FROM asset_field_type_view 
-	WHERE 
-	  segments.date DURING LAST_7_DAYS 
-	  AND asset_field_type_view.field_type IN ('CALLOUT') 
+	FROM campaign_asset 
+	WHERE
+	  segments.date DURING LAST_WEEK_MON_SUN 
+	  AND campaign_asset.field_type = 'CALLOUT' 
 	  AND metrics.clicks > 30000
 	ORDER BY 
 	  metrics.impressions DESC 
-	LIMIT 1
+	LIMIT 10
 """
 
 [accounts_with_asset_app_last_week]
 description = """
-Pull the top App Extension by impressions (>1) per account last 7 days - need acct and campaign info with currency
+Pull the top App Extensions by impressions (>1) per account last week - need acct and campaign info with currency
 """
 query = """
 	SELECT 
@@ -294,19 +299,19 @@ query = """
 	  campaign.id, 
 	  campaign.advertising_channel_type, 
 	  campaign.name, 
-	  asset_field_type_view.field_type, 
+	  campaign_asset.asset, 
 	  metrics.impressions, 
 	  metrics.clicks, 
 	  metrics.cost_micros,
-		customer.currency_code  
-	FROM asset_field_type_view 
-	WHERE 
-	  segments.date DURING LAST_7_DAYS 
-	  AND asset_field_type_view.field_type IN ('MOBILE_APP') 
+	  customer.currency_code  
+	FROM campaign_asset 
+	WHERE
+	  segments.date DURING LAST_WEEK_MON_SUN 
+	  AND campaign_asset.field_type = 'APP' 
 	  AND metrics.impressions > 1
 	ORDER BY 
 	  metrics.impressions DESC 
-	LIMIT 1
+	LIMIT 10
 """
 
 [perf_max_campaigns_with_traffic_last_30_days]
@@ -382,7 +387,7 @@ query = """
 	WHERE
 	  campaign.bidding_strategy_type IN ('MAXIMIZE_CLICKS', 'MAXIMIZE_CONVERSIONS', 'MAXIMIZE_CONVERSION_VALUE', 'TARGET_CPA', 'TARGET_ROAS', 'TARGET_SPEND') 
 	  AND campaign.status IN ('ENABLED') 
-	  AND segments.date DURING LAST_7_DAYS 
+	  AND segments.date DURING LAST_WEEK_MON_SUN 
 	  AND metrics.cost_micros > 1000000000
 	ORDER by metrics.cost_micros DESC
 	LIMIT 25
@@ -533,7 +538,7 @@ query = """
 
 [locations_with_highest_revenue_per_conversion]
 description = """
-Pull top 1000 locations by rev per conv (>10 conv) last week - need geo target IDs and location metrics with currency
+Pull top 1000 locations by rev per conv (>10 conv) last 7 days - need geo target IDs and location metrics with currency
 """
 query = """
 	SELECT 
