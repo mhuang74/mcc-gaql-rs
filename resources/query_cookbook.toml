@@ -21,7 +21,7 @@
 
 [account_ids_with_access_and_traffic_last_week]
 description = """
-Find accounts that have clicks in last 7 days
+Get me account IDs with clicks in the last 7 days
 """
 query = """
 SELECT 
@@ -34,7 +34,7 @@ WHERE
 
 [accounts_with_traffic_last_week]
 description = """
-Show account performance for accounts with impressions in the last 7 days. Include account name, cost, and currency.
+Show me account-level performance last 7 days - need impressions, clicks, spend, and currency
 """
 query = """
 SELECT 
@@ -52,7 +52,7 @@ WHERE
 
 [keywords_with_top_traffic_last_week]
 description = """
-Show cost and performance of top trafficking keywords with more than 10,000 clicks in the last 7 days. Include id and name for account, campaign, and adgroup. Include campaign type and account currency.
+Pull my top 10 keywords by clicks (>10K) last week - need acct, campaign, ad group IDs + names, channel type, and currency
 """
 query = """
 SELECT
@@ -81,7 +81,7 @@ LIMIT 10
 
 [accounts_with_perf_max_campaigns_last_week]
 description = """
-Show the top performing Performance Max Campaign (by clicks) for each account, with at least 100 clicks in the last 7 days. Include id and name for account and campaign. Include campaign type and account currency.
+Get me the top PMax campaign by clicks (>100) per account last 7 days - need acct and campaign IDs + names, channel type, and currency
 """
 query = """
 SELECT 
@@ -106,7 +106,7 @@ LIMIT 1
 
 [accounts_with_smart_campaigns_last_week]
 description = """
-Show the top performing Smart Campaign (by clicks) for each account, with at least 100 clicks in the last 7 days. Include id and name for account and campaign. Include campaign type and account currency.
+Show me the top Smart campaign by clicks (>100) per account last week - need acct and campaign details with currency
 """
 query = """
 	SELECT 
@@ -131,7 +131,7 @@ query = """
 
 [accounts_with_local_campaigns_last_week]
 description = """
-Show the top performing Local Campaigns (by clicks) for each account, with at least 500 clicks in the last 7 days. Include id and name for account and campaign. Include campaign type and account currency.
+Pull the top Local campaign by clicks (>500) per account last 7 days - need acct and campaign info with currency
 """
 query = """
 	SELECT 
@@ -156,7 +156,7 @@ query = """
 
 [accounts_with_shopping_campaigns_last_week]
 description = """
-Show the top performing Shopping Campaign (by clicks) for each account, with at least 100 clicks in the last 7 days. Include id and name for account and campaign. Include campaign type and account currency.
+Get me the top Shopping campaign by clicks (>100) per account last week - need acct and campaign details with currency
 """
 query = """
 	SELECT 
@@ -181,7 +181,7 @@ query = """
 
 [accounts_with_multichannel_campaigns_last_week]
 description = """
-Show the top performing Multi-Channel Campaign (by clicks) for each account, with at least 100 clicks in the last 7 days. Include id and name for account and campaign. Include campaign type and account currency.
+Show me the top Multi-Channel campaign by clicks (>100) per account last 7 days - need acct and campaign info with currency
 """
 query = """
 	SELECT 
@@ -207,7 +207,7 @@ query = """
 
 [accounts_with_asset_sitelink_last_week]
 description = """
-Show the top performing Sitelink (by impressions) for each account, with at least 20,000 clicks in the last 7 days. Include id and name for account and campaign. Include campaign type and account currency.
+Pull the top Sitelink by impressions (>20K clicks) per account last week - need acct and campaign details with currency
 """
 query = """
 	SELECT 
@@ -233,7 +233,7 @@ query = """
 
 [accounts_with_asset_call_last_week]
 description = """
-Show the top performing Call Extension (by impressions) for each account, with at least 100 impressions in the last 7 days. Include id and name for account and campaign. Include campaign type and account currency.
+Get me the top Call Extension by impressions (>100) per account last 7 days - need acct and campaign info with currency
 """
 query = """
 	SELECT 
@@ -259,7 +259,7 @@ query = """
 
 [accounts_with_asset_callout_last_week]
 description = """
-Show the top performing Callout Extension (by impressions) for each account, with at least 30000 clicks in the last 7 days. Include id and name for account and campaign. Include campaign type and account currency.
+Show me the top Callout Extension by impressions (>30K clicks) per account last week - need acct and campaign details with currency
 """
 query = """
 	SELECT 
@@ -285,7 +285,7 @@ query = """
 
 [accounts_with_asset_app_last_week]
 description = """
-Show the top performing App Extension (by impressions) for each account, with at least 1 impression in the last 7 days. Include id and name for account and campaign. Include campaign type and account currency.
+Pull the top App Extension by impressions (>1) per account last 7 days - need acct and campaign info with currency
 """
 query = """
 	SELECT 
@@ -311,7 +311,7 @@ query = """
 
 [perf_max_campaigns_with_traffic_last_30_days]
 description = """
-Show daily performance of Performance Max Campaigns for the previous 30 days, including key performance metrics like CTR, AvgCpc, Conversion, Revenue, CPA. Include ID and Name for campaigns.
+Give me daily PMax performance last 30 days - need CTR, CPC, conv, rev, CPA, campaign IDs + names, and currency
 """
 query = """
 	SELECT 
@@ -339,7 +339,7 @@ query = """
 
 [asset_fields_with_traffic_ytd]
 description = """
-Show YTD daily performance of assets on days with at least 1 daily impression. Include account currency code and asset type.
+Show me YTD asset performance by day with impressions, asset type, and currency
 """
 query = """
 	SELECT 
@@ -360,7 +360,7 @@ query = """
 
 [campaigns_with_smart_bidding_by_spend]
 description = """
-Show 25 top spending Smart Bidding Campaigns from each account, with at least 1,000 spend within last 7 days. Include ID and Name of accounts and campaigns. Include conversion metrics.
+Pull top 25 Smart Bidding campaigns by spend (>$1K) last week - need acct and campaign IDs + names, budget, bid strategy, CPC, and conv metrics with currency
 """
 query = """
 	SELECT 
@@ -390,7 +390,7 @@ query = """
 
 [campaigns_shopping_campaign_performance]
 description = """
-Show performance of all Shopping Campaigns from each account (by spend), with at least 100 spend within last 30 days. Include ID and Name of accounts and campaigns. Include budget, bidding strategy, avgCpc, and conversion metrics.
+Get me Shopping campaigns by spend (>$100) last 30 days - need acct and campaign details, budget, bid strategy, CPC, and conv metrics with currency
 """
 query = """
 	SELECT 
@@ -419,7 +419,7 @@ query = """
 
 [smart_campaign_search_terms_with_top_spend]
 description = """
-Top 100 search terms by spend from Smart Campaigns in the last 30 days with at least 1 click. Includes search term text, match type, and performance metrics.
+Show me top 100 search terms by spend from Smart campaigns last 30 days - need search term, match type, and performance metrics with currency
 """
 query = """
 	SELECT 
@@ -445,7 +445,7 @@ query = """
 
 [all_search_terms_with_clicks]
 description = """
-All search terms with clicks in the last 30 days, including match type, device, keyword status, and full conversion metrics. Sorted by spend.
+Pull all search terms with clicks last 30 days - need match type, device, keyword status, and full conv metrics with currency
 """
 query = """
 	SELECT 
@@ -473,7 +473,7 @@ query = """
 
 [search_terms_with_top_cpa]
 description = """
-Top 50 search terms with highest CPA (>$200) and significant spend (>$1000) in the last 30 days. Useful for identifying expensive, underperforming search terms.
+Get me top 50 search terms with CPA >$200 and spend >$1K last 30 days - flagging expensive underperformers with currency
 """
 query = """
 	SELECT 
@@ -503,7 +503,7 @@ query = """
 
 [search_terms_with_low_roas]
 description = """
-Top 50 search terms with low ROAS (<0.25) and significant spend (>$1000) in the last 30 days. Useful for identifying poor-performing search terms that may need negative keywording.
+Show me top 50 search terms with ROAS <0.25 and spend >$1K last 30 days - need to neg keyword these with currency
 """
 query = """
 	SELECT 
@@ -533,7 +533,7 @@ query = """
 
 [locations_with_highest_revenue_per_conversion]
 description = """
-Top 1000 location targets by revenue per conversion in the last 7 days, with at least 10 conversions. Includes geo target constant ID and location performance metrics.
+Pull top 1000 locations by rev per conv (>10 conv) last week - need geo target IDs and location metrics with currency
 """
 query = """
 	SELECT 
@@ -566,7 +566,7 @@ query = """
 
 [asset_performance_rsa]
 description = """
-Responsive Search Ad (RSA) performance in the last 30 days, including headline and description copy, path text, and engagement metrics. Limited to 1000 results sorted by CTR.
+Get me RSA performance last 30 days - need headline and description copy, path text, CTR, and engagement metrics
 """
 query = """
 SELECT 
@@ -601,7 +601,7 @@ LIMIT 1000
 
 [recent_campaign_changes]
 description = """
-Last 100 campaign modifications from the last 14 days, including timestamp, user email, client type, and which fields were changed. Useful for audit trails and change tracking.
+Show me last 100 campaign changes in the last 14 days - need timestamp, user, client type, and what changed
 """
 query = """
 SELECT
@@ -626,7 +626,7 @@ LIMIT 100
 
 [recent_changes]
 description = """
-recent changes across common objects like campaign, adgroup, ad, keywords, budgets, etc. return with changed object type, fields, user, changed fields, and datetime of change event
+Pull recent changes across campaigns, ad groups, ads, keywords, and budgets last 14 days - need object type, user, changed fields, and timestamp
 """
 query = """
 SELECT
@@ -651,7 +651,7 @@ LIMIT 100
 
 [all_campaigns]
 description = """
-Basic campaign information including ID, name, channel type, status, and primary status. Limited to 100 campaigns.
+Get me basic campaign info - IDs, names, channel types, and status (limit 100)
 """
 query = """
 SELECT
@@ -669,7 +669,7 @@ LIMIT 100
 
 [performance_max_impression_share]
 description = """
-Daily impression share metrics for Performance Max campaigns over the last 30 days, including absolute top impression share, budget lost share, rank lost share, and top impression percentage.
+Show me daily impression share metrics for PMax last 30 days - need absolute top, budget lost, rank lost, and top impression share
 """
 query = """
 SELECT 
