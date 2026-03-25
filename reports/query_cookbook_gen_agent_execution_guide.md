@@ -32,10 +32,8 @@ This allows re-running tests without overwriting previous results.
    ```
    This command automatically discovers and indexes the query cookbook if present in the standard location.
 
-3. **Build the Tool**
-   ```bash
-   cargo build -p mcc-gaql-gen --release
-   ```
+3. **Binary Location**
+   - Use `mcc-gaql-gen` from PATH (e.g., installed binary or `cargo run -p mcc-gaql-gen --release --`)
 
 ## Auto-Discovery Behavior
 
@@ -101,6 +99,12 @@ for i in "${ENTRIES[@]}"; do
     # Launch subagent for entry $i and save to reports/gen_results.${TIMESTAMP}/
 done
 # Wait for batch to complete before next batch
+```
+
+**Example subagent command to run `mcc-gaql-gen`:**
+
+```bash
+cargo run -p mcc-gaql-gen --release -- generate "Show me daily impression share metrics for PMax last 30 days - need absolute top, budget lost, rank lost, and top impression share" --use-query-cookbook --explain 2>&1
 ```
 
 The `--use-query-cookbook` flag enables RAG search for similar examples from the cookbook. The tool automatically discovers the query cookbook from the standard config location - you do NOT need to specify `--queries <path>`.
