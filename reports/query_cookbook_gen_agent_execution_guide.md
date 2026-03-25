@@ -4,6 +4,21 @@
 
 Test the effectiveness of `mcc-gaql-gen generate` command by comparing generated GAQL queries against the reference queries in `resources/query_cookbook.toml`.
 
+## Output Organization
+
+All test outputs are organized with timestamps to preserve historical runs:
+
+- **Intermediate outputs**: `reports/gen_results.<timestamp>/` directory
+- **Comparison report**: `reports/query_cookbook_gen_comparison.<timestamp>.md`
+
+**Generate timestamp at start of each run:**
+```bash
+TIMESTAMP=$(date +%Y%m%d%H%M%S)
+mkdir -p reports/gen_results.${TIMESTAMP}
+```
+
+This allows re-running tests without overwriting previous results.
+
 ## Prerequisites
 
 1. **Environment Setup**
@@ -68,10 +83,25 @@ mcc-gaql-gen generate "<description>" --use-query-cookbook --explain
 ```
 
 **Using Subagents for Execution:**
-- Launch a subagent (via Claude Code Agent tool) to execute each generation command
+- Launch subagents (via Claude Code Agent tool) to execute generation commands
+- **Concurrency limit: 5** - Do not run more than 5 subagents simultaneously
+- Process entries in batches of 5, waiting for each batch to complete before starting the next
 - The `--explain` flag outputs LLM reasoning showing why specific fields, filters, and structures were chosen
+- Save each result to `reports/gen_results.${TIMESTAMP}/<entry_name>.txt`
 - Capture both the generated GAQL query AND the explanation output
 - This reveals the LLM's decision-making process beyond just the final query
+
+**Example batch execution pattern:**
+```bash
+# Define entries array
+ENTRIES=("account_ids_with_access_and_traffic_last_week" "accounts_with_traffic_last_week" ...)
+
+# Process in batches of 5
+for i in "${ENTRIES[@]}"; do
+    # Launch subagent for entry $i and save to reports/gen_results.${TIMESTAMP}/
+done
+# Wait for batch to complete before next batch
+```
 
 The `--use-query-cookbook` flag enables RAG search for similar examples from the cookbook. The tool automatically discovers the query cookbook from the standard config location - you do NOT need to specify `--queries <path>`.
 
@@ -109,7 +139,7 @@ For each entry, examine the `--explain` output and classify the result as:
 
 ### Step 5: Output Format
 
-Write results to `reports/query_cookbook_gen_comparison.md` with this structure:
+Write results to `reports/query_cookbook_gen_comparison.${TIMESTAMP}.md` with this structure:
 
 ```markdown
 # Query Cookbook Generation Comparison Report

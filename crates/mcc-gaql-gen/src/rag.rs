@@ -2630,6 +2630,7 @@ Respond ONLY with valid JSON:
   "select_fields": ["field1", "field2", ...],
   "filter_fields": [{{"field": "field_name", "operator": "=", "value": "value"}}],
   "order_by_fields": [{{"field": "field_name", "direction": "DESC"}}],
+  "limit": null,
   "reasoning": "brief explanation"
 }}
 
@@ -2638,7 +2639,9 @@ Respond ONLY with valid JSON:
 - **IMPORTANT: For IN and NOT IN operators, wrap values in parentheses: IN ('VALUE1', 'VALUE2') not IN 'VALUE'**
 - Example: {{"field": "campaign.status", "operator": "IN", "value": "('ENABLED', 'PAUSED')"}}
 - Add order_by_fields for sorting (use DESC for "top", "best", "worst"; ASC for "first" if ascending)
-- Include segments.date if temporal period is specified
+- If the query asks for "top N", "first N", "best N", or "worst N" results, set "limit" to that number N. If "top" or "best" is used without a specific number, default "limit" to 10. Otherwise set "limit" to null.
+- **MANDATORY: If the user query mentions ANY time period (last week, last 7 days, yesterday, this month, year to date, etc.), you MUST add a segments.date filter_field. Do NOT mention date ranges only in reasoning -- they MUST appear in filter_fields. A query missing a date filter when the user specified a time period is INCORRECT.**
+- When querying account-level data (FROM customer) or when the user asks about accounts, always include customer.id and customer.descriptive_name in select_fields if available in the field list.
 - For date ranges, use the APPROPRIATE method based on the period:
 
   **Use DURING with date literals** (NO quotes around value) for these standard periods.
@@ -2711,6 +2714,7 @@ Respond ONLY with valid JSON:
   "select_fields": ["field1", "field2", ...],
   "filter_fields": [{{"field": "field_name", "operator": "=", "value": "value"}}],
   "order_by_fields": [{{"field": "field_name", "direction": "DESC"}}],
+  "limit": null,
   "reasoning": "brief explanation"
 }}
 
@@ -2719,7 +2723,9 @@ Respond ONLY with valid JSON:
 - **IMPORTANT: For IN and NOT IN operators, wrap values in parentheses: IN ('VALUE1', 'VALUE2') not IN 'VALUE'**
 - Example: {{"field": "campaign.status", "operator": "IN", "value": "('ENABLED', 'PAUSED')"}}
 - Add order_by_fields for sorting (use DESC for "top", "best", "worst"; ASC for "first" if ascending)
-- Include segments.date if temporal period is specified
+- If the query asks for "top N", "first N", "best N", or "worst N" results, set "limit" to that number N. If "top" or "best" is used without a specific number, default "limit" to 10. Otherwise set "limit" to null.
+- **MANDATORY: If the user query mentions ANY time period (last week, last 7 days, yesterday, this month, year to date, etc.), you MUST add a segments.date filter_field. Do NOT mention date ranges only in reasoning -- they MUST appear in filter_fields. A query missing a date filter when the user specified a time period is INCORRECT.**
+- When querying account-level data (FROM customer) or when the user asks about accounts, always include customer.id and customer.descriptive_name in select_fields if available in the field list.
 - For date ranges, use the APPROPRIATE method based on the period:
 
   **Use DURING with date literals** (NO quotes around value) for these standard periods.
@@ -2926,10 +2932,13 @@ Respond ONLY with valid JSON:
             .map(|s| s.to_string())
             .unwrap_or_default();
 
+        let limit = parsed.get("limit").and_then(|v| v.as_u64()).map(|n| n as u32);
+
         Ok(FieldSelectionResult {
             select_fields: final_select_fields,
             filter_fields,
             order_by_fields,
+            limit,
             reasoning,
         })
     }
@@ -3088,13 +3097,24 @@ Respond ONLY with valid JSON:
                         continue;
                     }
                 }
+                // IN/NOT IN: use ff.value directly (LLM provides the parenthesized list);
+                // escape_value would corrupt the inner quotes
+                "IN" | "NOT IN" => format!("{} {} {}", ff.field_name, op, ff.value),
+                // Numeric comparisons: skip quoting when value is a number
+                ">" | "<" | ">=" | "<=" => {
+                    if escaped_value.parse::<f64>().is_ok() {
+                        format!("{} {} {}", ff.field_name, op, escaped_value)
+                    } else {
+                        format!("{} {} '{}'", ff.field_name, op, escaped_value)
+                    }
+                }
                 _ => format!("{} {} '{}'", ff.field_name, op, escaped_value), // Quoted for other operators
             };
             where_clauses.push(clause);
         }
 
-        // Limit detection
-        let limit = self.detect_limit(user_query);
+        // Limit detection: LLM-provided limit takes priority, detect_limit as fallback
+        let limit = field_selection.limit.or_else(|| self.detect_limit(user_query));
 
         // Implicit defaults (if enabled)
         if self.pipeline_config.add_defaults {
@@ -3239,6 +3259,7 @@ struct FieldSelectionResult {
     select_fields: Vec<String>,
     filter_fields: Vec<mcc_gaql_common::field_metadata::FilterField>,
     order_by_fields: Vec<(String, String)>, // (field_name, direction)
+    limit: Option<u32>,
     reasoning: String,
 }
 
@@ -3890,10 +3911,13 @@ mod tests {
             .map(|s| s.to_string())
             .unwrap_or_default();
 
+        let limit = parsed.get("limit").and_then(|v| v.as_u64()).map(|n| n as u32);
+
         Some(FieldSelectionResult {
             select_fields,
             filter_fields,
             order_by_fields,
+            limit,
             reasoning,
         })
     }
