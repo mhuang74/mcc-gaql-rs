@@ -1960,12 +1960,21 @@ Respond ONLY with valid JSON:
   "reasoning": "brief explanation"
 }}
 
-Resource selection tips:
+Resource selection guidance:
+- For asset extension performance (sitelinks, callouts, calls, structured snippets):
+  Use `campaign_asset` with a `campaign_asset.field_type` filter. Do NOT use `campaign` (no asset-level data) or `call_view` (individual call records, not asset metrics).
+- For daily asset metrics broken down by asset type:
+  Use `asset_field_type_view`. Do NOT use `asset` (static entity definition, no metrics support).
+- For Smart campaign performance with metrics:
+  Use `campaign` with `advertising_channel_type IN ('SMART')`. Do NOT use `smart_campaign_setting` (configuration only, no metrics).
+- For location-level performance data:
+  Use `location_view` with `campaign_criterion` fields. Do NOT use `campaign` with geo segments (different granularity — campaign-level, not location-level).
 - For impression share metrics (search impression share, budget lost impression share, etc.),
   use the `campaign` resource. Specialized views like `performance_max_placement_view` are for
   placement-level data and do NOT expose impression share metrics.
 - When in doubt between a specialized view and a core resource (campaign, ad_group, customer),
   prefer the core resource -- it has broader metric availability.
+- General rule: Configuration/setting resources (e.g., `smart_campaign_setting`) and static entity resources (e.g., `asset`) do NOT support metrics fields. If the user wants performance data, always prefer the metrics-bearing resource even if a configuration resource has a closer name match.
 
 {}
 {}
@@ -2826,6 +2835,13 @@ Respond ONLY with valid JSON:
   - "christmas holiday" → operator: "BETWEEN", value: '{this_christmas_start} AND {this_christmas_end}'
   - "last 60 days" → operator: "BETWEEN", value: '{last_60_start} AND {today}'
   - "last 90 days" → operator: "BETWEEN", value: '{last_90_start} AND {today}'
+
+- For fields ending in `_micros` (cost_micros, amount_micros, etc.), values are in micros (1/1,000,000 of currency unit).
+  Convert dollar amounts: $1 = 1000000, $100 = 100000000, $1K = 1000000000.
+  Example: "spend >$200" → field: "metrics.cost_micros", operator: ">", value: "200000000"
+- For cost_per_ fields (cost_per_conversion, cost_per_all_conversions, etc.), values are also in micros.
+  Example: "CPA >$200" → field: "metrics.cost_per_conversion", operator: ">", value: "200000000"
+- IMPORTANT: Always preserve the actual numeric threshold from the user query. Never substitute 0 for a specified dollar amount.
 "#
             );
             let user = format!(
@@ -2922,6 +2938,13 @@ Respond ONLY with valid JSON:
   - "christmas holiday" → operator: "BETWEEN", value: '{this_christmas_start} AND {this_christmas_end}'
   - "last 60 days" → operator: "BETWEEN", value: '{last_60_start} AND {today}'
   - "last 90 days" → operator: "BETWEEN", value: '{last_90_start} AND {today}'
+
+- For fields ending in `_micros` (cost_micros, amount_micros, etc.), values are in micros (1/1,000,000 of currency unit).
+  Convert dollar amounts: $1 = 1000000, $100 = 100000000, $1K = 1000000000.
+  Example: "spend >$200" → field: "metrics.cost_micros", operator: ">", value: "200000000"
+- For cost_per_ fields (cost_per_conversion, cost_per_all_conversions, etc.), values are also in micros.
+  Example: "CPA >$200" → field: "metrics.cost_per_conversion", operator: ">", value: "200000000"
+- IMPORTANT: Always preserve the actual numeric threshold from the user query. Never substitute 0 for a specified dollar amount.
 "#
             );
             let user = format!(
@@ -3059,6 +3082,26 @@ Respond ONLY with valid JSON:
                         .collect()
                 })
                 .unwrap_or_default();
+
+        // Programmatic micros conversion: convert dollar amounts for _micros and cost_per_ fields
+        // in case the LLM passed a raw dollar value (e.g., "200" for CPA >$200).
+        let mut filter_fields = filter_fields;
+        for ff in &mut filter_fields {
+            let needs_micros = ff.field_name.ends_with("_micros")
+                || ff.field_name.contains("cost_per_")
+                || ff.field_name.contains("amount_micros");
+            if needs_micros {
+                if let Some(converted) = try_convert_to_micros(&ff.value) {
+                    log::debug!(
+                        "Phase 3: Micros conversion for '{}': '{}' → '{}'",
+                        ff.field_name,
+                        ff.value,
+                        converted
+                    );
+                    ff.value = converted;
+                }
+            }
+        }
 
         let order_by_fields: Vec<(String, String)> = parsed["order_by_fields"]
             .as_array()
@@ -3591,6 +3634,45 @@ pub fn print_selection_explanation(
     println!("═══════════════════════════════════════════════════════════════");
 }
 
+/// Attempt to convert a dollar-like value string to micros.
+///
+/// Returns `Some(converted_string)` when the value looks like a dollar amount
+/// (i.e., parses as a number < 1_000_000 after stripping `$` and commas,
+/// and optionally handling K/M/B suffixes). Returns `None` if the value is
+/// already in micros range, non-numeric, or a date literal.
+fn try_convert_to_micros(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+
+    // Skip obviously non-numeric values (date literals, strings with spaces, etc.)
+    if trimmed.is_empty() || trimmed.contains(' ') || trimmed.contains('-') {
+        return None;
+    }
+
+    let stripped = trimmed.trim_start_matches('$').replace(',', "");
+
+    // Handle K/M/B suffixes
+    let (num_str, suffix_multiplier) = if stripped.ends_with(['K', 'k']) {
+        (&stripped[..stripped.len() - 1], 1_000.0_f64)
+    } else if stripped.ends_with(['M', 'm']) {
+        (&stripped[..stripped.len() - 1], 1_000_000.0_f64)
+    } else if stripped.ends_with(['B', 'b']) {
+        (&stripped[..stripped.len() - 1], 1_000_000_000.0_f64)
+    } else {
+        (stripped.as_str(), 1.0_f64)
+    };
+
+    let number: f64 = num_str.parse().ok()?;
+    let dollar_amount = number * suffix_multiplier;
+
+    // If already in micros range (>= 1_000_000), assume no conversion needed
+    if dollar_amount >= 1_000_000.0 {
+        return None;
+    }
+
+    let micros = (dollar_amount * 1_000_000.0).round() as i64;
+    Some(micros.to_string())
+}
+
 /// Helper function for get_implicit_defaults - extracted for testing
 fn get_implicit_defaults_impl(resource: &str, existing_clauses: &[String]) -> Vec<String> {
     // Only add defaults if no explicit status filter exists
@@ -3606,7 +3688,6 @@ fn get_implicit_defaults_impl(resource: &str, existing_clauses: &[String]) -> Ve
         "ad_group",
         "keyword_view",
         "ad_group_ad",
-        "search_term_view",
         "user_list",
     ];
 
@@ -3791,6 +3872,46 @@ mod tests {
     fn test_implicit_defaults_skips_for_non_status_resource() {
         let defaults = get_implicit_defaults_impl("geo_target_constant", &[]);
         assert!(defaults.is_empty());
+    }
+
+    #[test]
+    fn test_implicit_defaults_skips_for_search_term_view() {
+        // search_term_view was removed from STATUS_RESOURCES; implicit status filter must not be added
+        let defaults = get_implicit_defaults_impl("search_term_view", &[]);
+        assert!(defaults.is_empty());
+    }
+
+    #[test]
+    fn test_try_convert_to_micros_dollar_amount() {
+        assert_eq!(try_convert_to_micros("200"), Some("200000000".to_string()));
+        assert_eq!(try_convert_to_micros("$200"), Some("200000000".to_string()));
+        assert_eq!(try_convert_to_micros("1"), Some("1000000".to_string()));
+    }
+
+    #[test]
+    fn test_try_convert_to_micros_k_suffix() {
+        assert_eq!(try_convert_to_micros("1K"), Some("1000000000".to_string()));
+        assert_eq!(try_convert_to_micros("$1K"), Some("1000000000".to_string()));
+        assert_eq!(try_convert_to_micros("2k"), Some("2000000000".to_string()));
+    }
+
+    #[test]
+    fn test_try_convert_to_micros_already_in_micros() {
+        // Values >= 1_000_000 are assumed to already be in micros
+        assert_eq!(try_convert_to_micros("1000000000"), None);
+        assert_eq!(try_convert_to_micros("200000000"), None);
+    }
+
+    #[test]
+    fn test_try_convert_to_micros_non_numeric() {
+        assert_eq!(try_convert_to_micros("LAST_30_DAYS"), None);
+        assert_eq!(try_convert_to_micros("ENABLED"), None);
+        assert_eq!(try_convert_to_micros(""), None);
+    }
+
+    #[test]
+    fn test_try_convert_to_micros_with_comma() {
+        assert_eq!(try_convert_to_micros("1,000"), Some("1000000000".to_string()));
     }
 
     #[test]
@@ -4053,6 +4174,26 @@ mod tests {
                         .collect()
                 })
                 .unwrap_or_default();
+
+        // Programmatic micros conversion: convert dollar amounts for _micros and cost_per_ fields
+        // in case the LLM passed a raw dollar value (e.g., "200" for CPA >$200).
+        let mut filter_fields = filter_fields;
+        for ff in &mut filter_fields {
+            let needs_micros = ff.field_name.ends_with("_micros")
+                || ff.field_name.contains("cost_per_")
+                || ff.field_name.contains("amount_micros");
+            if needs_micros {
+                if let Some(converted) = try_convert_to_micros(&ff.value) {
+                    log::debug!(
+                        "Phase 3: Micros conversion for '{}': '{}' → '{}'",
+                        ff.field_name,
+                        ff.value,
+                        converted
+                    );
+                    ff.value = converted;
+                }
+            }
+        }
 
         let order_by_fields: Vec<(String, String)> = parsed["order_by_fields"]
             .as_array()
