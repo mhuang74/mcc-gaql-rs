@@ -2765,11 +2765,17 @@ Respond ONLY with valid JSON:
 - **MANDATORY: If the user query mentions ANY time period (last week, last 7 days, yesterday, this month, year to date, etc.), you MUST add a segments.date filter_field. Do NOT mention date ranges only in reasoning -- they MUST appear in filter_fields. A query missing a date filter when the user specified a time period is INCORRECT.**
 - In an MCC (multi-client) environment, always include customer.id and customer.descriptive_name in select_fields when they are available, so results can be identified by account.
 - **IMPORTANT: Always include identity fields** for the primary resource in select_fields. Identity fields are the ones that identify each row — such as the resource's ID, name, and parent resource identifiers. Include them even if the user didn't explicitly ask for them. Examples: a campaign query should include campaign.id and campaign.name; an ad_group query should include campaign.id, campaign.name, ad_group.id, and ad_group.name; a keyword_view query should include ad_group_criterion.criterion_id and ad_group_criterion.keyword.text.
-- **Monetary values (micros conversion):** Fields ending in `_micros` (e.g., metrics.cost_micros, campaign_budget.amount_micros) and metrics.cost_per_conversion store currency in micros (1 dollar = 1,000,000 micros). Convert dollar amounts in filters:
+- **Numeric suffixes (K, M, B):** "K" means thousand (×1000), "M" means million (×1,000,000), "B" means billion. These apply to ANY numeric field:
+  - "10K" → 10000
+  - "5M" → 5000000
+  - "1.5K" → 1500
+
+- **Monetary values (micros conversion):** ONLY fields ending in `_micros` (e.g., metrics.cost_micros, campaign_budget.amount_micros) and metrics.cost_per_conversion store currency in micros (1 dollar = 1,000,000 micros). This is IN ADDITION to any K/M/B suffix:
   - "$200" or "200 dollars" → 200000000
-  - "$1K" or "$1,000" → 1000000000
+  - "$1K" or "$1,000" → 1000000000 (1000 dollars × 1,000,000 micros/dollar)
   - "$1.50" → 1500000
-  Always multiply dollar values by 1,000,000 for _micros fields.
+  - For _micros fields: multiply dollar values by 1,000,000 ON TOP OF any K/M/B suffix
+  - For NON-_micros fields (like metrics.clicks): "10K" simply means 10000, NOT 10000000
 - For date ranges, use the APPROPRIATE method based on the period:
 
   **Use DURING with date literals** (NO quotes around value) for these standard periods.
@@ -2855,11 +2861,17 @@ Respond ONLY with valid JSON:
 - **MANDATORY: If the user query mentions ANY time period (last week, last 7 days, yesterday, this month, year to date, etc.), you MUST add a segments.date filter_field. Do NOT mention date ranges only in reasoning -- they MUST appear in filter_fields. A query missing a date filter when the user specified a time period is INCORRECT.**
 - When querying account-level data (FROM customer) or when the user asks about accounts, always include customer.id and customer.descriptive_name in select_fields if available in the field list.
 - Always include identity fields for the primary resource in select_fields — fields that identify each row, such as {{resource}}.id, {{resource}}.name, and parent resource identifiers (e.g., campaign.id, campaign.name for ad_group queries). Include them even if not explicitly requested.
-- **Monetary values (micros conversion):** Fields ending in `_micros` (e.g., metrics.cost_micros, campaign_budget.amount_micros) and metrics.cost_per_conversion store currency in micros (1 dollar = 1,000,000 micros). Convert dollar amounts in filters:
+- **Numeric suffixes (K, M, B):** "K" means thousand (×1000), "M" means million (×1,000,000), "B" means billion. These apply to ANY numeric field:
+  - "10K" → 10000
+  - "5M" → 5000000
+  - "1.5K" → 1500
+
+- **Monetary values (micros conversion):** ONLY fields ending in `_micros` (e.g., metrics.cost_micros, campaign_budget.amount_micros) and metrics.cost_per_conversion store currency in micros (1 dollar = 1,000,000 micros). This is IN ADDITION to any K/M/B suffix:
   - "$200" or "200 dollars" → 200000000
-  - "$1K" or "$1,000" → 1000000000
+  - "$1K" or "$1,000" → 1000000000 (1000 dollars × 1,000,000 micros/dollar)
   - "$1.50" → 1500000
-  Always multiply dollar values by 1,000,000 for _micros fields.
+  - For _micros fields: multiply dollar values by 1,000,000 ON TOP OF any K/M/B suffix
+  - For NON-_micros fields (like metrics.clicks): "10K" simply means 10000, NOT 10000000
 - For date ranges, use the APPROPRIATE method based on the period:
 
   **Use DURING with date literals** (NO quotes around value) for these standard periods.
