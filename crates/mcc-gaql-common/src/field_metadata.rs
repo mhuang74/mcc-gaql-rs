@@ -127,6 +127,12 @@ pub struct ResourceMetadata {
     /// Whether alphabetical fallback was used instead of AI selection
     #[serde(default)]
     pub uses_fallback: bool,
+    /// Identity fields: fields that identify a row in query results.
+    /// Includes the full hierarchy chain (e.g., for ad_group: customer.id,
+    /// customer.descriptive_name, campaign.id, campaign.name, ad_group.id, ad_group.name).
+    /// Computed deterministically at cache-build time.
+    #[serde(default)]
+    pub identity_fields: Vec<String>,
 }
 
 impl ResourceMetadata {
@@ -699,6 +705,174 @@ impl Default for FieldMetadataCache {
     }
 }
 
+/// Static resource hierarchy: (resource_name, parent_resource, extra_identity_fields).
+/// Extra identity fields are appended after any {resource}.id / {resource}.name heuristic fields.
+/// For unmapped resources, the heuristic (customer.id + {resource}.id + {resource}.name) is used.
+const RESOURCE_HIERARCHY: &[(&str, Option<&str>, &[&str])] = &[
+    (
+        "customer",
+        None,
+        &["customer.id", "customer.descriptive_name"],
+    ),
+    (
+        "campaign",
+        Some("customer"),
+        &[
+            "campaign.id",
+            "campaign.name",
+            "campaign.advertising_channel_type",
+        ],
+    ),
+    (
+        "campaign_budget",
+        Some("campaign"),
+        &["campaign_budget.id", "campaign_budget.name"],
+    ),
+    (
+        "campaign_criterion",
+        Some("campaign"),
+        &["campaign_criterion.criterion_id"],
+    ),
+    ("ad_group", Some("campaign"), &["ad_group.id", "ad_group.name"]),
+    (
+        "ad_group_ad",
+        Some("ad_group"),
+        &["ad_group_ad.ad.id", "ad_group_ad.ad.type"],
+    ),
+    (
+        "ad_group_criterion",
+        Some("ad_group"),
+        &[
+            "ad_group_criterion.criterion_id",
+            "ad_group_criterion.keyword.text",
+        ],
+    ),
+    (
+        "keyword_view",
+        Some("ad_group"),
+        &[
+            "ad_group_criterion.criterion_id",
+            "ad_group_criterion.keyword.text",
+        ],
+    ),
+    (
+        "search_term_view",
+        Some("ad_group"),
+        &["search_term_view.search_term"],
+    ),
+    (
+        "ad_group_bid_modifier",
+        Some("ad_group"),
+        &["ad_group_bid_modifier.criterion_id"],
+    ),
+    (
+        "campaign_asset",
+        Some("campaign"),
+        &["asset.id", "asset.name"],
+    ),
+    (
+        "change_event",
+        Some("campaign"),
+        &[],
+    ),
+];
+
+/// Walk the resource hierarchy chain from `resource` up to the root (customer inclusive).
+/// Returns ancestors in order from root to resource (e.g., ["customer", "campaign", "ad_group"]).
+fn get_hierarchy_chain(resource: &str) -> Vec<&'static str> {
+    // Build child→parent map from the static table
+    let mut chain = Vec::new();
+    let mut current = resource;
+
+    // Walk up by finding the parent of each resource
+    loop {
+        if let Some(&(name, parent, _)) = RESOURCE_HIERARCHY.iter().find(|(n, _, _)| *n == current) {
+            chain.push(name);
+            match parent {
+                Some(p) => current = p,
+                None => break,
+            }
+        } else {
+            // Unmapped resource: just add it and stop (customer.id will be handled by heuristic)
+            break;
+        }
+    }
+    chain.reverse();
+    chain
+}
+
+/// Returns the explicit identity field overrides for a resource from the static map,
+/// or an empty slice if not mapped.
+fn get_resource_identity_overrides(resource: &str) -> &'static [&'static str] {
+    RESOURCE_HIERARCHY
+        .iter()
+        .find(|(n, _, _)| *n == resource)
+        .map(|(_, _, overrides)| *overrides)
+        .unwrap_or(&[])
+}
+
+/// Compute identity fields for a resource, walking the full parent hierarchy.
+/// Fields are filtered to those present in `selectable_with` (plus customer fields, which
+/// are universally available in MCC environments).
+/// This function is also used at query time as a heuristic fallback for legacy caches.
+pub fn compute_identity_fields(
+    resource: &str,
+    fields: &std::collections::HashMap<String, FieldMetadata>,
+    selectable_with: &[String],
+) -> Vec<String> {
+    let mut result: Vec<String> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    let chain = get_hierarchy_chain(resource);
+
+    if chain.is_empty() {
+        // Unmapped resource: use heuristic only
+        for f in &["customer.id", "customer.descriptive_name"] {
+            if fields.contains_key(*f) && seen.insert(f.to_string()) {
+                result.push(f.to_string());
+            }
+        }
+        for suffix in &["id", "name"] {
+            let candidate = format!("{}.{}", resource, suffix);
+            if fields.contains_key(&candidate)
+                && (selectable_with.contains(&candidate) || candidate.starts_with("customer."))
+                && seen.insert(candidate.clone())
+            {
+                result.push(candidate);
+            }
+        }
+        return result;
+    }
+
+    for ancestor in &chain {
+        let overrides = get_resource_identity_overrides(ancestor);
+        if overrides.is_empty() {
+            // Heuristic: {ancestor}.id and {ancestor}.name
+            for suffix in &["id", "name"] {
+                let candidate = format!("{}.{}", ancestor, suffix);
+                if fields.contains_key(&candidate)
+                    && (selectable_with.contains(&candidate) || candidate.starts_with("customer."))
+                    && seen.insert(candidate.clone())
+                {
+                    result.push(candidate);
+                }
+            }
+        } else {
+            for &f in overrides {
+                let f_str = f.to_string();
+                if fields.contains_key(f)
+                    && (selectable_with.contains(&f_str) || f_str.starts_with("customer."))
+                    && seen.insert(f_str.clone())
+                {
+                    result.push(f_str);
+                }
+            }
+        }
+    }
+
+    result
+}
+
 /// Result of field validation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ValidationResult {
@@ -957,6 +1131,7 @@ mod tests {
                 field_count: 2,
                 description: Some("Campaign resource".to_string()),
                 uses_fallback: false,
+                identity_fields: vec![],
             },
         );
         resource_metadata.insert(
@@ -969,6 +1144,7 @@ mod tests {
                 field_count: 1,
                 description: Some("Ad group resource".to_string()),
                 uses_fallback: false,
+                identity_fields: vec![],
             },
         );
         resource_metadata.insert(
@@ -981,6 +1157,7 @@ mod tests {
                 field_count: 1,
                 description: Some("Customer resource".to_string()),
                 uses_fallback: false,
+                identity_fields: vec![],
             },
         );
         cache.resource_metadata = Some(resource_metadata);

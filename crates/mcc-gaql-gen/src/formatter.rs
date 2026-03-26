@@ -85,6 +85,7 @@ pub fn match_query(cache: &FieldMetadataCache, query: &str) -> Result<QueryResul
                     field_count: attributes.len() + metrics.len() + segments.len(),
                     description: None,
                     uses_fallback: false,
+                    identity_fields: vec![],
                 });
 
             return Ok(QueryResult::Resource {
@@ -135,6 +136,7 @@ pub fn match_query(cache: &FieldMetadataCache, query: &str) -> Result<QueryResul
                 field_count: attributes.len() + metrics.len() + segments.len(),
                 description: None,
                 uses_fallback: false,
+                identity_fields: vec![],
             });
 
         return Ok(QueryResult::Resource {
