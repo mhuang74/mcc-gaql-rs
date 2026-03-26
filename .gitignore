@@ -19,3 +19,4 @@ perf.data*
 .DS_StoreDevNotes.md
 
 *.gz
+.claude/
