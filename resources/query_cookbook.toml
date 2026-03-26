@@ -693,9 +693,148 @@ SELECT
   metrics.search_top_impression_share,
   metrics.absolute_top_impression_percentage
 FROM campaign
-WHERE 
+WHERE
   segments.date DURING LAST_30_DAYS
   AND campaign.advertising_channel_type IN ('PERFORMANCE_MAX')
 ORDER BY
   campaign.name
+"""
+
+[accounts_with_asset_sitelink_last_week]
+description = """
+Get me the engagement metrics of top Sitelink Extensions for each campaign by clicks (>20K) last week - need acct and campaign info with currency. include sitelink text.
+"""
+query = """
+SELECT
+  customer.id,
+  customer.descriptive_name,
+  campaign.id,
+  campaign.advertising_channel_type,
+  campaign.name,
+  asset.id,
+  asset.name,
+  asset.type,
+  asset.sitelink_asset.link_text,
+  metrics.impressions,
+  metrics.clicks,
+  metrics.cost_micros,
+  customer.currency_code
+FROM campaign_asset
+WHERE
+  segments.date DURING LAST_WEEK_MON_SUN
+  AND campaign_asset.field_type = 'SITELINK'
+  AND metrics.clicks > 20000
+ORDER BY
+  metrics.impressions DESC
+LIMIT 10
+"""
+
+[accounts_with_asset_call_last_week]
+description = """
+Get me the engagement metrics of top Call Extensions for each campaign by impressions (>100) last week - need acct and campaign info with currency. include phone number.
+"""
+query = """
+SELECT
+  customer.id,
+  customer.descriptive_name,
+  campaign.id,
+  campaign.advertising_channel_type,
+  campaign.name,
+  asset.id,
+  asset.name,
+  asset.type,
+  asset.call_asset.phone_number,
+  metrics.impressions,
+  metrics.clicks,
+  metrics.cost_micros,
+  customer.currency_code
+FROM campaign_asset
+WHERE
+  segments.date DURING LAST_WEEK_MON_SUN
+  AND campaign_asset.field_type = 'CALL'
+  AND metrics.impressions > 100
+ORDER BY
+  metrics.impressions DESC
+LIMIT 10
+"""
+
+[accounts_with_asset_callout_last_week]
+description = """
+Get me the engagement metrics of top Callout Extensions for each campaign by clicks (>30K) last week - need acct and campaign info with currency. include callout text.
+"""
+query = """
+SELECT
+  customer.id,
+  customer.descriptive_name,
+  campaign.id,
+  campaign.advertising_channel_type,
+  campaign.name,
+  asset.id,
+  asset.name,
+  asset.type,
+  asset.callout_asset.callout_text,
+  metrics.impressions,
+  metrics.clicks,
+  metrics.cost_micros,
+  customer.currency_code
+FROM campaign_asset
+WHERE
+  segments.date DURING LAST_WEEK_MON_SUN
+  AND campaign_asset.field_type = 'CALLOUT'
+  AND metrics.clicks > 30000
+ORDER BY
+  metrics.impressions DESC
+LIMIT 10
+"""
+
+[asset_performance_by_type_ytd]
+description = """
+Show me daily asset performance broken down by asset field type for this year - need impressions, clicks, cost with currency
+"""
+query = """
+SELECT
+  asset_field_type_view.field_type,
+  segments.date,
+  metrics.impressions,
+  metrics.clicks,
+  metrics.cost_micros,
+  customer.currency_code
+FROM asset_field_type_view
+WHERE
+  segments.year IN (2026)
+  AND metrics.impressions > 1
+ORDER BY
+  asset_field_type_view.field_type, segments.date
+"""
+
+[locations_with_highest_revenue_per_conversion]
+description = """
+Pull performance data for top 20 locations for each campaign by rev per conv (>10 conv) last 7 days - need account and campaign info, geo target IDs, and conversion metrics with currency
+"""
+query = """
+SELECT
+  customer.id,
+  customer.descriptive_name,
+  customer.currency_code,
+  campaign.id,
+  campaign.name,
+  campaign.advertising_channel_type,
+  campaign_criterion.criterion_id,
+  campaign_criterion.type,
+  campaign_criterion.location.geo_target_constant,
+  metrics.impressions,
+  metrics.clicks,
+  metrics.cost_micros,
+  metrics.average_cpc,
+  metrics.conversions,
+  metrics.cost_per_conversion,
+  metrics.conversions_value,
+  metrics.value_per_conversion
+FROM location_view
+WHERE
+  segments.date DURING LAST_7_DAYS
+  AND metrics.conversions > 10
+ORDER BY
+  metrics.value_per_conversion DESC, metrics.conversions DESC
+LIMIT 20
 """
