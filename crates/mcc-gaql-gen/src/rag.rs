@@ -2396,6 +2396,47 @@ Resource selection tips:
             }
         }
 
+        // Fix: Inject identity fields for the primary resource and its parent hierarchy.
+        // Ensures query results always contain fields that identify each row
+        // (e.g., campaign.id, campaign.name, ad_group.id for an ad_group query).
+        let identity_fields = if let Some(rm) = self
+            .field_cache
+            .resource_metadata
+            .as_ref()
+            .and_then(|m| m.get(primary))
+        {
+            if rm.identity_fields.is_empty() {
+                // Legacy cache without identity_fields: use heuristic
+                mcc_gaql_common::field_metadata::compute_identity_fields(
+                    primary,
+                    &self.field_cache.fields,
+                    &selectable_with,
+                )
+            } else {
+                rm.identity_fields.clone()
+            }
+        } else {
+            mcc_gaql_common::field_metadata::compute_identity_fields(
+                primary,
+                &self.field_cache.fields,
+                &selectable_with,
+            )
+        };
+        for field_name in &identity_fields {
+            if selectable_with.contains(field_name) || field_name.starts_with("customer.") {
+                if let Some(field) = self.field_cache.fields.get(field_name.as_str()) {
+                    if seen.insert(field_name.clone()) {
+                        candidates.push(field.clone());
+                        log::debug!(
+                            "Phase 2: Force-injected {} (identity field for {})",
+                            field_name,
+                            primary
+                        );
+                    }
+                }
+            }
+        }
+
         let candidate_count = candidates.len();
         let rejected_count = 0; // All retrieved candidates are compatible by construction
 
@@ -2723,6 +2764,7 @@ Respond ONLY with valid JSON:
 - If the query asks for "top N", "first N", "best N", or "worst N" results, set "limit" to that number N. If "top" or "best" is used without a specific number, default "limit" to 10. Otherwise set "limit" to null.
 - **MANDATORY: If the user query mentions ANY time period (last week, last 7 days, yesterday, this month, year to date, etc.), you MUST add a segments.date filter_field. Do NOT mention date ranges only in reasoning -- they MUST appear in filter_fields. A query missing a date filter when the user specified a time period is INCORRECT.**
 - In an MCC (multi-client) environment, always include customer.id and customer.descriptive_name in select_fields when they are available, so results can be identified by account.
+- **IMPORTANT: Always include identity fields** for the primary resource in select_fields. Identity fields are the ones that identify each row — such as the resource's ID, name, and parent resource identifiers. Include them even if the user didn't explicitly ask for them. Examples: a campaign query should include campaign.id and campaign.name; an ad_group query should include campaign.id, campaign.name, ad_group.id, and ad_group.name; a keyword_view query should include ad_group_criterion.criterion_id and ad_group_criterion.keyword.text.
 - **Monetary values (micros conversion):** Fields ending in `_micros` (e.g., metrics.cost_micros, campaign_budget.amount_micros) and metrics.cost_per_conversion store currency in micros (1 dollar = 1,000,000 micros). Convert dollar amounts in filters:
   - "$200" or "200 dollars" → 200000000
   - "$1K" or "$1,000" → 1000000000
@@ -2812,6 +2854,7 @@ Respond ONLY with valid JSON:
 - If the query asks for "top N", "first N", "best N", or "worst N" results, set "limit" to that number N. If "top" or "best" is used without a specific number, default "limit" to 10. Otherwise set "limit" to null.
 - **MANDATORY: If the user query mentions ANY time period (last week, last 7 days, yesterday, this month, year to date, etc.), you MUST add a segments.date filter_field. Do NOT mention date ranges only in reasoning -- they MUST appear in filter_fields. A query missing a date filter when the user specified a time period is INCORRECT.**
 - When querying account-level data (FROM customer) or when the user asks about accounts, always include customer.id and customer.descriptive_name in select_fields if available in the field list.
+- Always include identity fields for the primary resource in select_fields — fields that identify each row, such as {{resource}}.id, {{resource}}.name, and parent resource identifiers (e.g., campaign.id, campaign.name for ad_group queries). Include them even if not explicitly requested.
 - **Monetary values (micros conversion):** Fields ending in `_micros` (e.g., metrics.cost_micros, campaign_budget.amount_micros) and metrics.cost_per_conversion store currency in micros (1 dollar = 1,000,000 micros). Convert dollar amounts in filters:
   - "$200" or "200 dollars" → 200000000
   - "$1K" or "$1,000" → 1000000000
