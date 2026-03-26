@@ -2225,7 +2225,7 @@ Respond ONLY with valid JSON:
         let segment_search = async {
             let search_request = VectorSearchRequest::builder()
                 .query(user_query)
-                .samples(15)
+                .samples(30)
                 .filter(segment_filter)
                 .build()
                 .map_err(|e| anyhow::anyhow!("Failed to build segment search request: {}", e))?;
@@ -2323,6 +2323,50 @@ Respond ONLY with valid JSON:
             keyword_matches.len()
         );
         candidates.extend(keyword_matches);
+
+        // Fix 1: Always inject segments.date for temporal queries.
+        // The segment vector search (15 samples) frequently misses segments.date when the user
+        // query doesn't literally say "date". We detect temporal intent and force-include it.
+        let temporal_keywords = [
+            "last week", "last 7 days", "last 14 days", "last 30 days", "last 60 days",
+            "last 90 days", "yesterday", "today", "this week", "this month", "last month",
+            "last business week", "this year", "last year", "ytd", "year to date",
+            "daily", "weekly", "monthly", "quarterly", "annual", "recent", "past week",
+            "past month", "past year", "last quarter", "this quarter",
+        ];
+        let query_lower = user_query.to_lowercase();
+        let has_temporal = temporal_keywords.iter().any(|kw| query_lower.contains(kw));
+        if has_temporal {
+            let date_field_name = "segments.date";
+            if selectable_with.contains(&date_field_name.to_string()) {
+                if let Some(date_field) = self.field_cache.fields.get(date_field_name) {
+                    if seen.insert(date_field_name.to_string()) {
+                        candidates.push(date_field.clone());
+                        log::debug!("Phase 2: Force-injected {} for temporal query", date_field_name);
+                    }
+                }
+            }
+        }
+
+        // Fix 2: Inject customer.id and customer.descriptive_name for account-level queries.
+        // customer.* fields are excluded from valid_attr_resources when primary is not "customer",
+        // so they never become candidates even when the user explicitly asks about accounts.
+        let account_keywords = ["account", "customer", "mcc", "manager"];
+        let has_account_query = account_keywords.iter().any(|kw| query_lower.contains(kw));
+        let customer_selectable = selectable_with.contains(&"customer".to_string())
+            || primary == "customer";
+        if has_account_query || customer_selectable {
+            for field_name in &["customer.id", "customer.descriptive_name"] {
+                if selectable_with.contains(&field_name.to_string()) || primary == "customer" {
+                    if let Some(field) = self.field_cache.fields.get(*field_name) {
+                        if seen.insert(field_name.to_string()) {
+                            candidates.push(field.clone());
+                            log::debug!("Phase 2: Force-injected {} for account query", field_name);
+                        }
+                    }
+                }
+            }
+        }
 
         let candidate_count = candidates.len();
         let rejected_count = 0; // All retrieved candidates are compatible by construction
@@ -2820,7 +2864,7 @@ Respond ONLY with valid JSON:
                         if candidate_names.contains(s) {
                             true
                         } else {
-                            log::debug!(
+                            log::warn!(
                                 "Phase 3: Rejecting select field '{}' - not in candidates",
                                 s
                             );
@@ -2871,7 +2915,7 @@ Respond ONLY with valid JSON:
                             let field = f.get("field")?.as_str()?.to_string();
                             // Validate field is in candidate set (LLM may hallucinate)
                             if !candidate_names.contains(&field) {
-                                log::debug!(
+                                log::warn!(
                                     "Phase 3: Rejecting filter field '{}' - not in candidates",
                                     field
                                 );
@@ -2910,7 +2954,7 @@ Respond ONLY with valid JSON:
                         let field = f.get("field").and_then(|v| v.as_str())?;
                         // Validate field is in candidate set (LLM may hallucinate)
                         if !candidate_names.contains(field) {
-                            log::debug!(
+                            log::warn!(
                                 "Phase 3: Rejecting order_by field '{}' - not in candidates",
                                 field
                             );
