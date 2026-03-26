@@ -1960,6 +1960,13 @@ Respond ONLY with valid JSON:
   "reasoning": "brief explanation"
 }}
 
+Resource selection tips:
+- For impression share metrics (search impression share, budget lost impression share, etc.),
+  use the `campaign` resource. Specialized views like `performance_max_placement_view` are for
+  placement-level data and do NOT expose impression share metrics.
+- When in doubt between a specialized view and a core resource (campaign, ad_group, customer),
+  prefer the core resource -- it has broader metric availability.
+
 {}
 {}
 {{}}"#,
@@ -2349,19 +2356,40 @@ Respond ONLY with valid JSON:
         }
 
         // Fix 2: Inject customer.id and customer.descriptive_name for account-level queries.
-        // customer.* fields are excluded from valid_attr_resources when primary is not "customer",
-        // so they never become candidates even when the user explicitly asks about accounts.
-        let account_keywords = ["account", "customer", "mcc", "manager"];
-        let has_account_query = account_keywords.iter().any(|kw| query_lower.contains(kw));
-        let customer_selectable = selectable_with.contains(&"customer".to_string())
-            || primary == "customer";
-        if has_account_query || customer_selectable {
-            for field_name in &["customer.id", "customer.descriptive_name"] {
-                if selectable_with.contains(&field_name.to_string()) || primary == "customer" {
+        // Always inject customer.id and customer.descriptive_name as candidates.
+        // In an MCC environment, account identifiers are universally useful context for any query.
+        // They are added as candidates only; the LLM decides whether to include them in SELECT.
+        for field_name in &["customer.id", "customer.descriptive_name"] {
+            if selectable_with.contains(&field_name.to_string()) || primary == "customer" {
+                if let Some(field) = self.field_cache.fields.get(*field_name) {
+                    if seen.insert(field_name.to_string()) {
+                        candidates.push(field.clone());
+                        log::debug!("Phase 2: Force-injected {} (always-on for MCC)", field_name);
+                    }
+                }
+            }
+        }
+
+        // Fix: Inject impression share metrics when query mentions "impression share".
+        // All 8 impression share metrics are semantically similar and compete for vector
+        // search slots, so they need explicit injection.
+        if query_lower.contains("impression share") {
+            let impression_share_metrics = [
+                "metrics.search_absolute_top_impression_share",
+                "metrics.search_budget_lost_absolute_top_impression_share",
+                "metrics.search_budget_lost_impression_share",
+                "metrics.search_budget_lost_top_impression_share",
+                "metrics.search_exact_match_impression_share",
+                "metrics.search_impression_share",
+                "metrics.search_rank_lost_impression_share",
+                "metrics.search_top_impression_share",
+            ];
+            for field_name in &impression_share_metrics {
+                if selectable_with.contains(&field_name.to_string()) {
                     if let Some(field) = self.field_cache.fields.get(*field_name) {
                         if seen.insert(field_name.to_string()) {
                             candidates.push(field.clone());
-                            log::debug!("Phase 2: Force-injected {} for account query", field_name);
+                            log::debug!("Phase 2: Force-injected {} for impression share query", field_name);
                         }
                     }
                 }
@@ -2601,6 +2629,15 @@ Respond ONLY with valid JSON:
         // Build candidate name set for validation (LLM may hallucinate fields not in candidates)
         let candidate_names: HashSet<String> = candidates.iter().map(|f| f.name.clone()).collect();
 
+        // Build set of all valid fields for this resource (selectable_with).
+        // The candidate set guides the LLM, but we should accept any valid field it selects —
+        // the candidate set is a *subset* of valid fields, limited by vector search sample sizes.
+        let valid_fields: HashSet<String> = self
+            .field_cache
+            .get_resource_selectable_with(primary)
+            .into_iter()
+            .collect();
+
         // Build candidate list for LLM
         let mut candidate_text = String::new();
         let mut categories = std::collections::HashMap::new();
@@ -2685,7 +2722,12 @@ Respond ONLY with valid JSON:
 - Add order_by_fields for sorting (use DESC for "top", "best", "worst"; ASC for "first" if ascending)
 - If the query asks for "top N", "first N", "best N", or "worst N" results, set "limit" to that number N. If "top" or "best" is used without a specific number, default "limit" to 10. Otherwise set "limit" to null.
 - **MANDATORY: If the user query mentions ANY time period (last week, last 7 days, yesterday, this month, year to date, etc.), you MUST add a segments.date filter_field. Do NOT mention date ranges only in reasoning -- they MUST appear in filter_fields. A query missing a date filter when the user specified a time period is INCORRECT.**
-- When querying account-level data (FROM customer) or when the user asks about accounts, always include customer.id and customer.descriptive_name in select_fields if available in the field list.
+- In an MCC (multi-client) environment, always include customer.id and customer.descriptive_name in select_fields when they are available, so results can be identified by account.
+- **Monetary values (micros conversion):** Fields ending in `_micros` (e.g., metrics.cost_micros, campaign_budget.amount_micros) and metrics.cost_per_conversion store currency in micros (1 dollar = 1,000,000 micros). Convert dollar amounts in filters:
+  - "$200" or "200 dollars" → 200000000
+  - "$1K" or "$1,000" → 1000000000
+  - "$1.50" → 1500000
+  Always multiply dollar values by 1,000,000 for _micros fields.
 - For date ranges, use the APPROPRIATE method based on the period:
 
   **Use DURING with date literals** (NO quotes around value) for these standard periods.
@@ -2770,6 +2812,11 @@ Respond ONLY with valid JSON:
 - If the query asks for "top N", "first N", "best N", or "worst N" results, set "limit" to that number N. If "top" or "best" is used without a specific number, default "limit" to 10. Otherwise set "limit" to null.
 - **MANDATORY: If the user query mentions ANY time period (last week, last 7 days, yesterday, this month, year to date, etc.), you MUST add a segments.date filter_field. Do NOT mention date ranges only in reasoning -- they MUST appear in filter_fields. A query missing a date filter when the user specified a time period is INCORRECT.**
 - When querying account-level data (FROM customer) or when the user asks about accounts, always include customer.id and customer.descriptive_name in select_fields if available in the field list.
+- **Monetary values (micros conversion):** Fields ending in `_micros` (e.g., metrics.cost_micros, campaign_budget.amount_micros) and metrics.cost_per_conversion store currency in micros (1 dollar = 1,000,000 micros). Convert dollar amounts in filters:
+  - "$200" or "200 dollars" → 200000000
+  - "$1K" or "$1,000" → 1000000000
+  - "$1.50" → 1500000
+  Always multiply dollar values by 1,000,000 for _micros fields.
 - For date ranges, use the APPROPRIATE method based on the period:
 
   **Use DURING with date literals** (NO quotes around value) for these standard periods.
@@ -2863,10 +2910,16 @@ Respond ONLY with valid JSON:
                     .filter(|s| {
                         if candidate_names.contains(s) {
                             true
+                        } else if valid_fields.contains(s) {
+                            log::info!(
+                                "Phase 3: Accepting select field '{}' - valid for resource '{}' but not in candidates",
+                                s, primary
+                            );
+                            true
                         } else {
                             log::warn!(
-                                "Phase 3: Rejecting select field '{}' - not in candidates",
-                                s
+                                "Phase 3: Rejecting select field '{}' - not valid for resource '{}'",
+                                s, primary
                             );
                             false
                         }
@@ -2913,13 +2966,19 @@ Respond ONLY with valid JSON:
                     arr.iter()
                         .filter_map(|f| {
                             let field = f.get("field")?.as_str()?.to_string();
-                            // Validate field is in candidate set (LLM may hallucinate)
-                            if !candidate_names.contains(&field) {
+                            // Validate field is known for this resource (LLM may hallucinate)
+                            if !candidate_names.contains(&field) && !valid_fields.contains(&field) {
                                 log::warn!(
-                                    "Phase 3: Rejecting filter field '{}' - not in candidates",
-                                    field
+                                    "Phase 3: Rejecting filter field '{}' - not valid for resource '{}'",
+                                    field, primary
                                 );
                                 return None;
+                            }
+                            if !candidate_names.contains(&field) {
+                                log::info!(
+                                    "Phase 3: Accepting filter field '{}' - valid for resource '{}' but not in candidates",
+                                    field, primary
+                                );
                             }
                             let operator = f
                                 .get("operator")
@@ -2952,13 +3011,19 @@ Respond ONLY with valid JSON:
                 arr.iter()
                     .filter_map(|f| {
                         let field = f.get("field").and_then(|v| v.as_str())?;
-                        // Validate field is in candidate set (LLM may hallucinate)
-                        if !candidate_names.contains(field) {
+                        // Validate field is known for this resource (LLM may hallucinate)
+                        if !candidate_names.contains(field) && !valid_fields.contains(field) {
                             log::warn!(
-                                "Phase 3: Rejecting order_by field '{}' - not in candidates",
-                                field
+                                "Phase 3: Rejecting order_by field '{}' - not valid for resource '{}'",
+                                field, primary
                             );
                             return None;
+                        }
+                        if !candidate_names.contains(field) {
+                            log::info!(
+                                "Phase 3: Accepting order_by field '{}' - valid for resource '{}' but not in candidates",
+                                field, primary
+                            );
                         }
                         let direction = f
                             .get("direction")
