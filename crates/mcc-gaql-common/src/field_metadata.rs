@@ -577,10 +577,8 @@ impl FieldMetadataCache {
                 .as_mut()
                 .and_then(|m| m.get_mut(resource))
             {
-                if rm.identity_fields != identity {
-                    rm.identity_fields = identity;
-                    count += 1;
-                }
+                rm.identity_fields = identity;
+                count += 1;
             }
         }
         count

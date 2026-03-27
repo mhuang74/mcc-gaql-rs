@@ -1506,7 +1506,7 @@ async fn cmd_backfill_identity(metadata: Option<PathBuf>, force: bool) -> Result
     } else {
         cache.backfill_identity_fields()
     };
-    if count == 0 {
+    if count == 0 && !force {
         println!("All resources already have identity fields. Nothing to do.");
     } else {
         let verb = if force { "Recomputed" } else { "Backfilled" };
