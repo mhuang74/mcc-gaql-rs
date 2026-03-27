@@ -420,7 +420,6 @@ query = """
 	FROM campaign
 	WHERE
 	  campaign.advertising_channel_type IN ('SHOPPING') 
-	  AND campaign.status IN ('ENABLED') 
 	  AND segments.date DURING LAST_30_DAYS 
 	  AND metrics.cost_micros > 100000000
 	ORDER by metrics.cost_micros DESC
