@@ -2408,29 +2408,18 @@ Resource selection guidance:
         // Fix: Inject identity fields for the primary resource and its parent hierarchy.
         // Ensures query results always contain fields that identify each row
         // (e.g., campaign.id, campaign.name, ad_group.id for an ad_group query).
-        let identity_fields = if let Some(rm) = self
+        let identity_fields = self
             .field_cache
             .resource_metadata
             .as_ref()
             .and_then(|m| m.get(primary))
-        {
-            if rm.identity_fields.is_empty() {
-                // Legacy cache without identity_fields: use heuristic
-                mcc_gaql_common::field_metadata::compute_identity_fields(
-                    primary,
-                    &self.field_cache.fields,
-                    &selectable_with,
-                )
-            } else {
+            .map(|rm| {
+                if rm.identity_fields.is_empty() {
+                    log::debug!("Phase 2: identity_fields empty for {primary} — cache may need backfill");
+                }
                 rm.identity_fields.clone()
-            }
-        } else {
-            mcc_gaql_common::field_metadata::compute_identity_fields(
-                primary,
-                &self.field_cache.fields,
-                &selectable_with,
-            )
-        };
+            })
+            .unwrap_or_default();
         for field_name in &identity_fields {
             if selectable_with.contains(field_name) || field_name.starts_with("customer.") {
                 if let Some(field) = self.field_cache.fields.get(field_name.as_str()) {

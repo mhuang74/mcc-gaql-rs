@@ -259,6 +259,13 @@ enum Commands {
         filter: Option<String>,
     },
 
+    /// Backfill identity fields into an enriched metadata cache (no LLM required)
+    BackfillIdentity {
+        /// Path to enriched metadata JSON (defaults to standard enriched cache path)
+        #[arg(long)]
+        metadata: Option<PathBuf>,
+    },
+
     /// Clear the LanceDB vector cache
     ClearCache,
 }
@@ -372,6 +379,10 @@ async fn main() -> Result<()> {
                 query, metadata, format, category, subset, show_all, diff, filter,
             )
             .await?;
+        }
+
+        Commands::BackfillIdentity { metadata } => {
+            cmd_backfill_identity(metadata).await?;
         }
 
         Commands::ClearCache => {
@@ -1466,6 +1477,39 @@ fn init_logger(verbose: bool) {
         .duplicate_to_stderr(Duplicate::Warn)
         .start()
         .unwrap();
+}
+
+/// Backfill identity fields into an enriched metadata cache without running LLM enrichment.
+async fn cmd_backfill_identity(metadata: Option<PathBuf>) -> Result<()> {
+    let metadata_path = metadata
+        .or_else(|| field_metadata_enriched_path().ok())
+        .context("Could not determine enriched metadata path")?;
+
+    if !metadata_path.exists() {
+        anyhow::bail!(
+            "Enriched metadata not found at {:?}. Run 'mcc-gaql-gen enrich' first.",
+            metadata_path
+        );
+    }
+
+    println!("Loading enriched metadata from {:?}...", metadata_path);
+    let mut cache = FieldMetadataCache::load_from_disk(&metadata_path)
+        .await
+        .context("Failed to load enriched metadata")?;
+
+    let count = cache.backfill_identity_fields();
+    if count == 0 {
+        println!("All resources already have identity fields. Nothing to do.");
+    } else {
+        println!("Backfilled identity fields for {} resource(s). Saving...", count);
+        cache
+            .save_to_disk(&metadata_path)
+            .await
+            .context("Failed to save updated metadata")?;
+        println!("Done. Run 'mcc-gaql-gen metadata <resource>' to verify.");
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
