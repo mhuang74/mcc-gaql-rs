@@ -264,6 +264,10 @@ enum Commands {
         /// Path to enriched metadata JSON (defaults to standard enriched cache path)
         #[arg(long)]
         metadata: Option<PathBuf>,
+
+        /// Force recomputation even if identity fields are already populated
+        #[arg(long)]
+        force: bool,
     },
 
     /// Clear the LanceDB vector cache
@@ -381,8 +385,8 @@ async fn main() -> Result<()> {
             .await?;
         }
 
-        Commands::BackfillIdentity { metadata } => {
-            cmd_backfill_identity(metadata).await?;
+        Commands::BackfillIdentity { metadata, force } => {
+            cmd_backfill_identity(metadata, force).await?;
         }
 
         Commands::ClearCache => {
@@ -1480,7 +1484,7 @@ fn init_logger(verbose: bool) {
 }
 
 /// Backfill identity fields into an enriched metadata cache without running LLM enrichment.
-async fn cmd_backfill_identity(metadata: Option<PathBuf>) -> Result<()> {
+async fn cmd_backfill_identity(metadata: Option<PathBuf>, force: bool) -> Result<()> {
     let metadata_path = metadata
         .or_else(|| field_metadata_enriched_path().ok())
         .context("Could not determine enriched metadata path")?;
@@ -1497,11 +1501,16 @@ async fn cmd_backfill_identity(metadata: Option<PathBuf>) -> Result<()> {
         .await
         .context("Failed to load enriched metadata")?;
 
-    let count = cache.backfill_identity_fields();
+    let count = if force {
+        cache.recompute_identity_fields()
+    } else {
+        cache.backfill_identity_fields()
+    };
     if count == 0 {
         println!("All resources already have identity fields. Nothing to do.");
     } else {
-        println!("Backfilled identity fields for {} resource(s). Saving...", count);
+        let verb = if force { "Recomputed" } else { "Backfilled" };
+        println!("{} identity fields for {} resource(s). Saving...", verb, count);
         cache
             .save_to_disk(&metadata_path)
             .await
