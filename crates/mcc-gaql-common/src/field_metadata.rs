@@ -479,19 +479,20 @@ impl FieldMetadataCache {
         for resource in &resources {
             let field_count = self.get_resource_fields(resource).len();
 
-            let (selectable_with, key_attrs, key_metrics, desc) = if let Some(rm) = self
-                .resource_metadata
-                .as_ref()
-                .and_then(|m| m.get(resource))
+            let (selectable_with, key_attrs, key_metrics, identity_fields, desc) = if let Some(rm) =
+                self.resource_metadata
+                    .as_ref()
+                    .and_then(|m| m.get(resource))
             {
                 (
                     rm.selectable_with.clone(),
                     rm.key_attributes.clone(),
                     rm.key_metrics.clone(),
+                    rm.identity_fields.clone(),
                     rm.description.clone(),
                 )
             } else {
-                (vec![], vec![], vec![], None)
+                (vec![], vec![], vec![], vec![], None)
             };
 
             output.push_str(&format!("## {}\n", resource));
@@ -521,6 +522,9 @@ impl FieldMetadataCache {
             }
             if !key_metrics.is_empty() {
                 output.push_str(&format!("Key metrics: {}\n", key_metrics.join(", ")));
+            }
+            if !identity_fields.is_empty() {
+                output.push_str(&format!("Identity fields: {}\n", identity_fields.join(", ")));
             }
 
             output.push('\n');
