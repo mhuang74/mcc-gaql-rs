@@ -77,7 +77,7 @@ WHERE
 For each entry in the cookbook, use a subagent to run the generate command with the `--explain` flag to capture LLM reasoning:
 
 ```bash
-mcc-gaql-gen generate "<description>" --use-query-cookbook --explain
+mcc-gaql-gen generate "<description>" --use-query-cookbook --explain --no-defaults
 ```
 
 **Using Subagents for Execution:**
@@ -104,7 +104,7 @@ done
 **Example subagent command to run `mcc-gaql-gen`:**
 
 ```bash
-cargo run -p mcc-gaql-gen --release -- generate "Show me daily impression share metrics for PMax last 30 days - need absolute top, budget lost, rank lost, and top impression share" --use-query-cookbook --explain 2>&1
+cargo run -p mcc-gaql-gen --release -- generate "Show me daily impression share metrics for PMax last 30 days - need absolute top, budget lost, rank lost, and top impression share" --use-query-cookbook --explain --no-defaults 2>&1
 ```
 
 The `--use-query-cookbook` flag enables RAG search for similar examples from the cookbook. The tool automatically discovers the query cookbook from the standard config location - you do NOT need to specify `--queries <path>`.
@@ -126,9 +126,9 @@ For each comparison, evaluate:
 
 #### C. Semantic Equivalence
 - Would both queries return conceptually similar data?
-- **IGNORE**: Differences in status filters (e.g., `status = 'ENABLED'`) - these are preferences
 - **IGNORE**: Minor threshold differences (e.g., clicks > 0 vs clicks > 1)
 - **IGNORE**: Date literal variations (LAST_7_DAYS vs LAST_WEEK_MON_SUN)
+- **NOTE**: Using `--no-defaults` skips implicit `status = 'ENABLED'` filters for fair comparison against reference queries
 
 ### Step 4: Classification System (with Explanation Context)
 
