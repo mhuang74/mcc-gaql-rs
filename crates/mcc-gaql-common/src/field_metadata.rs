@@ -542,6 +542,28 @@ impl FieldMetadataCache {
             .unwrap_or_default()
     }
 
+    /// Backfill identity_fields for any resource that has an empty list.
+    /// This is deterministic and requires no LLM. Returns the number of resources updated.
+    pub fn backfill_identity_fields(&mut self) -> usize {
+        let resources: Vec<String> = self.get_resources();
+        let mut count = 0;
+        for resource in &resources {
+            let selectable_with = self.get_resource_selectable_with(resource);
+            let identity = compute_identity_fields(resource, &self.fields, &selectable_with);
+            if let Some(rm) = self
+                .resource_metadata
+                .as_mut()
+                .and_then(|m| m.get_mut(resource))
+            {
+                if rm.identity_fields.is_empty() {
+                    rm.identity_fields = identity;
+                    count += 1;
+                }
+            }
+        }
+        count
+    }
+
     /// Validate that all resources have properly populated selectable_with
     /// Returns error with list of resources that have empty selectable_with
     pub fn validate_selectable_with(&self) -> Result<(), Vec<String>> {
@@ -1590,5 +1612,115 @@ mod tests {
         assert!(text.contains("Use with WHERE clause"));
         assert!(text.contains("Valid values: ENABLED, PAUSED"));
         assert!(text.contains("Resource: campaign"));
+    }
+
+    #[test]
+    fn test_backfill_identity_fields() {
+        let mut cache = FieldMetadataCache::new();
+
+        // Add the fields compute_identity_fields needs for "campaign"
+        for name in &["customer.id", "customer.descriptive_name", "campaign.id", "campaign.name"] {
+            cache.fields.insert(
+                name.to_string(),
+                FieldMetadata {
+                    name: name.to_string(),
+                    category: "ATTRIBUTE".to_string(),
+                    data_type: "INT64".to_string(),
+                    selectable: true,
+                    filterable: true,
+                    sortable: true,
+                    metrics_compatible: true,
+                    resource_name: None,
+                    selectable_with: vec![],
+                    enum_values: vec![],
+                    attribute_resources: vec![],
+                    description: None,
+                    usage_notes: None,
+                },
+            );
+        }
+        // Add the campaign RESOURCE field with campaign.id and campaign.name in selectable_with
+        cache.fields.insert(
+            "campaign".to_string(),
+            FieldMetadata {
+                name: "campaign".to_string(),
+                category: "RESOURCE".to_string(),
+                data_type: "".to_string(),
+                selectable: true,
+                filterable: false,
+                sortable: false,
+                metrics_compatible: true,
+                resource_name: None,
+                selectable_with: vec![
+                    "campaign.id".to_string(),
+                    "campaign.name".to_string(),
+                    "campaign.advertising_channel_type".to_string(),
+                ],
+                enum_values: vec![],
+                attribute_resources: vec![],
+                description: None,
+                usage_notes: None,
+            },
+        );
+
+        let mut resource_metadata = std::collections::HashMap::new();
+        resource_metadata.insert(
+            "campaign".to_string(),
+            ResourceMetadata {
+                name: "campaign".to_string(),
+                selectable_with: vec![
+                    "campaign.id".to_string(),
+                    "campaign.name".to_string(),
+                    "campaign.advertising_channel_type".to_string(),
+                ],
+                key_attributes: vec![],
+                key_metrics: vec![],
+                field_count: 2,
+                description: None,
+                uses_fallback: false,
+                identity_fields: vec![], // empty — needs backfill
+            },
+        );
+        resource_metadata.insert(
+            "customer".to_string(),
+            ResourceMetadata {
+                name: "customer".to_string(),
+                selectable_with: vec![],
+                key_attributes: vec![],
+                key_metrics: vec![],
+                field_count: 2,
+                description: None,
+                uses_fallback: false,
+                identity_fields: vec!["customer.id".to_string()], // already populated
+            },
+        );
+        cache.resource_metadata = Some(resource_metadata);
+
+        // First call: should backfill campaign (1 resource updated)
+        let count = cache.backfill_identity_fields();
+        assert_eq!(count, 1, "should backfill exactly 1 resource");
+
+        let rm = cache
+            .resource_metadata
+            .as_ref()
+            .unwrap()
+            .get("campaign")
+            .unwrap();
+        assert!(!rm.identity_fields.is_empty(), "campaign identity_fields should be populated");
+        assert!(rm.identity_fields.contains(&"customer.id".to_string()));
+        assert!(rm.identity_fields.contains(&"campaign.id".to_string()));
+
+        // customer identity_fields should be untouched
+        let rm_cust = cache
+            .resource_metadata
+            .as_ref()
+            .unwrap()
+            .get("customer")
+            .unwrap();
+        assert_eq!(rm_cust.identity_fields, vec!["customer.id".to_string()]);
+
+        // Second call: idempotent — nothing to backfill
+        let count2 = cache.backfill_identity_fields();
+        assert_eq!(count2, 0, "second call should report 0 resources updated");
     }
 }

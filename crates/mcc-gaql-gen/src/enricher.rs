@@ -18,7 +18,7 @@ use std::sync::Arc;
 use tokio::time::{Duration, sleep};
 
 use mcc_gaql_common::field_metadata::{
-    compute_identity_fields, FieldMetadata, FieldMetadataCache, ResourceMetadata,
+    FieldMetadata, FieldMetadataCache, ResourceMetadata,
 };
 
 use crate::rag::{format_llm_request_debug, format_llm_response_debug};
@@ -231,19 +231,7 @@ impl MetadataEnricher {
 
         // Backfill identity_fields for any resource that is missing them (e.g. legacy cache).
         // This is deterministic and requires no LLM, so we always recompute.
-        for resource in &resources {
-            let selectable_with = cache.get_resource_selectable_with(resource);
-            let identity = compute_identity_fields(resource, &cache.fields, &selectable_with);
-            if let Some(rm) = cache
-                .resource_metadata
-                .as_mut()
-                .and_then(|m| m.get_mut(resource))
-            {
-                if rm.identity_fields.is_empty() {
-                    rm.identity_fields = identity;
-                }
-            }
-        }
+        cache.backfill_identity_fields();
 
         // Stage 3: Key field selection per resource (run before resource description enrichment)
         log::info!("Selecting key fields for {} resources", resources.len());
