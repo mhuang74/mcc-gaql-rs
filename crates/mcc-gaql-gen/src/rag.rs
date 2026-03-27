@@ -1932,6 +1932,27 @@ impl MultiStepRAGAgent {
         // Generate sample of 5 resources (prioritizing keyword matches)
         let resource_sample = create_resource_sample(user_query, &resource_info);
 
+        // Retrieve cookbook examples for resource selection (if enabled)
+        let cookbook_examples = if self.pipeline_config.use_query_cookbook {
+            log::debug!("Phase 1: Retrieving cookbook examples for resource selection...");
+            match self.retrieve_cookbook_examples(user_query, 2).await {
+                Ok(examples) => {
+                    if !examples.is_empty() {
+                        log::debug!("Phase 1: Retrieved cookbook examples for resource selection");
+                        format!("\n\nSimilar Query Examples from Cookbook:\n{}", examples)
+                    } else {
+                        String::new()
+                    }
+                }
+                Err(e) => {
+                    log::warn!("Phase 1: Failed to retrieve cookbook examples: {}", e);
+                    String::new()
+                }
+            }
+        } else {
+            String::new()
+        };
+
         // Build categorized resource list for LLM
         let categorized_resources = self.build_categorized_resource_list(&resources);
 
@@ -1967,8 +1988,10 @@ Resource selection guidance:
   Use `asset_field_type_view`. Do NOT use `asset` (static entity definition, no metrics support).
 - For Smart campaign performance with metrics:
   Use `campaign` with `advertising_channel_type IN ('SMART')`. Do NOT use `smart_campaign_setting` (configuration only, no metrics).
-- For location-level performance data:
-  Use `location_view` with `campaign_criterion` fields. Do NOT use `campaign` with geo segments (different granularity — campaign-level, not location-level).
+- For location-level performance data ("top locations", "best performing regions", "geo performance"):
+  Use `location_view` with `campaign_criterion` fields. Each row represents a UNIQUE COMBINATION of campaign + geo target, so it naturally supports "top locations per campaign" analysis.
+  The `campaign_criterion.location.geo_target_constant` field provides the geo target ID.
+  Do NOT use `campaign` with geo segments - that gives campaign-level data only, not individual location performance.
 - For impression share metrics (search impression share, budget lost impression share, etc.),
   use the `campaign` resource. Specialized views like `performance_max_placement_view` are for
   placement-level data and do NOT expose impression share metrics.
@@ -1977,9 +2000,9 @@ Resource selection guidance:
 - General rule: Configuration/setting resources (e.g., `smart_campaign_setting`) and static entity resources (e.g., `asset`) do NOT support metrics fields. If the user wants performance data, always prefer the metrics-bearing resource even if a configuration resource has a closer name match.
 
 {}
-{}
-{{}}"#,
-            resource_list_header, categorized_resources
+{}"#,
+            resource_list_header,
+            format!("{}{}", categorized_resources, cookbook_examples)
         );
 
         let user_prompt = format!("User query: {}", user_query);
