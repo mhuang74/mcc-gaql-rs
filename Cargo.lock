@@ -5146,6 +5146,7 @@ dependencies = [
  "hex 0.4.3",
  "hmac",
  "lancedb",
+ "lazy_static",
  "log",
  "mcc-gaql",
  "mcc-gaql-common",
