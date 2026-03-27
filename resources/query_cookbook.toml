@@ -81,7 +81,7 @@ LIMIT 10
 
 [accounts_with_perf_max_campaigns_last_week]
 description = """
-Get me the engagement metrics of top PMax campaigns by clicks (>100) last week - need acct and campaign IDs + names, channel type, and currency
+Get me the volume and spend metrics (impressions, clicks, cost) of top PMax campaigns by clicks (>100) last week - need acct and campaign IDs + names, channel type, and currency
 """
 query = """
 SELECT 
@@ -106,7 +106,7 @@ LIMIT 10
 
 [accounts_with_smart_campaigns_last_week]
 description = """
-Show me the engagement metrics of top Smart campaigns by clicks (>100) last week - need acct and campaign details with currency
+Show me the volume and spend metrics (impressions, clicks, cost) of top Smart campaigns by clicks (>100) last week - need acct and campaign details with currency
 """
 query = """
 	SELECT 
@@ -131,7 +131,7 @@ query = """
 
 [accounts_with_local_campaigns_last_week]
 description = """
-Pull the engagement metrics of top Local campaigns by clicks (>500) last week - need acct and campaign info with currency
+Pull the volume and spend metrics (impressions, clicks, cost) of top Local campaigns by clicks (>500) last week - need acct and campaign info with currency
 """
 query = """
 	SELECT 
@@ -156,7 +156,7 @@ query = """
 
 [accounts_with_shopping_campaigns_last_week]
 description = """
-Get me the engagement metrics of the top Shopping campaigns by clicks (>100) last week - need acct and campaign details with currency
+Get me the volume and spend metrics (impressions, clicks, cost) of the top Shopping campaigns by clicks (>100) last week - need acct and campaign details with currency
 """
 query = """
 	SELECT 
@@ -181,7 +181,7 @@ query = """
 
 [accounts_with_multichannel_campaigns_last_week]
 description = """
-Show me the engagement metrics of top Multi-Channel campaigns by clicks (>100) last week - need acct and campaign info with currency
+Show me the volume and spend metrics (impressions, clicks, cost) of top Multi-Channel campaigns by clicks (>100) last week - need acct and campaign info with currency
 """
 query = """
 	SELECT 
@@ -207,7 +207,7 @@ query = """
 
 [accounts_with_asset_sitelink_last_week]
 description = """
-Pull the engagement metrics of top Sitelinks for each campaign by impressions (>20K clicks) last week - need acct and campaign details with currency
+Pull the volume and spend metrics (impressions, clicks, cost) of top Sitelinks for each campaign by impressions (>20K clicks) last week - need acct and campaign details with currency
 """
 query = """
 	SELECT 
@@ -235,7 +235,7 @@ query = """
 
 [accounts_with_asset_call_last_week]
 description = """
-Get me the engagement metrics of top Call Extensions for each campaign by impressions (>100) last week - need acct and campaign info with currency. include phone number.
+Get me the volume and spend metrics (impressions, clicks, cost) of top Call Extensions for each campaign by impressions (>100) last week - need acct and campaign info with currency. include phone number.
 """
 query = """
 	SELECT 
@@ -264,7 +264,7 @@ query = """
 
 [accounts_with_asset_callout_last_week]
 description = """
-Show me the engagement metrics for top Callout Extensions for each campaign by impressions (>30K clicks) last week - need acct and campaign details with currency
+Show me the volume and spend metrics (impressions, clicks, cost) for top Callout Extensions for each campaign by impressions (>30K clicks) last week - need acct and campaign details with currency
 """
 query = """
 	SELECT 
@@ -290,7 +290,7 @@ query = """
 
 [accounts_with_asset_app_last_week]
 description = """
-Pull the engagement metrics for top App Extensions for each campaign by impressions (>1) last week - need acct and campaign info with currency
+Pull the volume and spend metrics (impressions, clicks, cost) for top App Extensions for each campaign by impressions (>1) last week - need acct and campaign info with currency
 """
 query = """
 	SELECT 
@@ -344,7 +344,7 @@ query = """
 
 [asset_fields_with_traffic_ytd]
 description = """
-Show me YTD asset engagement metrics by day. include asset type, spend and currency
+Show me YTD asset volume and spend metrics (impressions, clicks, cost) by day. include asset type, spend and currency
 """
 query = """
 	SELECT 
@@ -424,7 +424,7 @@ query = """
 
 [smart_campaign_search_terms_with_top_spend]
 description = """
-Show me engagement metrics from top 100 search terms by spend from Smart campaigns last 30 days.  need acct and campaign info with currency, and match type.
+Show me volume and spend metrics (impressions, clicks, cost) from top 100 search terms by spend from Smart campaigns last 30 days.  need acct and campaign info with currency, and match type.
 """
 query = """
 	SELECT 
@@ -571,7 +571,7 @@ query = """
 
 [asset_performance_rsa]
 description = """
-Get me RSA performance last 30 days. include account, campaign, adgroup info. need headline and description copy, path text, CTR, and engagement metrics. Ordered by campaign/group name and CTR.
+Get me RSA performance last 30 days. include account, campaign, adgroup info. need headline and description copy, path text, CTR, and volume/spend metrics (impressions, clicks, cost). Ordered by campaign/group name and CTR.
 """
 query = """
 SELECT 
@@ -702,7 +702,7 @@ ORDER BY
 
 [accounts_with_asset_sitelink_last_week]
 description = """
-Get me the engagement metrics of top Sitelink Extensions for each campaign by clicks (>20K) last week - need acct and campaign info with currency. include sitelink text.
+Get me the volume and spend metrics (impressions, clicks, cost) of top Sitelink Extensions for each campaign by clicks (>20K) last week - need acct and campaign info with currency. include sitelink text.
 """
 query = """
 SELECT
@@ -731,7 +731,7 @@ LIMIT 10
 
 [accounts_with_asset_call_last_week]
 description = """
-Get me the engagement metrics of top Call Extensions for each campaign by impressions (>100) last week - need acct and campaign info with currency. include phone number.
+Get me the volume and spend metrics (impressions, clicks, cost) of top Call Extensions for each campaign by impressions (>100) last week - need acct and campaign info with currency. include phone number.
 """
 query = """
 SELECT
@@ -760,7 +760,7 @@ LIMIT 10
 
 [accounts_with_asset_callout_last_week]
 description = """
-Get me the engagement metrics of top Callout Extensions for each campaign by clicks (>30K) last week - need acct and campaign info with currency. include callout text.
+Get me the volume and spend metrics (impressions, clicks, cost) of top Callout Extensions for each campaign by clicks (>30K) last week - need acct and campaign info with currency. include callout text.
 """
 query = """
 SELECT

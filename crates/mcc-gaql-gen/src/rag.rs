@@ -2763,6 +2763,40 @@ Respond ONLY with valid JSON:
 - **MANDATORY: If the user query mentions ANY time period (last week, last 7 days, yesterday, this month, year to date, etc.), you MUST add a segments.date filter_field. Do NOT mention date ranges only in reasoning -- they MUST appear in filter_fields. A query missing a date filter when the user specified a time period is INCORRECT.**
 - In an MCC (multi-client) environment, always include customer.id and customer.descriptive_name in select_fields when they are available, so results can be identified by account.
 - **IMPORTANT: Always include identity fields** for the primary resource in select_fields. Identity fields are the ones that identify each row — such as the resource's ID, name, and parent resource identifiers. Include them even if the user didn't explicitly ask for them. Examples: a campaign query should include campaign.id and campaign.name; an ad_group query should include campaign.id, campaign.name, ad_group.id, and ad_group.name; a keyword_view query should include ad_group_criterion.criterion_id and ad_group_criterion.keyword.text.
+- **IMPORTANT: Digital Advertising Metric Terminology Disambiguation**
+  In digital advertising context, common terms map to specific metrics:
+
+  **Volume Metrics ("How Big?"):**
+  - metrics.impressions (visibility - are people seeing the ads?)
+  - metrics.clicks (traffic - are people interested enough to visit?)
+  - metrics.conversions (outcomes - did we achieve the goal?)
+
+  **Financial Metrics ("How Much?"):**
+  - metrics.cost_micros (total investment/spend)
+  - metrics.average_cpc (cost per click)
+  - metrics.cost_per_conversion (CPA - cost per acquisition)
+  - metrics.roas (return on ad spend)
+
+  **Ratio Metrics ("How Well?"):**
+  - metrics.ctr (click-through rate - ad relevance indicator)
+  - metrics.conversions/clicks (conversion rate - landing page effectiveness)
+
+  **"Performance metrics" / "engagement metrics" / "how is it doing":**
+  These colloquial terms typically mean the core Volume + Financial metrics:
+  → metrics.impressions, metrics.clicks, metrics.cost_micros
+
+  **When NOT to use metrics.engagements:**
+  The literal `metrics.engagements` and `metrics.engagement_rate` fields are for specific
+  interaction tracking (video views, social clicks) - NOT general campaign performance.
+  Only select these when the user explicitly asks for "engagements" as a specific metric,
+  or for video/social campaign types where engagements are the primary KPI.
+
+  **Default "performance overview" fields:**
+  When asked for general performance without specific metrics named, include:
+  - metrics.impressions, metrics.clicks, metrics.cost_micros (core trio)
+  - metrics.conversions (if asking about outcomes/results)
+  - metrics.ctr, metrics.roas (if asking about efficiency)
+
 - **Numeric suffixes (K, M, B):** "K" means thousand (×1000), "M" means million (×1,000,000), "B" means billion. These apply to ANY numeric field:
   - "10K" → 10000
   - "5M" → 5000000
@@ -2866,6 +2900,40 @@ Respond ONLY with valid JSON:
 - **MANDATORY: If the user query mentions ANY time period (last week, last 7 days, yesterday, this month, year to date, etc.), you MUST add a segments.date filter_field. Do NOT mention date ranges only in reasoning -- they MUST appear in filter_fields. A query missing a date filter when the user specified a time period is INCORRECT.**
 - When querying account-level data (FROM customer) or when the user asks about accounts, always include customer.id and customer.descriptive_name in select_fields if available in the field list.
 - Always include identity fields for the primary resource in select_fields — fields that identify each row, such as {{resource}}.id, {{resource}}.name, and parent resource identifiers (e.g., campaign.id, campaign.name for ad_group queries). Include them even if not explicitly requested.
+- **IMPORTANT: Digital Advertising Metric Terminology Disambiguation**
+  In digital advertising context, common terms map to specific metrics:
+
+  **Volume Metrics ("How Big?"):**
+  - metrics.impressions (visibility - are people seeing the ads?)
+  - metrics.clicks (traffic - are people interested enough to visit?)
+  - metrics.conversions (outcomes - did we achieve the goal?)
+
+  **Financial Metrics ("How Much?"):**
+  - metrics.cost_micros (total investment/spend)
+  - metrics.average_cpc (cost per click)
+  - metrics.cost_per_conversion (CPA - cost per acquisition)
+  - metrics.roas (return on ad spend)
+
+  **Ratio Metrics ("How Well?"):**
+  - metrics.ctr (click-through rate - ad relevance indicator)
+  - metrics.conversions/clicks (conversion rate - landing page effectiveness)
+
+  **"Performance metrics" / "engagement metrics" / "how is it doing":**
+  These colloquial terms typically mean the core Volume + Financial metrics:
+  → metrics.impressions, metrics.clicks, metrics.cost_micros
+
+  **When NOT to use metrics.engagements:**
+  The literal `metrics.engagements` and `metrics.engagement_rate` fields are for specific
+  interaction tracking (video views, social clicks) - NOT general campaign performance.
+  Only select these when the user explicitly asks for "engagements" as a specific metric,
+  or for video/social campaign types where engagements are the primary KPI.
+
+  **Default "performance overview" fields:**
+  When asked for general performance without specific metrics named, include:
+  - metrics.impressions, metrics.clicks, metrics.cost_micros (core trio)
+  - metrics.conversions (if asking about outcomes/results)
+  - metrics.ctr, metrics.roas (if asking about efficiency)
+
 - **Numeric suffixes (K, M, B):** "K" means thousand (×1000), "M" means million (×1,000,000), "B" means billion. These apply to ANY numeric field:
   - "10K" → 10000
   - "5M" → 5000000
