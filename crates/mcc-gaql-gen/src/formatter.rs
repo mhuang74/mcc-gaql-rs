@@ -528,6 +528,13 @@ pub fn format_llm(query_result: &QueryResult, show_all: bool) -> String {
                 ));
             }
 
+            if !metadata.identity_fields.is_empty() {
+                output.push_str(&format!(
+                    "Identity fields: {}\n",
+                    metadata.identity_fields.join(", ")
+                ));
+            }
+
             output.push('\n');
 
             // Apply category limit
@@ -676,6 +683,13 @@ pub fn format_full(query_result: &QueryResult) -> String {
                 output.push_str(&format!(
                     "\nKey metrics: {}",
                     metadata.key_metrics.join(", ")
+                ));
+            }
+
+            if !metadata.identity_fields.is_empty() {
+                output.push_str(&format!(
+                    "\nIdentity fields: {}",
+                    metadata.identity_fields.join(", ")
                 ));
             }
 
@@ -901,6 +915,13 @@ pub fn format_diff_llm(
                         .cloned()
                         .collect::<Vec<_>>()
                         .join(", ")
+                ));
+            }
+
+            if !metadata.identity_fields.is_empty() {
+                result_with_markers.push_str(&format!(
+                    "Identity fields: {}\n",
+                    metadata.identity_fields.join(", ")
                 ));
             }
 
