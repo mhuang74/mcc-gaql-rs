@@ -564,6 +564,28 @@ impl FieldMetadataCache {
         count
     }
 
+    /// Recompute identity_fields for ALL resources, even if already populated.
+    /// Returns the number of resources whose identity_fields actually changed.
+    pub fn recompute_identity_fields(&mut self) -> usize {
+        let resources: Vec<String> = self.get_resources();
+        let mut count = 0;
+        for resource in &resources {
+            let selectable_with = self.get_resource_selectable_with(resource);
+            let identity = compute_identity_fields(resource, &self.fields, &selectable_with);
+            if let Some(rm) = self
+                .resource_metadata
+                .as_mut()
+                .and_then(|m| m.get_mut(resource))
+            {
+                if rm.identity_fields != identity {
+                    rm.identity_fields = identity;
+                    count += 1;
+                }
+            }
+        }
+        count
+    }
+
     /// Validate that all resources have properly populated selectable_with
     /// Returns error with list of resources that have empty selectable_with
     pub fn validate_selectable_with(&self) -> Result<(), Vec<String>> {
@@ -837,9 +859,24 @@ fn get_resource_identity_overrides(resource: &str) -> &'static [&'static str] {
         .unwrap_or(&[])
 }
 
+/// Check if a field is available when querying a resource.
+/// A field is available if it's in `selectable_with`, OR if it belongs to a resource
+/// in the hierarchy chain (a resource's own fields and its ancestors' fields are always
+/// implicitly available — they don't appear in `selectable_with`).
+fn is_field_available(field: &str, chain: &[&str], selectable_with: &[String]) -> bool {
+    // Fields belonging to any resource in the hierarchy chain are always available
+    for ancestor in chain {
+        if field.starts_with(&format!("{}.", ancestor)) {
+            return true;
+        }
+    }
+    // Otherwise, must be explicitly listed in selectable_with
+    selectable_with.contains(&field.to_string())
+}
+
 /// Compute identity fields for a resource, walking the full parent hierarchy.
-/// Fields are filtered to those present in `selectable_with` (plus customer fields, which
-/// are universally available in MCC environments).
+/// Fields are filtered to those available when querying the resource: own fields,
+/// ancestor fields in the hierarchy chain, and fields listed in `selectable_with`.
 /// This function is also used at query time as a heuristic fallback for legacy caches.
 pub fn compute_identity_fields(
     resource: &str,
@@ -861,7 +898,9 @@ pub fn compute_identity_fields(
         for suffix in &["id", "name"] {
             let candidate = format!("{}.{}", resource, suffix);
             if fields.contains_key(&candidate)
-                && (selectable_with.contains(&candidate) || candidate.starts_with("customer."))
+                && (selectable_with.contains(&candidate)
+                    || candidate.starts_with("customer.")
+                    || candidate.starts_with(&format!("{}.", resource)))
                 && seen.insert(candidate.clone())
             {
                 result.push(candidate);
@@ -877,7 +916,7 @@ pub fn compute_identity_fields(
             for suffix in &["id", "name"] {
                 let candidate = format!("{}.{}", ancestor, suffix);
                 if fields.contains_key(&candidate)
-                    && (selectable_with.contains(&candidate) || candidate.starts_with("customer."))
+                    && is_field_available(&candidate, &chain, selectable_with)
                     && seen.insert(candidate.clone())
                 {
                     result.push(candidate);
@@ -887,7 +926,7 @@ pub fn compute_identity_fields(
             for &f in overrides {
                 let f_str = f.to_string();
                 if fields.contains_key(f)
-                    && (selectable_with.contains(&f_str) || f_str.starts_with("customer."))
+                    && is_field_available(&f_str, &chain, selectable_with)
                     && seen.insert(f_str.clone())
                 {
                     result.push(f_str);
@@ -1618,8 +1657,17 @@ mod tests {
     fn test_backfill_identity_fields() {
         let mut cache = FieldMetadataCache::new();
 
-        // Add the fields compute_identity_fields needs for "campaign"
-        for name in &["customer.id", "customer.descriptive_name", "campaign.id", "campaign.name"] {
+        // Add the fields compute_identity_fields needs for "campaign".
+        // Importantly, the RESOURCE field's selectable_with does NOT include campaign's own
+        // fields — matching real Fields API behavior where a resource's own fields are
+        // implicitly available and not listed in selectable_with.
+        for name in &[
+            "customer.id",
+            "customer.descriptive_name",
+            "campaign.id",
+            "campaign.name",
+            "campaign.advertising_channel_type",
+        ] {
             cache.fields.insert(
                 name.to_string(),
                 FieldMetadata {
@@ -1639,7 +1687,8 @@ mod tests {
                 },
             );
         }
-        // Add the campaign RESOURCE field with campaign.id and campaign.name in selectable_with
+        // Add the campaign RESOURCE field with empty selectable_with (realistic: own fields
+        // are never listed in selectable_with by the Fields API)
         cache.fields.insert(
             "campaign".to_string(),
             FieldMetadata {
@@ -1651,11 +1700,7 @@ mod tests {
                 sortable: false,
                 metrics_compatible: true,
                 resource_name: None,
-                selectable_with: vec![
-                    "campaign.id".to_string(),
-                    "campaign.name".to_string(),
-                    "campaign.advertising_channel_type".to_string(),
-                ],
+                selectable_with: vec![],
                 enum_values: vec![],
                 attribute_resources: vec![],
                 description: None,
@@ -1668,14 +1713,10 @@ mod tests {
             "campaign".to_string(),
             ResourceMetadata {
                 name: "campaign".to_string(),
-                selectable_with: vec![
-                    "campaign.id".to_string(),
-                    "campaign.name".to_string(),
-                    "campaign.advertising_channel_type".to_string(),
-                ],
+                selectable_with: vec![],
                 key_attributes: vec![],
                 key_metrics: vec![],
-                field_count: 2,
+                field_count: 5,
                 description: None,
                 uses_fallback: false,
                 identity_fields: vec![], // empty — needs backfill
@@ -1709,6 +1750,8 @@ mod tests {
         assert!(!rm.identity_fields.is_empty(), "campaign identity_fields should be populated");
         assert!(rm.identity_fields.contains(&"customer.id".to_string()));
         assert!(rm.identity_fields.contains(&"campaign.id".to_string()));
+        assert!(rm.identity_fields.contains(&"campaign.name".to_string()));
+        assert!(rm.identity_fields.contains(&"campaign.advertising_channel_type".to_string()));
 
         // customer identity_fields should be untouched
         let rm_cust = cache
@@ -1722,5 +1765,100 @@ mod tests {
         // Second call: idempotent — nothing to backfill
         let count2 = cache.backfill_identity_fields();
         assert_eq!(count2, 0, "second call should report 0 resources updated");
+    }
+
+    /// Build a minimal fields HashMap containing all fields referenced in RESOURCE_HIERARCHY
+    /// overrides and heuristics for the test-run resources, with realistic empty selectable_with.
+    fn build_test_run_fields() -> std::collections::HashMap<String, FieldMetadata> {
+        let mut fields = std::collections::HashMap::new();
+        let field_names = [
+            "customer.id",
+            "customer.descriptive_name",
+            "campaign.id",
+            "campaign.name",
+            "campaign.advertising_channel_type",
+            "ad_group.id",
+            "ad_group.name",
+            "ad_group_ad.ad.id",
+            "ad_group_ad.ad.type",
+            "ad_group_criterion.criterion_id",
+            "ad_group_criterion.keyword.text",
+        ];
+        for name in &field_names {
+            fields.insert(
+                name.to_string(),
+                FieldMetadata {
+                    name: name.to_string(),
+                    category: "ATTRIBUTE".to_string(),
+                    data_type: "INT64".to_string(),
+                    selectable: true,
+                    filterable: true,
+                    sortable: true,
+                    metrics_compatible: true,
+                    resource_name: None,
+                    selectable_with: vec![],
+                    enum_values: vec![],
+                    attribute_resources: vec![],
+                    description: None,
+                    usage_notes: None,
+                },
+            );
+        }
+        fields
+    }
+
+    #[test]
+    fn test_compute_identity_fields_campaign() {
+        let fields = build_test_run_fields();
+        // Realistic: campaign's selectable_with does NOT include campaign's own fields
+        let result = compute_identity_fields("campaign", &fields, &[]);
+        assert!(result.contains(&"customer.id".to_string()), "missing customer.id");
+        assert!(result.contains(&"customer.descriptive_name".to_string()), "missing customer.descriptive_name");
+        assert!(result.contains(&"campaign.id".to_string()), "missing campaign.id");
+        assert!(result.contains(&"campaign.name".to_string()), "missing campaign.name");
+        assert!(result.contains(&"campaign.advertising_channel_type".to_string()), "missing campaign.advertising_channel_type");
+    }
+
+    #[test]
+    fn test_compute_identity_fields_ad_group() {
+        let fields = build_test_run_fields();
+        let result = compute_identity_fields("ad_group", &fields, &[]);
+        // Inherits customer + campaign chain
+        assert!(result.contains(&"customer.id".to_string()), "missing customer.id");
+        assert!(result.contains(&"campaign.id".to_string()), "missing campaign.id");
+        assert!(result.contains(&"campaign.name".to_string()), "missing campaign.name");
+        assert!(result.contains(&"ad_group.id".to_string()), "missing ad_group.id");
+        assert!(result.contains(&"ad_group.name".to_string()), "missing ad_group.name");
+    }
+
+    #[test]
+    fn test_compute_identity_fields_ad_group_ad() {
+        let fields = build_test_run_fields();
+        let result = compute_identity_fields("ad_group_ad", &fields, &[]);
+        // Inherits customer + campaign + ad_group chain
+        assert!(result.contains(&"customer.id".to_string()), "missing customer.id");
+        assert!(result.contains(&"campaign.id".to_string()), "missing campaign.id");
+        assert!(result.contains(&"ad_group.id".to_string()), "missing ad_group.id");
+        assert!(result.contains(&"ad_group_ad.ad.id".to_string()), "missing ad_group_ad.ad.id");
+        assert!(result.contains(&"ad_group_ad.ad.type".to_string()), "missing ad_group_ad.ad.type");
+    }
+
+    #[test]
+    fn test_compute_identity_fields_keyword_view() {
+        let fields = build_test_run_fields();
+        // keyword_view is selectable_with ad_group_criterion fields (cross-resource, listed in
+        // selectable_with by the real Fields API)
+        let selectable_with = vec![
+            "ad_group_criterion.criterion_id".to_string(),
+            "ad_group_criterion.keyword.text".to_string(),
+        ];
+        let result = compute_identity_fields("keyword_view", &fields, &selectable_with);
+        // Inherits customer + campaign + ad_group chain
+        assert!(result.contains(&"customer.id".to_string()), "missing customer.id");
+        assert!(result.contains(&"campaign.id".to_string()), "missing campaign.id");
+        assert!(result.contains(&"ad_group.id".to_string()), "missing ad_group.id");
+        // keyword_view overrides: ad_group_criterion fields (available via selectable_with)
+        assert!(result.contains(&"ad_group_criterion.criterion_id".to_string()), "missing ad_group_criterion.criterion_id");
+        assert!(result.contains(&"ad_group_criterion.keyword.text".to_string()), "missing ad_group_criterion.keyword.text");
     }
 }
