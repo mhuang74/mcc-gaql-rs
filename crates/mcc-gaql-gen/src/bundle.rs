@@ -147,7 +147,24 @@ pub async fn create_bundle(output_path: &Path, query_cookbook_path: &Path) -> Re
         sha256: cookbook_sha256,
     });
 
-    // 3. Copy LanceDB directory
+    // 3. Copy domain_knowledge.md (optional, may not exist yet)
+    if let Some(dk_src) = mcc_gaql_common::paths::config_file_path("domain_knowledge.md") {
+        if dk_src.exists() {
+            let dk_dest = temp_path.join("domain_knowledge.md");
+            fs::copy(&dk_src, &dk_dest)
+                .await
+                .context("Failed to copy domain_knowledge.md")?;
+            let dk_sha256 = compute_sha256(&dk_dest)?;
+            let dk_size = fs::metadata(&dk_dest).await?.len();
+            files.push(ManifestFile {
+                path: "domain_knowledge.md".to_string(),
+                size: dk_size,
+                sha256: dk_sha256,
+            });
+        }
+    }
+
+    // 5. Copy LanceDB directory
     let lancedb_src =
         mcc_gaql_common::paths::lancedb_path().context("Could not determine LanceDB path")?;
     let lancedb_dest = temp_path.join("lancedb");
@@ -158,7 +175,7 @@ pub async fn create_bundle(output_path: &Path, query_cookbook_path: &Path) -> Re
     // Collect all LanceDB files into manifest
     collect_dir_files(&lancedb_dest, temp_path, &mut files)?;
 
-    // 4. Copy hash files
+    // 6. Copy hash files
     let cache_dir =
         mcc_gaql_common::paths::cache_dir().context("Could not determine cache directory")?;
 
@@ -413,6 +430,28 @@ pub async fn install_bundle(bundle: &ExtractedBundle, force: bool) -> Result<()>
         log::info!("Installed query_cookbook.toml");
     } else {
         log::warn!("query_cookbook.toml not found in bundle, skipping");
+    }
+
+    // Copy domain_knowledge.md to config
+    let dk_src = bundle.file_path("domain_knowledge.md");
+    let dk_dest = config_dir.join("domain_knowledge.md");
+    if dk_src.exists() {
+        if dk_dest.exists() || dk_dest.symlink_metadata().is_ok() {
+            fs::remove_file(&dk_dest).await.with_context(|| {
+                format!("Failed to remove existing {:?}", dk_dest)
+            })?;
+        }
+        fs::copy(&dk_src, &dk_dest)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to copy domain knowledge: {:?} -> {:?}",
+                    dk_src, dk_dest
+                )
+            })?;
+        log::info!("Installed domain_knowledge.md");
+    } else {
+        log::warn!("domain_knowledge.md not found in bundle, skipping");
     }
 
     // Copy LanceDB directory

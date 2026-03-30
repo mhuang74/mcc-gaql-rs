@@ -1455,6 +1455,73 @@ impl Embed for FieldDocument {
     }
 }
 
+/// Parsed domain knowledge sections from `domain_knowledge.md`.
+///
+/// Sections are delimited by `## ` headers. If the file is missing, all
+/// sections return empty strings and the prompts fall back to their
+/// built-in structural instructions.
+struct DomainKnowledge {
+    sections: HashMap<String, String>,
+}
+
+impl DomainKnowledge {
+    /// Load and parse `domain_knowledge.md` from the OS config directory.
+    /// Falls back gracefully to empty sections if the file is missing.
+    fn load() -> Self {
+        let path = match mcc_gaql_common::paths::config_file_path("domain_knowledge.md") {
+            Some(p) if p.exists() => p,
+            Some(p) => {
+                log::debug!("domain_knowledge.md not found at {:?}, using empty sections", p);
+                return Self { sections: HashMap::new() };
+            }
+            None => {
+                log::warn!("Could not determine domain_knowledge.md path");
+                return Self { sections: HashMap::new() };
+            }
+        };
+
+        match std::fs::read_to_string(&path) {
+            Ok(content) => {
+                log::info!("Loaded domain_knowledge.md from {:?}", path);
+                Self::parse(&content)
+            }
+            Err(e) => {
+                log::warn!("Failed to read domain_knowledge.md: {}", e);
+                Self { sections: HashMap::new() }
+            }
+        }
+    }
+
+    fn parse(content: &str) -> Self {
+        let mut sections: HashMap<String, String> = HashMap::new();
+        let mut current_section = String::new();
+        let mut current_body = String::new();
+
+        for line in content.lines() {
+            if let Some(header) = line.strip_prefix("## ") {
+                if !current_section.is_empty() {
+                    sections.insert(current_section.clone(), current_body.trim_end().to_string());
+                }
+                current_section = header.trim().to_string();
+                current_body = String::new();
+            } else {
+                current_body.push_str(line);
+                current_body.push('\n');
+            }
+        }
+        if !current_section.is_empty() {
+            sections.insert(current_section, current_body.trim_end().to_string());
+        }
+
+        Self { sections }
+    }
+
+    /// Return the content of a named section, or an empty string if not found.
+    fn section(&self, name: &str) -> &str {
+        self.sections.get(name).map(|s| s.as_str()).unwrap_or("")
+    }
+}
+
 /// Configuration for the multi-step RAG pipeline
 #[derive(Debug, Clone)]
 pub struct PipelineConfig {
@@ -1484,6 +1551,7 @@ pub struct MultiStepRAGAgent {
     query_index: LanceDbVectorIndex<rig_fastembed::EmbeddingModel>,
     resource_index: LanceDbVectorIndex<rig_fastembed::EmbeddingModel>,
     pipeline_config: PipelineConfig,
+    domain_knowledge: DomainKnowledge,
     // Keep embed client alive to prevent premature resource dropping
     _embed_client: rig_fastembed::Client,
 }
@@ -1523,6 +1591,8 @@ impl MultiStepRAGAgent {
         let resource_index =
             build_or_load_resource_vector_store(&field_cache, resources.embedding_model).await?;
 
+        let domain_knowledge = DomainKnowledge::load();
+
         Ok(Self {
             llm_config: config.clone(),
             field_cache,
@@ -1530,6 +1600,7 @@ impl MultiStepRAGAgent {
             query_index,
             resource_index,
             pipeline_config,
+            domain_knowledge,
             _embed_client: resources.embed_client,
         })
     }
@@ -1968,6 +2039,7 @@ impl MultiStepRAGAgent {
              Resources (organized by category):\n"
         };
 
+        let resource_guidance = self.domain_knowledge.section("Resource Selection Guidance");
         let system_prompt = format!(
             r#"You are a Google Ads Query Language (GAQL) expert. Given a user query, determine:
 1. The primary resource to query FROM (e.g., campaign, ad_group, keyword_view)
@@ -1982,22 +2054,7 @@ Respond ONLY with valid JSON:
 }}
 
 Resource selection guidance:
-- For asset extension performance (sitelinks, callouts, calls, structured snippets):
-  Use `campaign_asset` with a `campaign_asset.field_type` filter. Do NOT use `campaign` (no asset-level data) or `call_view` (individual call records, not asset metrics).
-- For daily asset metrics broken down by asset type:
-  Use `asset_field_type_view`. Do NOT use `asset` (static entity definition, no metrics support).
-- For Smart campaign performance with metrics:
-  Use `campaign` with `advertising_channel_type IN ('SMART')`. Do NOT use `smart_campaign_setting` (configuration only, no metrics).
-- For location-level performance data ("top locations", "best performing regions", "geo performance"):
-  Use `location_view` with `campaign_criterion` fields. Each row represents a UNIQUE COMBINATION of campaign + geo target, so it naturally supports "top locations per campaign" analysis.
-  The `campaign_criterion.location.geo_target_constant` field provides the geo target ID.
-  Do NOT use `campaign` with geo segments - that gives campaign-level data only, not individual location performance.
-- For impression share metrics (search impression share, budget lost impression share, etc.),
-  use the `campaign` resource. Specialized views like `performance_max_placement_view` are for
-  placement-level data and do NOT expose impression share metrics.
-- When in doubt between a specialized view and a core resource (campaign, ad_group, customer),
-  prefer the core resource -- it has broader metric availability.
-- General rule: Configuration/setting resources (e.g., `smart_campaign_setting`) and static entity resources (e.g., `asset`) do NOT support metrics fields. If the user wants performance data, always prefer the metrics-bearing resource even if a configuration resource has a closer name match.
+{resource_guidance}
 
 {}
 {}"#,
@@ -2756,6 +2813,12 @@ Resource selection guidance:
         let (last_fall_start, last_fall_end) = dates.last_fall;
         let (this_christmas_start, this_christmas_end) = dates.this_christmas;
 
+        let metric_terminology = self.domain_knowledge.section("Metric Terminology");
+        let numeric_monetary = self.domain_knowledge.section("Numeric and Monetary Conversion");
+        let monetary_extraction = self.domain_knowledge.section("Monetary Value Extraction");
+        let date_range_handling = self.domain_knowledge.section("Date Range Handling");
+        let query_best_practices = self.domain_knowledge.section("Query Best Practices");
+
         // Build prompt conditionally based on whether cookbook is enabled
         let (system_prompt, user_prompt) = if self.pipeline_config.use_query_cookbook {
             let sys = format!(
@@ -2786,84 +2849,11 @@ Respond ONLY with valid JSON:
 - **MANDATORY: If the user query mentions ANY time period (last week, last 7 days, yesterday, this month, year to date, etc.), you MUST add a segments.date filter_field. Do NOT mention date ranges only in reasoning -- they MUST appear in filter_fields. A query missing a date filter when the user specified a time period is INCORRECT.**
 - In an MCC (multi-client) environment, always include customer.id and customer.descriptive_name in select_fields when they are available, so results can be identified by account.
 - **IMPORTANT: Always include identity fields** for the primary resource in select_fields. Identity fields are the ones that identify each row — such as the resource's ID, name, and parent resource identifiers. Include them even if the user didn't explicitly ask for them. Examples: a campaign query should include campaign.id and campaign.name; an ad_group query should include campaign.id, campaign.name, ad_group.id, and ad_group.name; a keyword_view query should include ad_group_criterion.criterion_id and ad_group_criterion.keyword.text.
-- **IMPORTANT: Digital Advertising Metric Terminology Disambiguation**
-  In digital advertising context, common terms map to specific metrics:
+{metric_terminology}
 
-  **Volume Metrics ("How Big?"):**
-  - metrics.impressions (visibility - are people seeing the ads?)
-  - metrics.clicks (traffic - are people interested enough to visit?)
-  - metrics.conversions (outcomes - did we achieve the goal?)
+{numeric_monetary}
 
-  **Financial Metrics ("How Much?"):**
-  - metrics.cost_micros (total investment/spend)
-  - metrics.average_cpc (cost per click)
-  - metrics.cost_per_conversion (CPA - cost per acquisition)
-  - metrics.roas (return on ad spend)
-
-  **Ratio Metrics ("How Well?"):**
-  - metrics.ctr (click-through rate - ad relevance indicator)
-  - metrics.conversions/clicks (conversion rate - landing page effectiveness)
-
-  **"Performance metrics" / "engagement metrics" / "how is it doing":**
-  These colloquial terms typically mean the core Volume + Financial metrics:
-  → metrics.impressions, metrics.clicks, metrics.cost_micros
-
-  **When NOT to use metrics.engagements:**
-  The literal `metrics.engagements` and `metrics.engagement_rate` fields are for specific
-  interaction tracking (video views, social clicks) - NOT general campaign performance.
-  Only select these when the user explicitly asks for "engagements" as a specific metric,
-  or for video/social campaign types where engagements are the primary KPI.
-
-  **Default "performance overview" fields:**
-  When asked for general performance without specific metrics named, include:
-  - metrics.impressions, metrics.clicks, metrics.cost_micros (core trio)
-  - metrics.conversions (if asking about outcomes/results)
-  - metrics.ctr, metrics.roas (if asking about efficiency)
-
-- **Numeric suffixes (K, M, B):** "K" means thousand (×1000), "M" means million (×1,000,000), "B" means billion. These apply to ANY numeric field:
-  - "10K" → 10000
-  - "5M" → 5000000
-  - "1.5K" → 1500
-
-- **Monetary values (micros conversion):** ONLY fields ending in `_micros` (e.g., metrics.cost_micros, campaign_budget.amount_micros) and metrics.cost_per_conversion store currency in micros (1 dollar = 1,000,000 micros). This is IN ADDITION to any K/M/B suffix:
-  - "$200" or "200 dollars" → 200000000
-  - "$1K" or "$1,000" → 1000000000 (1000 dollars × 1,000,000 micros/dollar)
-  - "$1.50" → 1500000
-  - For _micros fields: multiply dollar values by 1,000,000 ON TOP OF any K/M/B suffix
-  - For NON-_micros fields (like metrics.clicks): "10K" simply means 10000, NOT 10000000
-- For date ranges, use the APPROPRIATE method based on the period:
-
-  **Use DURING with date literals** (NO quotes around value) for these standard periods.
-  Valid Google Ads date literals: TODAY, YESTERDAY, LAST_7_DAYS, LAST_14_DAYS,
-  LAST_30_DAYS, LAST_BUSINESS_WEEK, LAST_WEEK_MON_SUN,
-  LAST_WEEK_SUN_SAT, THIS_WEEK_SUN_TODAY, THIS_WEEK_MON_TODAY, THIS_MONTH, LAST_MONTH
-
-  Common mappings:
-  - "yesterday" → operator: "DURING", value: "YESTERDAY"
-  - "today" → operator: "DURING", value: "TODAY"
-  - "last 7 days" → operator: "DURING", value: "LAST_7_DAYS"
-  - "last 14 days" → operator: "DURING", value: "LAST_14_DAYS"
-  - "last 30 days" → operator: "DURING", value: "LAST_30_DAYS"
-  - "this month" → operator: "DURING", value: "THIS_MONTH"
-  - "last month" → operator: "DURING", value: "LAST_MONTH"
-  - "last week" → operator: "DURING", value: "LAST_WEEK_MON_SUN"
-  - "last business week" → operator: "DURING", value: "LAST_BUSINESS_WEEK"
-
-  **Use BETWEEN with computed dates** (value format: "YYYY-MM-DD AND YYYY-MM-DD") for:
-  - Quarters (NOT valid date literals): "this quarter", "last quarter"
-  - Years (NOT valid date literals): "this year", "last year"
-  - Holiday periods and seasonal ranges:
-    - "this summer" / "last summer" → Jun 1 to Aug 31
-    - "this winter" / "last winter" → Dec 1 to Feb 28/29
-    - "this spring" / "last spring" → Mar 1 to May 31
-    - "this fall" / "this autumn" / "last fall" → Sep 1 to Nov 30
-    - "christmas holiday" → Dec 20 to Dec 31
-    - "thanksgiving" / "thanksgiving week"
-    - "easter" / "easter week"
-    - "black friday", "cyber monday"
-    - "new years", "valentines day", "mothers day", "fathers day", "halloween"
-    - "last 60 days"
-    - "last 90 days"
+{date_range_handling}
 
   Example computed date ranges (today: {today}):
   - "this year" → operator: "BETWEEN", value: '{this_year_start} AND {today}'
@@ -2882,14 +2872,9 @@ Respond ONLY with valid JSON:
   - "last 60 days" → operator: "BETWEEN", value: '{last_60_start} AND {today}'
   - "last 90 days" → operator: "BETWEEN", value: '{last_90_start} AND {today}'
 
-- **CRITICAL - Monetary Value Extraction:** For monetary thresholds, you MUST extract the EXACT numeric value from the user query.
-  - "CPA >$200" → extract "200", then convert to micros → value: "200000000"
-  - "spend >$1K" → extract "1000" (K = 1000), then convert to micros → value: "1000000000"
-  - "cost > $50.50" → extract "50.50", then convert to micros → value: "50500000"
-- **NEVER** return "0" for a threshold unless the user explicitly said "0" or "$0"
-- **All monetary fields** (_micros, cost_per_*, value_per_*): values must be in micros (1 dollar = 1,000,000 micros)
-- Fields requiring micros conversion: metrics.cost_micros, campaign_budget.amount_micros, metrics.cost_per_conversion, metrics.cost_per_all_conversions, metrics.value_per_conversion, metrics.all_conversions_value
-- **Validation check:** If the user said ">$200" and you're returning "0", you made an error. The value should be "200000000".
+{monetary_extraction}
+
+{query_best_practices}
 "#
             );
             let user = format!(
@@ -2925,84 +2910,11 @@ Respond ONLY with valid JSON:
 - **MANDATORY: If the user query mentions ANY time period (last week, last 7 days, yesterday, this month, year to date, etc.), you MUST add a segments.date filter_field. Do NOT mention date ranges only in reasoning -- they MUST appear in filter_fields. A query missing a date filter when the user specified a time period is INCORRECT.**
 - When querying account-level data (FROM customer) or when the user asks about accounts, always include customer.id and customer.descriptive_name in select_fields if available in the field list.
 - Always include identity fields for the primary resource in select_fields — fields that identify each row, such as {{resource}}.id, {{resource}}.name, and parent resource identifiers (e.g., campaign.id, campaign.name for ad_group queries). Include them even if not explicitly requested.
-- **IMPORTANT: Digital Advertising Metric Terminology Disambiguation**
-  In digital advertising context, common terms map to specific metrics:
+{metric_terminology}
 
-  **Volume Metrics ("How Big?"):**
-  - metrics.impressions (visibility - are people seeing the ads?)
-  - metrics.clicks (traffic - are people interested enough to visit?)
-  - metrics.conversions (outcomes - did we achieve the goal?)
+{numeric_monetary}
 
-  **Financial Metrics ("How Much?"):**
-  - metrics.cost_micros (total investment/spend)
-  - metrics.average_cpc (cost per click)
-  - metrics.cost_per_conversion (CPA - cost per acquisition)
-  - metrics.roas (return on ad spend)
-
-  **Ratio Metrics ("How Well?"):**
-  - metrics.ctr (click-through rate - ad relevance indicator)
-  - metrics.conversions/clicks (conversion rate - landing page effectiveness)
-
-  **"Performance metrics" / "engagement metrics" / "how is it doing":**
-  These colloquial terms typically mean the core Volume + Financial metrics:
-  → metrics.impressions, metrics.clicks, metrics.cost_micros
-
-  **When NOT to use metrics.engagements:**
-  The literal `metrics.engagements` and `metrics.engagement_rate` fields are for specific
-  interaction tracking (video views, social clicks) - NOT general campaign performance.
-  Only select these when the user explicitly asks for "engagements" as a specific metric,
-  or for video/social campaign types where engagements are the primary KPI.
-
-  **Default "performance overview" fields:**
-  When asked for general performance without specific metrics named, include:
-  - metrics.impressions, metrics.clicks, metrics.cost_micros (core trio)
-  - metrics.conversions (if asking about outcomes/results)
-  - metrics.ctr, metrics.roas (if asking about efficiency)
-
-- **Numeric suffixes (K, M, B):** "K" means thousand (×1000), "M" means million (×1,000,000), "B" means billion. These apply to ANY numeric field:
-  - "10K" → 10000
-  - "5M" → 5000000
-  - "1.5K" → 1500
-
-- **Monetary values (micros conversion):** ONLY fields ending in `_micros` (e.g., metrics.cost_micros, campaign_budget.amount_micros) and metrics.cost_per_conversion store currency in micros (1 dollar = 1,000,000 micros). This is IN ADDITION to any K/M/B suffix:
-  - "$200" or "200 dollars" → 200000000
-  - "$1K" or "$1,000" → 1000000000 (1000 dollars × 1,000,000 micros/dollar)
-  - "$1.50" → 1500000
-  - For _micros fields: multiply dollar values by 1,000,000 ON TOP OF any K/M/B suffix
-  - For NON-_micros fields (like metrics.clicks): "10K" simply means 10000, NOT 10000000
-- For date ranges, use the APPROPRIATE method based on the period:
-
-  **Use DURING with date literals** (NO quotes around value) for these standard periods.
-  Valid Google Ads date literals: TODAY, YESTERDAY, LAST_7_DAYS, LAST_14_DAYS,
-  LAST_30_DAYS, LAST_BUSINESS_WEEK, LAST_WEEK_MON_SUN,
-  LAST_WEEK_SUN_SAT, THIS_WEEK_SUN_TODAY, THIS_WEEK_MON_TODAY, THIS_MONTH, LAST_MONTH
-
-  Common mappings:
-  - "yesterday" → operator: "DURING", value: "YESTERDAY"
-  - "today" → operator: "DURING", value: "TODAY"
-  - "last 7 days" → operator: "DURING", value: "LAST_7_DAYS"
-  - "last 14 days" → operator: "DURING", value: "LAST_14_DAYS"
-  - "last 30 days" → operator: "DURING", value: "LAST_30_DAYS"
-  - "this month" → operator: "DURING", value: "THIS_MONTH"
-  - "last month" → operator: "DURING", value: "LAST_MONTH"
-  - "last week" → operator: "DURING", value: "LAST_WEEK_MON_SUN"
-  - "last business week" → operator: "DURING", value: "LAST_BUSINESS_WEEK"
-
-  **Use BETWEEN with computed dates** (value format: "YYYY-MM-DD AND YYYY-MM-DD") for:
-  - Quarters (NOT valid date literals): "this quarter", "last quarter"
-  - Years (NOT valid date literals): "this year", "last year"
-  - Holiday periods and seasonal ranges:
-    - "this summer" / "last summer" → Jun 1 to Aug 31
-    - "this winter" / "last winter" → Dec 1 to Feb 28/29
-    - "this spring" / "last spring" → Mar 1 to May 31
-    - "this fall" / "this autumn" / "last fall" → Sep 1 to Nov 30
-    - "christmas holiday" → Dec 20 to Dec 31
-    - "thanksgiving" / "thanksgiving week"
-    - "easter" / "easter week"
-    - "black friday", "cyber monday"
-    - "new years", "valentines day", "mothers day", "fathers day", "halloween"
-    - "last 60 days"
-    - "last 90 days"
+{date_range_handling}
 
   Example computed date ranges (today: {today}):
   - "this year" → operator: "BETWEEN", value: '{this_year_start} AND {today}'
@@ -3021,14 +2933,9 @@ Respond ONLY with valid JSON:
   - "last 60 days" → operator: "BETWEEN", value: '{last_60_start} AND {today}'
   - "last 90 days" → operator: "BETWEEN", value: '{last_90_start} AND {today}'
 
-- **CRITICAL - Monetary Value Extraction:** For monetary thresholds, you MUST extract the EXACT numeric value from the user query.
-  - "CPA >$200" → extract "200", then convert to micros → value: "200000000"
-  - "spend >$1K" → extract "1000" (K = 1000), then convert to micros → value: "1000000000"
-  - "cost > $50.50" → extract "50.50", then convert to micros → value: "50500000"
-- **NEVER** return "0" for a threshold unless the user explicitly said "0" or "$0"
-- **All monetary fields** (_micros, cost_per_*, value_per_*): values must be in micros (1 dollar = 1,000,000 micros)
-- Fields requiring micros conversion: metrics.cost_micros, campaign_budget.amount_micros, metrics.cost_per_conversion, metrics.cost_per_all_conversions, metrics.value_per_conversion, metrics.all_conversions_value
-- **Validation check:** If the user said ">$200" and you're returning "0", you made an error. The value should be "200000000".
+{monetary_extraction}
+
+{query_best_practices}
 "#
             );
             let user = format!(

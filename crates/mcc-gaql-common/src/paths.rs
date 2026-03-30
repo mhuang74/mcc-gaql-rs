@@ -55,3 +55,9 @@ pub fn lancedb_path() -> Result<PathBuf> {
 pub fn scraped_docs_path() -> Result<PathBuf> {
     Ok(cache_dir()?.join("scraped_docs.json"))
 }
+
+/// Get the path to the domain knowledge file
+pub fn domain_knowledge_path() -> Result<PathBuf> {
+    config_file_path("domain_knowledge.md")
+        .ok_or_else(|| anyhow!("Could not determine domain knowledge path"))
+}
