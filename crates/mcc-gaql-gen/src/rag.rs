@@ -2138,6 +2138,51 @@ Resource selection guidance:
             })
             .collect();
 
+        // --- Dropped resource promotion ---
+        // If related resources were dropped (incompatible with primary), check whether
+        // a dropped resource should actually BE the primary. This handles cases where
+        // the LLM gets the FROM direction wrong — e.g., returns "campaign" as primary
+        // with "campaign_asset" as related, when "campaign_asset" should be primary.
+        //
+        // Detection: if a dropped resource's selectable_with contains the current primary,
+        // it is a "wider" resource that subsumes the primary, so it belongs in FROM.
+        let (primary, validated_related) = if !dropped.is_empty() {
+            let mut promoted: Option<String> = None;
+            for candidate in &dropped {
+                let candidate_selectable =
+                    self.field_cache.get_resource_selectable_with(candidate);
+                if candidate_selectable.contains(&primary) {
+                    promoted = Some(candidate.clone());
+                    break; // First qualifying candidate (preserves LLM priority order)
+                }
+            }
+            if let Some(new_primary) = promoted {
+                log::warn!(
+                    "Phase 1: Promoting dropped resource '{}' to primary \
+                     (original primary '{}' becomes related). \
+                     Reason: '{}' selectable_with contains '{}'.",
+                    new_primary,
+                    primary,
+                    new_primary,
+                    primary
+                );
+                let new_selectable = self.field_cache.get_resource_selectable_with(&new_primary);
+                let mut new_related: Vec<String> = validated_related
+                    .into_iter()
+                    .filter(|r| new_selectable.contains(r))
+                    .collect();
+                if new_selectable.contains(&primary) {
+                    new_related.push(primary);
+                }
+                dropped.retain(|r| r != &new_primary);
+                (new_primary, new_related)
+            } else {
+                (primary, validated_related)
+            }
+        } else {
+            (primary, validated_related)
+        };
+
         Ok((
             primary,
             validated_related,
