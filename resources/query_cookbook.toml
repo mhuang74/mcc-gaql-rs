@@ -703,3 +703,443 @@ ORDER BY
   campaign.name
 """
 
+[account_settings]
+description = """
+Get me account-level settings - need timezone, currency, descriptive name, and auto-tagging status
+"""
+query = """
+SELECT
+  customer.id,
+  customer.descriptive_name,
+  customer.currency_code,
+  customer.time_zone,
+  customer.auto_tagging_enabled
+FROM customer
+"""
+
+[campaigns_with_budget_and_bidding]
+description = """
+Show me campaigns with budget and bidding details - need status, budget amount, delivery method, and bid strategy type
+"""
+query = """
+SELECT
+  customer.id,
+  customer.descriptive_name,
+  customer.currency_code,
+  campaign.id,
+  campaign.name,
+  campaign.status,
+  campaign.advertising_channel_type,
+  campaign.bidding_strategy_type,
+  campaign_budget.amount_micros,
+  campaign_budget.delivery_method
+FROM campaign
+WHERE campaign.status != 'REMOVED'
+ORDER BY campaign.name
+"""
+
+[campaigns_with_performance_last_7_days]
+description = """
+Get me campaign performance last 7 days - need impressions, clicks, spend, conversions, conversion value, and CPA
+"""
+query = """
+SELECT
+  customer.id,
+  customer.descriptive_name,
+  customer.currency_code,
+  campaign.name,
+  campaign.status,
+  metrics.impressions,
+  metrics.clicks,
+  metrics.cost_micros,
+  metrics.conversions,
+  metrics.conversions_value,
+  metrics.cost_per_conversion,
+  segments.date
+FROM campaign
+WHERE segments.date DURING LAST_7_DAYS
+  AND campaign.status = 'ENABLED'
+ORDER BY metrics.cost_micros DESC
+"""
+
+[search_terms_with_zero_conversions]
+description = """
+Find expensive search terms with zero conversions - need spend >$10 last 30 days with account, campaign, and ad group info
+"""
+query = """
+SELECT
+  customer.id,
+  customer.descriptive_name,
+  customer.currency_code,
+  search_term_view.search_term,
+  search_term_view.status,
+  campaign.name,
+  ad_group.name,
+  metrics.cost_micros,
+  metrics.clicks,
+  metrics.impressions
+FROM search_term_view
+WHERE segments.date DURING LAST_30_DAYS
+  AND metrics.conversions = 0
+  AND metrics.cost_micros > 10000000
+ORDER BY metrics.cost_micros DESC
+"""
+
+[search_terms_for_intent_clustering]
+description = """
+Pull all search terms with performance data last 30 days - need impressions, clicks, spend, conversions, and value for intent analysis
+"""
+query = """
+SELECT
+  customer.id,
+  customer.descriptive_name,
+  customer.currency_code,
+  search_term_view.search_term,
+  campaign.name,
+  campaign.advertising_channel_type,
+  metrics.impressions,
+  metrics.clicks,
+  metrics.cost_micros,
+  metrics.conversions,
+  metrics.conversions_value,
+  metrics.all_conversions
+FROM search_term_view
+WHERE segments.date DURING LAST_30_DAYS
+ORDER BY metrics.impressions DESC
+LIMIT 1000
+"""
+
+[negative_keywords_campaign_level]
+description = """
+Get me existing campaign-level negative keywords - need campaign name, keyword text, and match type
+"""
+query = """
+SELECT
+  customer.id,
+  customer.descriptive_name,
+  campaign.name,
+  campaign_criterion.keyword.text,
+  campaign_criterion.keyword.match_type,
+  campaign_criterion.negative
+FROM campaign_criterion
+WHERE campaign_criterion.negative = TRUE
+  AND campaign_criterion.type = 'KEYWORD'
+"""
+
+[shared_negative_keyword_lists]
+description = """
+Show me shared negative keyword lists - need list name, type, member count, and status
+"""
+query = """
+SELECT
+  customer.id,
+  customer.descriptive_name,
+  shared_set.name,
+  shared_set.type,
+  shared_set.member_count,
+  shared_set.status
+FROM shared_set
+WHERE shared_set.type = 'NEGATIVE_KEYWORDS'
+  AND shared_set.status = 'ENABLED'
+"""
+
+[conversion_actions_configuration]
+description = """
+Get me conversion actions setup - need action name, type, category, status, counting type, and primary inclusion flag
+"""
+query = """
+SELECT
+  customer.id,
+  customer.descriptive_name,
+  conversion_action.id,
+  conversion_action.name,
+  conversion_action.type,
+  conversion_action.category,
+  conversion_action.status,
+  conversion_action.counting_type,
+  conversion_action.include_in_conversions_metric,
+  conversion_action.value_settings.default_value
+FROM conversion_action
+WHERE conversion_action.status = 'ENABLED'
+"""
+
+[conversion_actions_performance]
+description = """
+Pull conversion actions performance last 30 days - need conversions, conversion value, and all conversions to check for duplicates
+"""
+query = """
+SELECT
+  customer.id,
+  customer.descriptive_name,
+  customer.currency_code,
+  conversion_action.name,
+  conversion_action.type,
+  conversion_action.category,
+  metrics.conversions,
+  metrics.conversions_value,
+  metrics.all_conversions
+FROM conversion_action
+WHERE segments.date DURING LAST_30_DAYS
+  AND conversion_action.status = 'ENABLED'
+ORDER BY metrics.conversions DESC
+"""
+
+[ad_groups_with_performance]
+description = """
+Get me ad group structure with performance last 30 days - need campaign, ad group IDs and names, status, type, and metrics
+"""
+query = """
+SELECT
+  customer.id,
+  customer.descriptive_name,
+  customer.currency_code,
+  campaign.name,
+  campaign.advertising_channel_type,
+  ad_group.name,
+  ad_group.status,
+  ad_group.type,
+  metrics.impressions,
+  metrics.clicks,
+  metrics.cost_micros,
+  metrics.conversions,
+  metrics.cost_per_conversion
+FROM ad_group
+WHERE campaign.status = 'ENABLED'
+  AND ad_group.status = 'ENABLED'
+  AND segments.date DURING LAST_30_DAYS
+ORDER BY campaign.name, ad_group.name
+"""
+
+[keywords_with_performance]
+description = """
+Show me targeted keywords with performance last 30 days - need keyword text, match type, status, and full metrics
+"""
+query = """
+SELECT
+  customer.id,
+  customer.descriptive_name,
+  customer.currency_code,
+  campaign.name,
+  ad_group.name,
+  ad_group_criterion.keyword.text,
+  ad_group_criterion.keyword.match_type,
+  ad_group_criterion.status,
+  metrics.impressions,
+  metrics.clicks,
+  metrics.cost_micros,
+  metrics.conversions,
+  metrics.cost_per_conversion
+FROM keyword_view
+WHERE campaign.status = 'ENABLED'
+  AND ad_group.status = 'ENABLED'
+  AND segments.date DURING LAST_30_DAYS
+ORDER BY metrics.cost_micros DESC
+LIMIT 200
+"""
+
+[rsa_assets_detail]
+description = """
+Get me Responsive Search Ad assets last 30 days - need headlines, descriptions, final URLs, approval status, and performance metrics
+"""
+query = """
+SELECT
+  customer.id,
+  customer.descriptive_name,
+  customer.currency_code,
+  campaign.name,
+  ad_group.name,
+  ad_group_ad.ad.responsive_search_ad.headlines,
+  ad_group_ad.ad.responsive_search_ad.descriptions,
+  ad_group_ad.ad.final_urls,
+  ad_group_ad.policy_summary.approval_status,
+  metrics.impressions,
+  metrics.clicks,
+  metrics.conversions,
+  metrics.cost_micros
+FROM ad_group_ad
+WHERE ad_group_ad.ad.type = 'RESPONSIVE_SEARCH_AD'
+  AND campaign.status = 'ENABLED'
+  AND ad_group.status = 'ENABLED'
+  AND segments.date DURING LAST_30_DAYS
+"""
+
+[rsa_asset_level_performance]
+description = """
+Show me RSA asset-level performance last 30 days - need asset text, type, performance label, and field type
+"""
+query = """
+SELECT
+  customer.id,
+  customer.descriptive_name,
+  customer.currency_code,
+  asset.text_asset.text,
+  asset.type,
+  ad_group_ad_asset_view.performance_label,
+  ad_group_ad_asset_view.field_type,
+  campaign.name,
+  ad_group.name,
+  metrics.impressions,
+  metrics.clicks,
+  metrics.conversions
+FROM ad_group_ad_asset_view
+WHERE segments.date DURING LAST_30_DAYS
+  AND campaign.status = 'ENABLED'
+ORDER BY metrics.impressions DESC
+"""
+
+[campaign_budgets_with_spend]
+description = """
+Get me campaign budgets and actual spend last 30 days - need daily budget, delivery method, bid strategy, and impression share
+"""
+query = """
+SELECT
+  customer.id,
+  customer.descriptive_name,
+  customer.currency_code,
+  campaign.name,
+  campaign.status,
+  campaign_budget.amount_micros,
+  campaign_budget.delivery_method,
+  campaign.bidding_strategy_type,
+  metrics.cost_micros,
+  metrics.conversions,
+  metrics.cost_per_conversion,
+  metrics.impressions,
+  metrics.search_impression_share
+FROM campaign
+WHERE campaign.status = 'ENABLED'
+  AND segments.date DURING LAST_30_DAYS
+"""
+
+[search_impression_share_analysis]
+description = """
+Pull Search Impression Share metrics last 7 days - need budget lost and rank lost share to detect limiting factors
+"""
+query = """
+SELECT
+  customer.id,
+  customer.descriptive_name,
+  campaign.name,
+  metrics.search_impression_share,
+  metrics.search_budget_lost_impression_share,
+  metrics.search_rank_lost_impression_share,
+  metrics.cost_micros,
+  metrics.conversions
+FROM campaign
+WHERE campaign.status = 'ENABLED'
+  AND campaign.advertising_channel_type = 'SEARCH'
+  AND segments.date DURING LAST_7_DAYS
+"""
+
+[pmax_campaigns_performance]
+description = """
+Get me Performance Max campaigns performance last 30 days - need impressions, clicks, spend, conversions, and conversion value
+"""
+query = """
+SELECT
+  customer.id,
+  customer.descriptive_name,
+  customer.currency_code,
+  campaign.name,
+  campaign.status,
+  metrics.impressions,
+  metrics.clicks,
+  metrics.cost_micros,
+  metrics.conversions,
+  metrics.conversions_value,
+  metrics.cost_per_conversion
+FROM campaign
+WHERE campaign.advertising_channel_type = 'PERFORMANCE_MAX'
+  AND campaign.status = 'ENABLED'
+  AND segments.date DURING LAST_30_DAYS
+"""
+
+[pmax_asset_groups_performance]
+description = """
+Show me PMax asset groups performance last 30 days - need asset group names, status, and full metrics
+"""
+query = """
+SELECT
+  customer.id,
+  customer.descriptive_name,
+  customer.currency_code,
+  campaign.name,
+  asset_group.name,
+  asset_group.status,
+  metrics.impressions,
+  metrics.clicks,
+  metrics.cost_micros,
+  metrics.conversions
+FROM asset_group
+WHERE campaign.advertising_channel_type = 'PERFORMANCE_MAX'
+  AND segments.date DURING LAST_30_DAYS
+"""
+
+[pmax_search_terms_query_rows]
+description = """
+Get PMax search terms for a specific campaign last 30 days - need search term text (requires single campaign filter)
+"""
+query = """
+SELECT
+  customer.id,
+  customer.descriptive_name,
+  campaign_search_term_view.search_term,
+  campaign_search_term_view.campaign
+FROM campaign_search_term_view
+WHERE campaign_search_term_view.campaign = 'customers/1234567890/campaigns/23456012538'
+  AND segments.date DURING LAST_30_DAYS
+LIMIT 100
+"""
+
+[pmax_search_terms_category_insights]
+description = """
+Pull PMax search term category labels for intent analysis - need category labels (requires single campaign filter)
+"""
+query = """
+SELECT
+  customer.id,
+  customer.descriptive_name,
+  campaign_search_term_insight.category_label,
+  campaign_search_term_insight.id,
+  campaign_search_term_insight.campaign_id
+FROM campaign_search_term_insight
+WHERE campaign_search_term_insight.campaign_id = 23456012538
+  AND segments.date DURING LAST_30_DAYS
+LIMIT 100
+"""
+
+[campaigns_with_changes_last_14_days]
+description = """
+Get me recent account changes last 14 days - need timestamp, resource type, changed fields, and user email
+"""
+query = """
+SELECT
+  customer.id,
+  customer.descriptive_name,
+  change_event.change_date_time,
+  change_event.change_resource_type,
+  change_event.change_resource_name,
+  change_event.client_type,
+  change_event.user_email,
+  change_event.old_resource,
+  change_event.new_resource
+FROM change_event
+WHERE change_event.change_date_time DURING LAST_14_DAYS
+ORDER BY change_event.change_date_time DESC
+LIMIT 100
+"""
+
+[shared_sets_members]
+description = """
+Show me shared criterion keyword members - need shared set ID and keyword text
+"""
+query = """
+SELECT
+  customer.id,
+  customer.descriptive_name,
+  shared_criterion.shared_set,
+  shared_criterion.keyword.text
+FROM shared_criterion
+LIMIT 200
+"""
+
