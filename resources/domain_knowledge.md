@@ -3,7 +3,10 @@
 ## Resource Selection Guidance
 
 - For asset extension performance (sitelinks, callouts, calls, structured snippets):
-  Use `campaign_asset` with a `campaign_asset.field_type` filter. Do NOT use `campaign` (no asset-level data) or `call_view` (individual call records, not asset metrics).
+  **primary_resource must be `campaign_asset`** with a `campaign_asset.field_type` filter.
+  Do NOT use `campaign` as primary (it cannot access asset-level fields like `asset.call_asset.phone_number`).
+  Do NOT use `call_view` (individual call records, not asset metrics).
+  Do NOT put `campaign_asset` in related_resources under `campaign` — it must be the primary_resource.
 - For daily asset metrics broken down by asset type:
   Use `asset_field_type_view`. Do NOT use `asset` (static entity definition, no metrics support).
 - For Smart campaign performance with metrics:
