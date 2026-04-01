@@ -641,8 +641,18 @@ You are a Google Ads API expert. Given a list of GAQL field names, select the mo
 commonly useful ones for typical reporting queries. Return ONLY valid JSON with two keys:\n\
 - \"key_attributes\": array of 5-10 attribute field names (e.g., campaign.name, ad_group.status)\n\
 - \"key_metrics\": array of 7-12 metric field names (e.g., metrics.clicks, metrics.impressions)\n\
-\nSelect fields that are most commonly used in everyday Google Ads reporting. \
+\nIMPORTANT selection criteria:\n\
+1. ALWAYS include these identifying fields if they exist: {resource}.id, {resource}.name, {resource}.status\n\
+2. ALWAYS include type/category fields when available (e.g., conversion_action.type, conversion_action.category, campaign.advertising_channel_type)\n\
+3. ALWAYS include parent resource identifiers (e.g., customer.id, customer.descriptive_name, campaign.id, campaign.name)\n\
+4. Include common currency/context fields like customer.currency_code when metrics are present
+\
+5. For conversion-related resources (e.g., conversion_action, campaign, ad_group), ALWAYS include BOTH metrics.conversions AND metrics.all_conversions (plus metrics.conversions_value AND metrics.all_conversions_value if available)\n\
+6. Select fields that are most commonly used in everyday Google Ads reporting\n\
 Do NOT include fields that are rarely used or very specialized.";
+
+        // Substitute the resource name into the prompt
+        let system_prompt = system_prompt.replace("{resource}", resource);
 
         let mut user_prompt = format!(
             "For the Google Ads resource '{}', select the most useful fields:\n\n",
@@ -678,7 +688,7 @@ Do NOT include fields that are rarely used or very specialized.";
         );
 
         let agent = lease
-            .create_agent(system_prompt)
+            .create_agent(&system_prompt)
             .context("Failed to create LLM agent for key field selection")?;
 
         let llm_start = std::time::Instant::now();
