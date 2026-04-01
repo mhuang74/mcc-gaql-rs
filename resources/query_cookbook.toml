@@ -865,7 +865,7 @@ WHERE conversion_action.status = 'ENABLED'
 
 [conversion_actions_performance]
 description = """
-Pull conversion actions performance last 30 days - need conversions, conversion value, and all conversions to check for duplicates
+Pull conversion actions performance last 30 days - need all conversions and conversion value (metrics.conversions is not supported for conversion_action resource)
 """
 query = """
 SELECT
@@ -875,13 +875,12 @@ SELECT
   conversion_action.name,
   conversion_action.type,
   conversion_action.category,
-  metrics.conversions,
-  metrics.conversions_value,
-  metrics.all_conversions
+  metrics.all_conversions,
+  metrics.all_conversions_value
 FROM conversion_action
 WHERE segments.date DURING LAST_30_DAYS
   AND conversion_action.status = 'ENABLED'
-ORDER BY metrics.conversions DESC
+ORDER BY metrics.all_conversions DESC
 """
 
 [ad_groups_with_performance]
