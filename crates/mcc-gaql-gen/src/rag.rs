@@ -2183,6 +2183,78 @@ Resource selection guidance:
             (primary, validated_related)
         };
 
+        // --- Asset detail query validation ---
+        // If query requests asset content (sitelink text, callout text, phone number, etc.)
+        // AND selected resource cannot access asset table, override to campaign_asset.
+        // This catches cases where LLM selected asset_field_type_view for asset detail queries.
+        let (primary, validated_related, reasoning) = {
+            let asset_detail_patterns = [
+                "include sitelink",
+                "include callout",
+                "include call",
+                "include text",
+                "include the text",
+                "sitelink text",
+                "callout text",
+                "phone number",
+                "link text",
+                "show me the sitelink",
+                "show me the callout",
+                "with extension details",
+                "asset content",
+            ];
+
+            let query_lower = user_query.to_lowercase();
+            let matched_pattern = asset_detail_patterns
+                .iter()
+                .find(|p| query_lower.contains(*p));
+
+            if let Some(pattern) = matched_pattern {
+                let primary_selectable = self.field_cache.get_resource_selectable_with(&primary);
+                let has_asset_access = primary_selectable.contains(&"asset".to_string());
+
+                if !has_asset_access {
+                    // Determine correct resource based on context
+                    let new_primary = if query_lower.contains("ad group")
+                        || query_lower.contains("ad_group")
+                    {
+                        "ad_group_asset"
+                    } else {
+                        "campaign_asset"
+                    };
+
+                    log::warn!(
+                        "Phase 1: Overriding primary '{}' to '{}' - query requests asset details \
+                         (pattern '{}' matched) but '{}' cannot access asset.* fields",
+                        primary,
+                        new_primary,
+                        pattern,
+                        primary
+                    );
+
+                    // Rebuild related resources for new primary
+                    let new_selectable =
+                        self.field_cache.get_resource_selectable_with(new_primary);
+                    let new_related: Vec<String> = validated_related
+                        .into_iter()
+                        .filter(|r| new_selectable.contains(r))
+                        .collect();
+
+                    let new_reasoning = format!(
+                        "{} [OVERRIDE: Query requests asset details (pattern '{}'), \
+                         but '{}' cannot access asset.* fields. Changed to '{}'.]",
+                        reasoning, pattern, primary, new_primary
+                    );
+
+                    (new_primary.to_string(), new_related, new_reasoning)
+                } else {
+                    (primary, validated_related, reasoning)
+                }
+            } else {
+                (primary, validated_related, reasoning)
+            }
+        };
+
         Ok((
             primary,
             validated_related,
