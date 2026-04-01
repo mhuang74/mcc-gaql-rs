@@ -3,10 +3,23 @@
 ## Resource Selection Guidance
 
 - For asset extension performance (sitelinks, callouts, calls, structured snippets):
-  **primary_resource must be `campaign_asset`** with a `campaign_asset.field_type` filter.
-  Do NOT use `campaign` as primary (it cannot access asset-level fields like `asset.call_asset.phone_number`).
-  Do NOT use `call_view` (individual call records, not asset metrics).
-  Do NOT put `campaign_asset` in related_resources under `campaign` — it must be the primary_resource.
+  **primary_resource must be `campaign_asset`** (or `ad_group_asset`) with a `field_type` filter.
+  
+  **TRIGGER PATTERNS requiring campaign_asset/ad_group_asset:**
+  - User says "include [sitelink/callout/call/etc.] text" or "include the text"
+  - User says "show me the [extension] details/content"
+  - User says "with phone number" or "with link text"
+  - User asks for ANY asset.* field (asset.sitelink_asset.*, asset.callout_asset.*, etc.)
+  
+  **NEVER use these resources for asset detail queries:**
+  - `asset_field_type_view` - provides aggregate metrics by asset type only, CANNOT access asset.* fields
+  - `asset` - static entity definition with no metrics support
+  - `campaign` - cannot access asset-level fields
+  - `call_view` - individual call records, not asset extension metrics
+  
+  **When to use asset_field_type_view (rare):**
+  ONLY when user wants aggregate performance metrics BY asset type with NO individual asset details.
+  Example: "Show me daily metrics broken down by asset type" (no text/content requested)
 - For daily asset metrics broken down by asset type:
   Use `asset_field_type_view`. Do NOT use `asset` (static entity definition, no metrics support).
 - For Smart campaign performance with metrics:
