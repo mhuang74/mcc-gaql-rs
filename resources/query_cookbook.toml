@@ -1142,3 +1142,222 @@ FROM shared_criterion
 LIMIT 200
 """
 
+[campaigns_ui_overview_last_7_days]
+description = """
+Show me campaign performance last 7 days - need names, budget, status, optimization score, channel type, CTR, CPC, spend, and bid strategy
+"""
+query = """
+SELECT campaign.name,
+  campaign_budget.amount_micros,
+  campaign.status,
+  campaign.optimization_score,
+  campaign.advertising_channel_type,
+  metrics.clicks,
+  metrics.impressions,
+  metrics.ctr,
+  metrics.average_cpc,
+  metrics.cost_micros,
+  campaign.bidding_strategy_type
+FROM campaign
+WHERE segments.date DURING LAST_7_DAYS
+  AND campaign.status != 'REMOVED'
+"""
+
+[ad_groups_ui_overview_last_7_days]
+description = """
+Get me ad group performance last 7 days - need group and campaign names, status, type, clicks, impressions, CTR, CPC, and spend
+"""
+query = """
+SELECT ad_group.name,
+  campaign.name,
+  ad_group.status,
+  ad_group.type,
+  metrics.clicks,
+  metrics.impressions,
+  metrics.ctr,
+  metrics.average_cpc,
+  metrics.cost_micros
+FROM ad_group
+WHERE segments.date DURING LAST_7_DAYS
+  AND ad_group.status != 'REMOVED'
+"""
+
+[ads_expanded_text_last_7_days]
+description = """
+Pull expanded text ad performance last 7 days - need all headline and description parts, final URLs, approval status, ad type, and traffic metrics
+"""
+query = """
+SELECT ad_group_ad.ad.expanded_text_ad.headline_part1,
+  ad_group_ad.ad.expanded_text_ad.headline_part2,
+  ad_group_ad.ad.expanded_text_ad.headline_part3,
+  ad_group_ad.ad.final_urls,
+  ad_group_ad.ad.expanded_text_ad.description,
+  ad_group_ad.ad.expanded_text_ad.description2,
+  campaign.name,
+  ad_group.name,
+  ad_group_ad.policy_summary.approval_status,
+  ad_group_ad.ad.type,
+  metrics.clicks,
+  metrics.impressions,
+  metrics.ctr,
+  metrics.average_cpc,
+  metrics.cost_micros
+FROM ad_group_ad
+WHERE segments.date DURING LAST_7_DAYS
+  AND ad_group_ad.status != 'REMOVED'
+"""
+
+[search_keywords_ui_overview_last_7_days]
+description = """
+Show me search keyword performance last 7 days - need keyword text, match type, serving status, approval status, final URLs, and traffic metrics
+"""
+query = """
+SELECT ad_group_criterion.keyword.text,
+  campaign.name,
+  ad_group.name,
+  ad_group_criterion.system_serving_status,
+  ad_group_criterion.keyword.match_type,
+  ad_group_criterion.approval_status,
+  ad_group_criterion.final_urls,
+  metrics.clicks,
+  metrics.impressions,
+  metrics.ctr,
+  metrics.average_cpc,
+  metrics.cost_micros
+FROM keyword_view
+WHERE segments.date DURING LAST_7_DAYS
+  AND ad_group_criterion.status != 'REMOVED'
+"""
+
+[search_terms_ui_overview_last_7_days]
+description = """
+Get me search term performance last 7 days - need search terms, keyword match type, status, campaign and ad group names, and traffic metrics
+"""
+query = """
+SELECT search_term_view.search_term,
+  segments.keyword.info.match_type,
+  search_term_view.status,
+  campaign.name,
+  ad_group.name,
+  metrics.clicks,
+  metrics.impressions,
+  metrics.ctr,
+  metrics.average_cpc,
+  metrics.cost_micros,
+  campaign.advertising_channel_type
+FROM search_term_view
+WHERE segments.date DURING LAST_7_DAYS
+"""
+
+[audiences_performance_last_7_days]
+description = """
+Pull audience performance last 7 days - need audience type, serving status, bid modifier, and traffic metrics by campaign and ad group. note: audiences are returned by criterion ID, not name
+"""
+query = """
+SELECT ad_group_criterion.resource_name,
+  ad_group_criterion.type,
+  campaign.name,
+  ad_group.name,
+  ad_group_criterion.system_serving_status,
+  ad_group_criterion.bid_modifier,
+  metrics.clicks,
+  metrics.impressions,
+  metrics.ctr,
+  metrics.average_cpc,
+  metrics.cost_micros,
+  campaign.advertising_channel_type
+FROM ad_group_audience_view
+WHERE segments.date DURING LAST_7_DAYS
+"""
+
+[age_demographics_performance_last_7_days]
+description = """
+Show me age range performance last 7 days - need age bucket, serving status, bid modifier, and traffic metrics by campaign and ad group
+"""
+query = """
+SELECT ad_group_criterion.age_range.type,
+  campaign.name,
+  ad_group.name,
+  ad_group_criterion.system_serving_status,
+  ad_group_criterion.bid_modifier,
+  metrics.clicks,
+  metrics.impressions,
+  metrics.ctr,
+  metrics.average_cpc,
+  metrics.cost_micros,
+  campaign.advertising_channel_type
+FROM age_range_view
+WHERE segments.date DURING LAST_7_DAYS
+"""
+
+[gender_demographics_performance_last_7_days]
+description = """
+Get me gender performance last 7 days - need gender type, serving status, bid modifier, and traffic metrics by campaign and ad group
+"""
+query = """
+SELECT ad_group_criterion.gender.type,
+  campaign.name,
+  ad_group.name,
+  ad_group_criterion.system_serving_status,
+  ad_group_criterion.bid_modifier,
+  metrics.clicks,
+  metrics.impressions,
+  metrics.ctr,
+  metrics.average_cpc,
+  metrics.cost_micros,
+  campaign.advertising_channel_type
+FROM gender_view
+WHERE segments.date DURING LAST_7_DAYS
+"""
+
+[locations_ui_overview_last_7_days]
+description = """
+Pull location targeting performance last 7 days - need geo target constant IDs, campaign names, bid modifiers, and traffic metrics. geo IDs require a separate lookup to resolve to names
+"""
+query = """
+SELECT campaign_criterion.location.geo_target_constant,
+  campaign.name,
+  campaign_criterion.bid_modifier,
+  metrics.clicks,
+  metrics.impressions,
+  metrics.ctr,
+  metrics.average_cpc,
+  metrics.cost_micros
+FROM location_view
+WHERE segments.date DURING LAST_7_DAYS
+  AND campaign_criterion.status != 'REMOVED'
+"""
+
+[geo_target_constant_by_resource_name]
+description = """
+Look up a geo target constants by resource name for Mountain View ('geoTargetConstants/1014044') - get canonical name, country code, ID, status, and target type. useful for resolving location IDs from reporting queries
+"""
+query = """
+SELECT geo_target_constant.canonical_name,
+  geo_target_constant.country_code,
+  geo_target_constant.id,
+  geo_target_constant.name,
+  geo_target_constant.status,
+  geo_target_constant.target_type
+FROM geo_target_constant
+WHERE geo_target_constant.resource_name = 'geoTargetConstants/1014044'
+"""
+
+[geo_target_constant_by_display_name]
+description = """
+Look up geo target constants for 'Mountain View' - filter by country code, target type, and name to resolve human-readable location names to IDs
+"""
+query = """
+SELECT geo_target_constant.canonical_name,
+  geo_target_constant.country_code,
+  geo_target_constant.id,
+  geo_target_constant.name,
+  geo_target_constant.status,
+  geo_target_constant.target_type
+FROM geo_target_constant
+WHERE geo_target_constant.country_code = 'US'
+  AND geo_target_constant.target_type = 'City'
+  AND geo_target_constant.name = 'Mountain View'
+  AND geo_target_constant.status = 'ENABLED'
+"""
+
