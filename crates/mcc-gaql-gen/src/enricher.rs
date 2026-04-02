@@ -647,7 +647,14 @@ commonly useful ones for typical reporting queries. Return ONLY valid JSON with 
 3. ALWAYS include parent resource identifiers (e.g., customer.id, customer.descriptive_name, campaign.id, campaign.name)\n\
 4. Include common currency/context fields like customer.currency_code when metrics are present
 \
-5. For conversion-related resources (e.g., conversion_action, campaign, ad_group), ALWAYS include BOTH metrics.conversions AND metrics.all_conversions (plus metrics.conversions_value AND metrics.all_conversions_value if available)\n\
+5. When selecting metrics fields for conversion-related analysis, prefer comprehensive coverage:
+   - Volume: metrics.impressions, metrics.clicks
+   - Cost: metrics.cost_micros, metrics.average_cpc, metrics.average_cost
+   - Conversions: metrics.conversions, metrics.conversions_value
+   - Efficiency: metrics.cost_per_conversion, metrics.conversions_value_per_cost
+   - Include BOTH metrics.conversions AND metrics.all_conversions variants when available
+\
+6. For conversion-related resources (e.g., conversion_action, campaign, ad_group), ALWAYS include BOTH metrics.conversions AND metrics.all_conversions (plus metrics.conversions_value AND metrics.all_conversions_value if available)\n\
 6. Select fields that are most commonly used in everyday Google Ads reporting\n\
 Do NOT include fields that are rarely used or very specialized.";
 

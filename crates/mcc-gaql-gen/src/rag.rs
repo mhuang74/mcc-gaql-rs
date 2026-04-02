@@ -1,4 +1,8 @@
 use std::collections::{HashMap, HashSet};
+
+/// Embedded domain knowledge compiled from resources/domain_knowledge.md.
+/// This serves as the default when no user override exists in the config directory.
+const DEFAULT_DOMAIN_KNOWLEDGE: &str = include_str!("../../../resources/domain_knowledge.md");
 use std::hash::{Hash, Hasher};
 use std::vec;
 use twox_hash::XxHash64;
@@ -1465,31 +1469,28 @@ struct DomainKnowledge {
 }
 
 impl DomainKnowledge {
-    /// Load and parse `domain_knowledge.md` from the OS config directory.
-    /// Falls back gracefully to empty sections if the file is missing.
+    /// Load domain knowledge with fallback to embedded defaults.
+    ///
+    /// Priority:
+    /// 1. User file at ~/.config/mcc-gaql/domain_knowledge.md (if exists)
+    /// 2. Embedded default compiled into binary
     fn load() -> Self {
-        let path = match mcc_gaql_common::paths::config_file_path("domain_knowledge.md") {
-            Some(p) if p.exists() => p,
-            Some(p) => {
-                log::debug!("domain_knowledge.md not found at {:?}, using empty sections", p);
-                return Self { sections: HashMap::new() };
-            }
-            None => {
-                log::warn!("Could not determine domain_knowledge.md path");
-                return Self { sections: HashMap::new() };
-            }
-        };
-
-        match std::fs::read_to_string(&path) {
-            Ok(content) => {
-                log::info!("Loaded domain_knowledge.md from {:?}", path);
-                Self::parse(&content)
-            }
-            Err(e) => {
-                log::warn!("Failed to read domain_knowledge.md: {}", e);
-                Self { sections: HashMap::new() }
+        if let Some(path) = mcc_gaql_common::paths::config_file_path("domain_knowledge.md") {
+            if path.exists() {
+                match std::fs::read_to_string(&path) {
+                    Ok(content) => {
+                        log::info!("Loaded user domain_knowledge.md from {:?}", path);
+                        return Self::parse(&content);
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to read user domain_knowledge.md: {}, using embedded default", e);
+                    }
+                }
             }
         }
+
+        log::debug!("Using embedded domain_knowledge.md");
+        Self::parse(DEFAULT_DOMAIN_KNOWLEDGE)
     }
 
     fn parse(content: &str) -> Self {
