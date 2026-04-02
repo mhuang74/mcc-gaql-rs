@@ -1361,3 +1361,456 @@ WHERE geo_target_constant.country_code = 'US'
   AND geo_target_constant.status = 'ENABLED'
 """
 
+# ============================================================================
+# Queries from Google Ads API Developer Assistant patterns
+# https://github.com/googleads/google-ads-api-developer-assistant
+# ============================================================================
+
+[conversion_actions_with_attribution]
+description = """
+List all active conversion actions with their type, category, attribution model, and whether they are included in the conversions metric.
+"""
+query = """
+SELECT
+  conversion_action.id,
+  conversion_action.name,
+  conversion_action.status,
+  conversion_action.type,
+  conversion_action.category,
+  conversion_action.owner_customer,
+  conversion_action.include_in_conversions_metric,
+  conversion_action.attribution_model_settings.attribution_model
+FROM conversion_action
+WHERE conversion_action.status != 'REMOVED'
+ORDER BY conversion_action.name
+"""
+
+[conversion_tracking_customer_settings]
+description = """
+Check customer conversion tracking configuration including data terms acceptance and enhanced conversions for leads.
+"""
+query = """
+SELECT
+  customer.id,
+  customer.descriptive_name,
+  customer.conversion_tracking_setting.accepted_customer_data_terms,
+  customer.conversion_tracking_setting.enhanced_conversions_for_leads_enabled,
+  customer.conversion_tracking_setting.conversion_tracking_id,
+  customer.conversion_tracking_setting.google_ads_conversion_customer
+FROM customer
+"""
+
+[offline_conversion_upload_health]
+description = """
+Summary of offline conversion uploads by conversion action, showing success rates and daily summaries for troubleshooting.
+"""
+query = """
+SELECT
+  offline_conversion_upload_conversion_action_summary.conversion_action_name,
+  offline_conversion_upload_conversion_action_summary.successful_event_count,
+  offline_conversion_upload_conversion_action_summary.total_event_count,
+  offline_conversion_upload_conversion_action_summary.daily_summaries
+FROM offline_conversion_upload_conversion_action_summary
+"""
+
+[pmax_campaigns_with_status_diagnostics]
+description = """
+List Performance Max campaigns with enhanced status diagnostics including primary status and status reasons for troubleshooting.
+"""
+query = """
+SELECT
+  customer.id,
+  customer.descriptive_name,
+  campaign.id,
+  campaign.name,
+  campaign.status,
+  campaign.primary_status,
+  campaign.primary_status_reasons,
+  campaign.advertising_channel_type
+FROM campaign
+WHERE
+  campaign.advertising_channel_type = 'PERFORMANCE_MAX'
+  AND campaign.status != 'REMOVED'
+ORDER BY campaign.name
+"""
+
+[ads_with_policy_violations]
+description = """
+Find ads with policy violations including disapproved ads. Returns policy topic entries for review.
+"""
+query = """
+SELECT
+  customer.id,
+  customer.descriptive_name,
+  campaign.id,
+  campaign.name,
+  ad_group.id,
+  ad_group.name,
+  ad_group_ad.ad.id,
+  ad_group_ad.ad.type,
+  ad_group_ad.policy_summary.approval_status,
+  ad_group_ad.policy_summary.review_status,
+  ad_group_ad.policy_summary.policy_topic_entries
+FROM ad_group_ad
+WHERE ad_group_ad.policy_summary.approval_status != 'APPROVED'
+ORDER BY campaign.name, ad_group.name
+LIMIT 500
+"""
+
+[change_status_audit_trail]
+description = """
+Track recent changes to Google Ads resources over the last 7 days using change_status resource. Shows resource type and status changes.
+"""
+query = """
+SELECT
+  change_status.resource_name,
+  change_status.last_change_date_time,
+  change_status.resource_type,
+  change_status.resource_status,
+  change_status.campaign,
+  change_status.ad_group
+FROM change_status
+WHERE change_status.last_change_date_time DURING LAST_7_DAYS
+ORDER BY change_status.last_change_date_time DESC
+LIMIT 1000
+"""
+
+[campaigns_with_location_criteria]
+description = """
+List campaigns with their geographic location targeting criteria, including both positive and negative locations.
+"""
+query = """
+SELECT
+  customer.id,
+  customer.descriptive_name,
+  campaign.id,
+  campaign.name,
+  campaign.status,
+  campaign_criterion.criterion_id,
+  campaign_criterion.location.geo_target_constant,
+  campaign_criterion.negative
+FROM campaign_criterion
+WHERE
+  campaign_criterion.type = 'LOCATION'
+  AND campaign.status != 'REMOVED'
+ORDER BY campaign.name
+"""
+
+[campaigns_with_shared_sets]
+description = """
+List campaigns and their associated shared sets (negative keyword lists, placement exclusion lists, etc).
+"""
+query = """
+SELECT
+  customer.id,
+  customer.descriptive_name,
+  campaign.id,
+  campaign.name,
+  shared_set.id,
+  shared_set.name,
+  shared_set.type,
+  shared_set.status,
+  shared_set.member_count
+FROM campaign_shared_set
+WHERE shared_set.status != 'REMOVED'
+ORDER BY campaign.id
+"""
+
+[campaign_simulations_bid_analysis]
+description = """
+Retrieve campaign simulations to analyze potential performance at different bid levels or target settings.
+"""
+query = """
+SELECT
+  campaign.id,
+  campaign.name,
+  campaign_simulation.campaign_id,
+  campaign_simulation.type,
+  campaign_simulation.modification_method,
+  campaign_simulation.start_date,
+  campaign_simulation.end_date
+FROM campaign_simulation
+WHERE
+  campaign_simulation.type IN ('CPC_BID', 'TARGET_CPA', 'TARGET_ROAS')
+ORDER BY campaign.name
+LIMIT 100
+"""
+
+[expanded_landing_pages_performance]
+description = """
+Show expanded landing page URLs with performance metrics last 30 days for landing page analysis.
+"""
+query = """
+SELECT
+  customer.id,
+  customer.descriptive_name,
+  campaign.id,
+  campaign.name,
+  campaign.status,
+  expanded_landing_page_view.expanded_final_url,
+  metrics.impressions,
+  metrics.clicks,
+  metrics.cost_micros
+FROM expanded_landing_page_view
+WHERE
+  segments.date DURING LAST_30_DAYS
+  AND metrics.impressions > 0
+ORDER BY metrics.impressions DESC
+LIMIT 100
+"""
+
+[user_lists_audiences]
+description = """
+List user lists (audiences) with their membership status and size estimates for display and search.
+"""
+query = """
+SELECT
+  user_list.id,
+  user_list.name,
+  user_list.type,
+  user_list.membership_status,
+  user_list.size_for_display,
+  user_list.size_for_search,
+  user_list.eligible_for_display,
+  user_list.eligible_for_search,
+  user_list.membership_life_span
+FROM user_list
+WHERE user_list.membership_status != 'CLOSED'
+ORDER BY user_list.name
+LIMIT 500
+"""
+
+[campaigns_with_user_list_targeting]
+description = """
+Show campaigns with user list (audience) targeting criteria including bid modifiers.
+"""
+query = """
+SELECT
+  customer.id,
+  customer.descriptive_name,
+  campaign.id,
+  campaign.name,
+  campaign_criterion.criterion_id,
+  campaign_criterion.user_list.user_list,
+  campaign_criterion.negative,
+  campaign_criterion.bid_modifier
+FROM campaign_criterion
+WHERE
+  campaign_criterion.type = 'USER_LIST'
+  AND campaign.status != 'REMOVED'
+ORDER BY campaign.name
+"""
+
+[ad_group_keywords_with_match_type]
+description = """
+List ad group keywords with their match types, status, and negative flag.
+"""
+query = """
+SELECT
+  customer.id,
+  campaign.id,
+  campaign.name,
+  ad_group.id,
+  ad_group.name,
+  ad_group_criterion.criterion_id,
+  ad_group_criterion.keyword.text,
+  ad_group_criterion.keyword.match_type,
+  ad_group_criterion.status,
+  ad_group_criterion.negative
+FROM ad_group_criterion
+WHERE
+  ad_group_criterion.type = 'KEYWORD'
+  AND campaign.status != 'REMOVED'
+  AND ad_group.status != 'REMOVED'
+ORDER BY campaign.name, ad_group.name
+LIMIT 1000
+"""
+
+[accessible_bidding_strategies]
+description = """
+List bidding strategies accessible to the account including portfolio strategies from manager accounts.
+"""
+query = """
+SELECT
+  accessible_bidding_strategy.id,
+  accessible_bidding_strategy.name,
+  accessible_bidding_strategy.type,
+  accessible_bidding_strategy.owner_customer_id,
+  accessible_bidding_strategy.owner_descriptive_name
+FROM accessible_bidding_strategy
+ORDER BY accessible_bidding_strategy.name
+"""
+
+[campaign_budgets_configuration]
+description = """
+List campaign budgets with their configuration including delivery method, type, and sharing status.
+"""
+query = """
+SELECT
+  customer.id,
+  customer.descriptive_name,
+  campaign.id,
+  campaign.name,
+  campaign.status,
+  campaign_budget.id,
+  campaign_budget.name,
+  campaign_budget.amount_micros,
+  campaign_budget.delivery_method,
+  campaign_budget.status,
+  campaign_budget.type,
+  campaign_budget.explicitly_shared
+FROM campaign
+WHERE
+  campaign.status != 'REMOVED'
+ORDER BY campaign_budget.amount_micros DESC
+LIMIT 500
+"""
+
+[campaign_labels_assignments]
+description = """
+List labels and the campaigns they are assigned to for organization and filtering.
+"""
+query = """
+SELECT
+  customer.id,
+  campaign.id,
+  campaign.name,
+  label.id,
+  label.name,
+  label.status
+FROM campaign_label
+WHERE label.status != 'REMOVED'
+ORDER BY label.name, campaign.name
+"""
+
+[callout_assets_active]
+description = """
+List active callout extension assets with their text content.
+"""
+query = """
+SELECT
+  customer.id,
+  customer.descriptive_name,
+  asset.id,
+  asset.name,
+  asset.type,
+  asset.callout_asset.callout_text,
+  asset.final_urls
+FROM asset
+WHERE
+  asset.type = 'CALLOUT'
+ORDER BY asset.name
+LIMIT 500
+"""
+
+[sitelink_assets_active]
+description = """
+List active sitelink extension assets with their link text, descriptions, and URLs.
+"""
+query = """
+SELECT
+  customer.id,
+  customer.descriptive_name,
+  asset.id,
+  asset.name,
+  asset.type,
+  asset.sitelink_asset.link_text,
+  asset.sitelink_asset.description1,
+  asset.sitelink_asset.description2,
+  asset.final_urls
+FROM asset
+WHERE
+  asset.type = 'SITELINK'
+ORDER BY asset.name
+LIMIT 500
+"""
+
+[campaign_conversion_goal_settings]
+description = """
+Show campaign-level conversion goal settings and their configured conversion action categories and origins.
+"""
+query = """
+SELECT
+  customer.id,
+  campaign.id,
+  campaign.name,
+  campaign_conversion_goal.campaign,
+  campaign_conversion_goal.category,
+  campaign_conversion_goal.origin
+FROM campaign_conversion_goal
+ORDER BY campaign.name
+"""
+
+[click_view_single_day]
+description = """
+Get click-level data for a single day (required constraint for click_view). Shows GCLID, click type, area of interest, and keyword info.
+"""
+query = """
+SELECT
+  customer.id,
+  click_view.gclid,
+  click_view.ad_group_ad,
+  click_view.keyword,
+  click_view.keyword_info.text,
+  click_view.keyword_info.match_type,
+  click_view.area_of_interest.city,
+  click_view.area_of_interest.country,
+  segments.click_type,
+  segments.date
+FROM click_view
+WHERE segments.date = '2026-04-02'
+LIMIT 100
+"""
+
+[video_campaigns_performance]
+description = """
+Get video campaign performance last 30 days - need video views, view rate, and video quartile metrics.
+"""
+query = """
+SELECT
+  customer.id,
+  customer.descriptive_name,
+  customer.currency_code,
+  campaign.id,
+  campaign.name,
+  campaign.status,
+  metrics.impressions,
+  metrics.video_views,
+  metrics.video_view_rate,
+  metrics.video_quartile_p25_rate,
+  metrics.video_quartile_p50_rate,
+  metrics.video_quartile_p75_rate,
+  metrics.video_quartile_p100_rate,
+  metrics.cost_micros
+FROM campaign
+WHERE
+  campaign.advertising_channel_type = 'VIDEO'
+  AND campaign.status = 'ENABLED'
+  AND segments.date DURING LAST_30_DAYS
+"""
+
+[display_campaigns_performance]
+description = """
+Get display campaign performance last 30 days - need impressions, clicks, viewable impressions, and conversions.
+"""
+query = """
+SELECT
+  customer.id,
+  customer.descriptive_name,
+  customer.currency_code,
+  campaign.id,
+  campaign.name,
+  campaign.status,
+  metrics.impressions,
+  metrics.clicks,
+  metrics.active_view_impressions,
+  metrics.active_view_viewability,
+  metrics.conversions,
+  metrics.cost_micros
+FROM campaign
+WHERE
+  campaign.advertising_channel_type = 'DISPLAY'
+  AND campaign.status = 'ENABLED'
+  AND segments.date DURING LAST_30_DAYS
+"""
+
