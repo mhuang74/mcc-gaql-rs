@@ -161,3 +161,17 @@ When a user asks for metrics in a category that has multiple variants, include a
   - (and their top/absolute-top lost variants if available)
 - **Conversion metrics:** When conversions are relevant, include both metrics.conversions and metrics.all_conversions (they count differently)
 - **Cost metrics:** When cost is relevant, include both metrics.cost_micros and metrics.average_cpc for full context
+
+## Pattern-Based Field Requirements
+
+### Currency Code Pattern
+When the user request mentions currency (phrases: "with currency", "need currency", "and currency", "currency code"), ALWAYS include `customer.currency_code` in the SELECT fields.
+
+### Advertising Channel Type Visibility Pattern
+When filtering by `campaign.advertising_channel_type` in the WHERE clause, ALWAYS include `campaign.advertising_channel_type` in the SELECT fields for visibility.
+
+### Asset Identification Pattern
+When the request asks for asset content (phrases: "include [X] text", "show me the [X] content", "with [extension] details"), ALWAYS include:
+- asset.id
+- asset.name
+- asset.type

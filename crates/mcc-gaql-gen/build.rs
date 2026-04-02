@@ -6,6 +6,7 @@ fn main() {
     println!("cargo:rustc-env=GIT_HASH={}", git_hash);
     println!("cargo:rerun-if-changed=.git/HEAD");
     println!("cargo:rerun-if-changed=.git/index");
+    println!("cargo:rerun-if-changed=../../resources/domain_knowledge.md");
 
     // Generate BUILD_TIME (ISO 8601 UTC)
     let build_time = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
