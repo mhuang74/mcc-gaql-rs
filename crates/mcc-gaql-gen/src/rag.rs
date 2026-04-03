@@ -2281,8 +2281,14 @@ Resource selection guidance:
         // Get selectable_with for compatibility check
         let selectable_with = self.field_cache.get_resource_selectable_with(primary);
 
-        // Fail fast if selectable_with is empty - indicates metadata corruption
-        if selectable_with.is_empty() {
+        // Check if this resource has any metrics - constant/lookup resources don't
+        let resource_fields = self.field_cache.get_resource_fields(primary);
+        let has_metrics = resource_fields.iter().any(|f| f.is_metric());
+
+        // Only fail if selectable_with is empty AND resource has metrics
+        // Constant/lookup resources (geo_target_constant, currency_constant, etc.)
+        // legitimately have empty selectable_with since they're standalone lookup tables
+        if selectable_with.is_empty() && has_metrics {
             let cache_path = paths::field_metadata_cache_path()
                 .map(|p| format!("{:?}", p))
                 .unwrap_or_else(|_| "cache directory".to_string());
@@ -4802,5 +4808,180 @@ mod tests {
             MultiStepRAGAgent::normalize_string_value("''"),
             ""
         );
+    }
+
+    // Helper: Check if a resource requires non-empty selectable_with
+    // Returns false for constant/lookup resources that have no metrics
+    fn resource_requires_selectable_with(
+        field_cache: &mcc_gaql_common::field_metadata::FieldMetadataCache,
+        resource: &str,
+    ) -> bool {
+        let resource_fields = field_cache.get_resource_fields(resource);
+        resource_fields.iter().any(|f| f.is_metric())
+    }
+
+    fn create_constant_resource_cache(
+        resource_name: &str,
+    ) -> mcc_gaql_common::field_metadata::FieldMetadataCache {
+        use chrono::Utc;
+        use mcc_gaql_common::field_metadata::{FieldMetadata, FieldMetadataCache};
+        use std::collections::HashMap;
+
+        let mut fields = HashMap::new();
+
+        // Add RESOURCE field with empty selectable_with (constant resource behavior)
+        fields.insert(
+            resource_name.to_string(),
+            FieldMetadata {
+                name: resource_name.to_string(),
+                category: "RESOURCE".to_string(),
+                data_type: "RESOURCE_NAME".to_string(),
+                selectable: true,
+                filterable: false,
+                sortable: false,
+                metrics_compatible: false,
+                resource_name: None,
+                selectable_with: vec![], // Empty - this is what we're testing
+                enum_values: vec![],
+                attribute_resources: vec![],
+                description: Some("Test constant resource".to_string()),
+                usage_notes: None,
+            },
+        );
+
+        // Add ATTRIBUTE field (no metrics)
+        fields.insert(
+            format!("{}.id", resource_name),
+            FieldMetadata {
+                name: format!("{}.id", resource_name),
+                category: "ATTRIBUTE".to_string(),
+                data_type: "INT64".to_string(),
+                selectable: true,
+                filterable: true,
+                sortable: true,
+                metrics_compatible: false,
+                resource_name: None,
+                selectable_with: vec![],
+                enum_values: vec![],
+                attribute_resources: vec![],
+                description: Some("Test attribute".to_string()),
+                usage_notes: None,
+            },
+        );
+
+        // Map resource to its fields
+        let mut resources = HashMap::new();
+        resources.insert(
+            resource_name.to_string(),
+            vec![resource_name.to_string(), format!("{}.id", resource_name)],
+        );
+
+        FieldMetadataCache {
+            last_updated: Utc::now(),
+            api_version: "v17".to_string(),
+            fields,
+            resources: Some(resources),
+            resource_metadata: None,
+        }
+    }
+
+    fn create_resource_with_metrics_cache(
+        resource_name: &str,
+    ) -> mcc_gaql_common::field_metadata::FieldMetadataCache {
+        use chrono::Utc;
+        use mcc_gaql_common::field_metadata::{FieldMetadata, FieldMetadataCache};
+        use std::collections::HashMap;
+
+        let mut fields = HashMap::new();
+
+        // Add RESOURCE field with non-empty selectable_with
+        fields.insert(
+            resource_name.to_string(),
+            FieldMetadata {
+                name: resource_name.to_string(),
+                category: "RESOURCE".to_string(),
+                data_type: "RESOURCE_NAME".to_string(),
+                selectable: true,
+                filterable: false,
+                sortable: false,
+                metrics_compatible: true,
+                resource_name: None,
+                selectable_with: vec!["metrics.clicks".to_string()],
+                enum_values: vec![],
+                attribute_resources: vec![],
+                description: Some("Test resource with metrics".to_string()),
+                usage_notes: None,
+            },
+        );
+
+        // Add METRIC field
+        fields.insert(
+            "metrics.clicks".to_string(),
+            FieldMetadata {
+                name: "metrics.clicks".to_string(),
+                category: "METRIC".to_string(),
+                data_type: "INT64".to_string(),
+                selectable: true,
+                filterable: true,
+                sortable: true,
+                metrics_compatible: true,
+                resource_name: None,
+                selectable_with: vec![resource_name.to_string()],
+                enum_values: vec![],
+                attribute_resources: vec![],
+                description: Some("Test metric".to_string()),
+                usage_notes: None,
+            },
+        );
+
+        // Map resource to its fields
+        let mut resources = HashMap::new();
+        resources.insert(
+            resource_name.to_string(),
+            vec![resource_name.to_string(), "metrics.clicks".to_string()],
+        );
+
+        FieldMetadataCache {
+            last_updated: Utc::now(),
+            api_version: "v17".to_string(),
+            fields,
+            resources: Some(resources),
+            resource_metadata: None,
+        }
+    }
+
+    #[test]
+    fn test_constant_resource_allows_empty_selectable_with() {
+        // Constant resources like geo_target_constant have no metrics
+        // and should NOT require selectable_with
+        let cache = create_constant_resource_cache("geo_target_constant");
+        assert!(
+            !resource_requires_selectable_with(&cache, "geo_target_constant"),
+            "Constant resource without metrics should not require selectable_with"
+        );
+    }
+
+    #[test]
+    fn test_regular_resource_requires_selectable_with() {
+        // Regular resources like campaign have metrics
+        // and SHOULD require selectable_with
+        let cache = create_resource_with_metrics_cache("campaign");
+        assert!(
+            resource_requires_selectable_with(&cache, "campaign"),
+            "Resource with metrics should require selectable_with"
+        );
+    }
+
+    #[test]
+    fn test_other_constant_resources_allow_empty_selectable_with() {
+        // Verify multiple constant resource types work
+        for resource in ["currency_constant", "language_constant", "carrier_constant"] {
+            let cache = create_constant_resource_cache(resource);
+            assert!(
+                !resource_requires_selectable_with(&cache, resource),
+                "Constant resource {} should not require selectable_with",
+                resource
+            );
+        }
     }
 }
