@@ -320,7 +320,7 @@ query = """
 
 [perf_max_campaigns_with_traffic_last_30_days]
 description = """
-Give me daily PMax performance last 30 days - need CTR, CPC, conv, rev, ROAS, CPA, campaign IDs + names, and currency
+Give me daily PMax performance last 30 days - need CTR, CPC, conv, rev, CPA, campaign IDs + names, and currency
 """
 query = """
 	SELECT
@@ -335,7 +335,6 @@ query = """
 	  metrics.average_cost,
 	  metrics.conversions,
 	  metrics.conversions_value,
-	  metrics.conversions_value_per_cost,
 	  metrics.cost_per_conversion,
 	  customer.currency_code 
 	FROM campaign 
@@ -370,7 +369,7 @@ query = """
 
 [campaigns_with_smart_bidding_by_spend]
 description = """
-Pull top 25 Smart Bidding campaigns by spend (>$1K) last week - need acct and campaign IDs + names, budget, bid strategy, CPC, conv metrics, and ROAS with currency
+Pull top 25 Smart Bidding campaigns by spend (>$1K) last week - need acct and campaign IDs + names, budget, bid strategy, CPC, and conv metrics with currency
 """
 query = """
 	SELECT
@@ -387,8 +386,7 @@ query = """
 	  metrics.cost_micros,
 	  metrics.conversions,
 	  metrics.cost_per_conversion,
-	  metrics.conversions_value,
-	  metrics.conversions_value_per_cost
+	  metrics.conversions_value
 	FROM campaign
 	WHERE
 	  campaign.bidding_strategy_type IN ('MAXIMIZE_CONVERSIONS', 'MAXIMIZE_CONVERSION_VALUE', 'TARGET_CPA', 'TARGET_ROAS') 
@@ -401,7 +399,7 @@ query = """
 
 [campaigns_shopping_campaign_performance]
 description = """
-Get me Shopping campaigns by spend (>$100) last 30 days - need acct and campaign details, budget, bid strategy, CPC, conv metrics, and ROAS with currency
+Get me Shopping campaigns by spend (>$100) last 30 days - need acct and campaign details, budget, bid strategy, CPC, and conv metrics with currency
 """
 query = """
 	SELECT
@@ -418,8 +416,7 @@ query = """
 	  metrics.cost_micros,
 	  metrics.conversions,
 	  metrics.cost_per_conversion,
-	  metrics.conversions_value,
-	  metrics.conversions_value_per_cost
+	  metrics.conversions_value
 	FROM campaign
 	WHERE
 	  campaign.advertising_channel_type IN ('SHOPPING') 
@@ -544,7 +541,7 @@ query = """
 
 [locations_with_highest_revenue_per_conversion]
 description = """
-Pull performance data for top 20 locations for each campaign by rev per conv (>10 conv) last 7 days - need account and campaign info, geo target IDs, conversion metrics, and ROAS with currency
+Pull performance data for top 20 locations for each campaign by rev per conv (>10 conv) last 7 days - need account and campaign info, geo target IDs, and conversion metrics with currency
 """
 query = """
 SELECT
@@ -564,7 +561,6 @@ SELECT
   metrics.conversions,
   metrics.cost_per_conversion,
   metrics.conversions_value,
-  metrics.conversions_value_per_cost,
   metrics.value_per_conversion
 FROM location_view
 WHERE
@@ -743,7 +739,7 @@ ORDER BY campaign.name
 
 [campaigns_with_performance_last_7_days]
 description = """
-Get me campaign performance last 7 days - need impressions, clicks, spend, conversions, conversion value, ROAS, and CPA
+Get me campaign performance last 7 days - need impressions, clicks, spend, conversions, conversion value, and CPA
 """
 query = """
 SELECT
@@ -757,7 +753,6 @@ SELECT
   metrics.cost_micros,
   metrics.conversions,
   metrics.conversions_value,
-  metrics.conversions_value_per_cost,
   metrics.cost_per_conversion,
   segments.date
 FROM campaign
@@ -1037,7 +1032,7 @@ WHERE campaign.status = 'ENABLED'
 
 [pmax_campaigns_performance]
 description = """
-Get me Performance Max campaigns performance last 30 days - need impressions, clicks, spend, conversions, conversion value, ROAS, and CPA
+Get me Performance Max campaigns performance last 30 days - need impressions, clicks, spend, conversions, conversion value, and CPA
 """
 query = """
 SELECT
@@ -1051,7 +1046,6 @@ SELECT
   metrics.cost_micros,
   metrics.conversions,
   metrics.conversions_value,
-  metrics.conversions_value_per_cost,
   metrics.cost_per_conversion
 FROM campaign
 WHERE campaign.advertising_channel_type = 'PERFORMANCE_MAX'
@@ -2127,7 +2121,7 @@ ORDER BY
 
 [pmax_retail_products_with_cart_data]
 description = """
-Get me PMax retail product profitability metrics last 30 days - need cart size, order value, ROAS, gross profit margin, revenue, and units sold ordered by margin
+Get me PMax retail product profitability metrics last 30 days - need cart size, order value, gross profit margin, revenue, and units sold ordered by margin
 """
 query = """
 SELECT
@@ -2137,7 +2131,6 @@ SELECT
   metrics.average_order_value_micros,
   metrics.conversions,
   metrics.conversions_value,
-  metrics.conversions_value_per_cost,
   metrics.gross_profit_micros,
   metrics.gross_profit_margin,
   metrics.revenue_micros,
@@ -2414,7 +2407,7 @@ FROM local_services_employee
 
 [campaigns_with_device_and_dayofweek_performance_last_30_days]
 description = """
-Break down my campaign performance by device and day of week last 30 days - need device, day, impressions, clicks, conversions, ROAS, and spend for enabled campaigns
+Break down my campaign performance by device and day of week last 30 days - need device, day, impressions, clicks, conversions, and spend for enabled campaigns
 """
 query = """
 SELECT
@@ -2426,7 +2419,6 @@ SELECT
   metrics.clicks,
   metrics.conversions,
   metrics.conversions_value,
-  metrics.conversions_value_per_cost,
   metrics.cost_micros,
   metrics.cost_per_conversion
 FROM campaign
@@ -2443,7 +2435,7 @@ LIMIT 1000
 
 [campaigns_with_bidding_strategy_daily_performance]
 description = """
-Analyze my bidding strategy effectiveness last 30 days by day - need strategy name, type, target CPA/ROAS settings, conversion metrics, and actual ROAS to compare automated bidding approaches
+Analyze my bidding strategy effectiveness last 30 days by day - need strategy name, type, target CPA/ROAS settings, and conversion metrics to compare automated bidding approaches
 """
 query = """
 SELECT
@@ -2460,7 +2452,6 @@ SELECT
   metrics.clicks,
   metrics.conversions,
   metrics.conversions_value,
-  metrics.conversions_value_per_cost,
   metrics.cost_micros,
   metrics.average_cpc,
   metrics.cost_per_conversion
@@ -2511,7 +2502,7 @@ ORDER BY
 
 [shopping_products_with_roas_performance]
 description = """
-Pull shopping product performance last 30 days - need product brand, type hierarchy, item ID, title, conversion metrics, and ROAS to identify high-performing products and categories
+Pull shopping product performance last 30 days - need product brand, type hierarchy, item ID, title, and conversion metrics to identify high-performing products and categories
 """
 query = """
 SELECT
@@ -2534,7 +2525,6 @@ SELECT
   metrics.clicks,
   metrics.conversions,
   metrics.conversions_value,
-  metrics.conversions_value_per_cost,
   metrics.cost_micros,
   metrics.ctr,
   metrics.cost_per_conversion
@@ -2551,7 +2541,7 @@ ORDER BY
 
 [ad_schedule_with_bid_modifier_performance]
 description = """
-Show me ad schedule performance by day and hour last 14 days - need bid modifiers, conversion metrics, and ROAS to find the best-performing time slots and tune schedule-based bid adjustments
+Show me ad schedule performance by day and hour last 14 days - need bid modifiers and conversion metrics to find the best-performing time slots and tune schedule-based bid adjustments
 """
 query = """
 SELECT
@@ -2566,7 +2556,6 @@ SELECT
   metrics.clicks,
   metrics.conversions,
   metrics.conversions_value,
-  metrics.conversions_value_per_cost,
   metrics.cost_micros,
   metrics.ctr,
   metrics.value_per_conversion
@@ -2581,7 +2570,7 @@ ORDER BY
 
 [campaigns_with_budget_utilization_last_30_days]
 description = """
-Get me campaign budget utilization last 30 days - need daily budget amount, delivery method, recommended budget, actual spend, and ROAS to identify campaigns consistently maxing out their budget
+Get me campaign budget utilization last 30 days - need daily budget amount, delivery method, recommended budget, and actual spend to identify campaigns consistently maxing out their budget
 """
 query = """
 SELECT
@@ -2599,8 +2588,7 @@ SELECT
   metrics.impressions,
   metrics.clicks,
   metrics.conversions,
-  metrics.conversions_value,
-  metrics.conversions_value_per_cost
+  metrics.conversions_value
 FROM campaign
 WHERE
   campaign.status IN ('ENABLED', 'PAUSED')
