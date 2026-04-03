@@ -2,22 +2,14 @@
 
 ## Task Overview
 
-Test the effectiveness of `mcc-gaql-gen generate` command by comparing generated GAQL queries against the reference queries in `resources/query_cookbook.toml`.
+Test the effectiveness of `mcc-gaql-gen generate` command by comparing generated GAQL queries against the reference queries in the query cookbook.
 
 ## Output Organization
 
 All test outputs are organized with timestamps to preserve historical runs:
 
-- **Intermediate outputs**: `reports/gen_results.<timestamp>/` directory
+- **Intermediate outputs**: `reports/gen_results.<timestamp>/` directory (JSON files)
 - **Comparison report**: `reports/query_cookbook_gen_comparison.<timestamp>.md`
-
-**Generate timestamp at start of each run:**
-```bash
-TIMESTAMP=$(date +%Y%m%d%H%M%S)
-mkdir -p reports/gen_results.${TIMESTAMP}
-```
-
-This allows re-running tests without overwriting previous results.
 
 ## Prerequisites
 
@@ -45,13 +37,13 @@ The `mcc-gaql-gen` tool automatically discovers resources from standard location
 | Field Metadata | `~/Library/Caches/mcc-gaql/field_metadata_enriched.json` | `~/.cache/mcc-gaql/field_metadata_enriched.json` |
 | Embeddings Cache | `~/Library/Caches/mcc-gaql/lancedb/` | `~/.cache/mcc-gaql/lancedb/` |
 
-**Important**: You typically do NOT need to specify file paths with `--queries` or `--metadata` flags - the tool finds them automatically.
+**Important**: You typically DO NOT need to specify file paths with `--queries` or `--metadata` flags - the tool finds them automatically.
 
 ## Execution Steps
 
 ### Step 1: Parse the Query Cookbook
 
-The query cookbook is at `resources/query_cookbook.toml`. Each entry has:
+The query cookbook is at `~/.config/mcc-gaql/query_cookbook.toml` (auto-discovered from config directory). Each entry has:
 - `[entry_name]` - snake_case identifier
 - `description` - Natural language description (this is the INPUT to the generate command)
 - `query` - Reference GAQL query (this is the EXPECTED OUTPUT)
@@ -60,91 +52,86 @@ Example entry:
 ```toml
 [account_ids_with_access_and_traffic_last_week]
 description = """
-Find accounts that have clicks in last 7 days
+Get me account IDs with clicks in the last week
 """
 query = """
 SELECT
 	customer.id
 FROM customer
 WHERE
-	segments.date during LAST_7_DAYS
-	AND metrics.clicks > 1
+	segments.date during LAST_WEEK_MON_SUN
+	AND metrics.clicks > 0
 """
 ```
 
-### Step 2: For Each Entry, Execute Generate Command Using Subagents
+**Note**: The working copy at `resources/query_cookbook.toml` is typically identical to the config copy. During bundle installation, the resources copy is copied to `~/.config/mcc-gaql/`. Use the config directory path for consistency with `--validate` and auto-discovery.
 
-For each entry in the cookbook, use a subagent to run the generate command with the `--explain` flag to capture LLM reasoning:
+### Step 2: Run the Generation Test Script
 
-```bash
-mcc-gaql-gen generate "<description>" --use-query-cookbook --explain --no-defaults
-```
-
-**Using Subagents for Execution:**
-- Launch subagents (via Claude Code Agent tool) to execute generation commands
-- **Concurrency limit: 5** - Do not run more than 5 subagents simultaneously
-- Process entries in batches of 5, waiting for each batch to complete before starting the next
-- The `--explain` flag outputs LLM reasoning showing why specific fields, filters, and structures were chosen
-- Save each result to `reports/gen_results.${TIMESTAMP}/<entry_name>.txt`
-- Capture both the generated GAQL query AND the explanation output
-- This reveals the LLM's decision-making process beyond just the final query
-
-**Example batch execution pattern:**
-```bash
-# Define entries array
-ENTRIES=("account_ids_with_access_and_traffic_last_week" "accounts_with_traffic_last_week" ...)
-
-# Process in batches of 5
-for i in "${ENTRIES[@]}"; do
-    # Launch subagent for entry $i and save to reports/gen_results.${TIMESTAMP}/
-done
-# Wait for batch to complete before next batch
-```
-
-**Example subagent command to run `mcc-gaql-gen`:**
+Execute the Python script to run `mcc-gaql-gen generate` for all entries:
 
 ```bash
-cargo run -p mcc-gaql-gen --release -- generate "Show me daily impression share metrics for PMax last 30 days - need absolute top, budget lost, rank lost, and top impression share" --use-query-cookbook --explain --no-defaults 2>&1
+python3 scripts/run_cookbook_gen_test.py
 ```
 
-The `--use-query-cookbook` flag enables RAG search for similar examples from the cookbook. The tool automatically discovers the query cookbook from the standard config location - you do NOT need to specify `--queries <path>`.
+This script will:
+- Parse `~/.config/mcc-gaql/query_cookbook.toml` (auto-discovered)
+- Run `mcc-gaql-gen generate --explain --use-query-cookbook --no-defaults` for each entry
+- Process entries with **concurrency limit of 5**
+- Save results to `reports/gen_results.<timestamp>/`
 
-### Step 3: Capture and Compare Results
+**Options:**
+```bash
+# Specify custom cookbook path
+python3 scripts/run_cookbook_gen_test.py --cookbook /path/to/query_cookbook.toml
 
-For each comparison, evaluate:
+# Use cargo run instead of installed binary
+python3 scripts/run_cookbook_gen_test.py --mcc-gaql-gen "cargo run -p mcc-gaql-gen --release --"
 
-#### A. Selected Fields (SELECT clause)
-- Does the generated query select the same core fields?
-- Are identifying fields present (customer.id, campaign.id, etc.)?
-- Are metrics fields present (metrics.clicks, metrics.impressions, etc.)?
-- **Note**: Extra fields are acceptable; missing key fields are problematic
+# Test a single entry
+python3 scripts/run_cookbook_gen_test.py --entry account_ids_with_access_and_traffic_last_week
 
-#### B. Data Scope (FROM and WHERE clauses)
-- Is the same resource being queried (customer, campaign, keyword_view, etc.)?
-- Is the date range equivalent (LAST_7_DAYS vs LAST_WEEK_MON_SUN is OK if same semantics)?
-- Are the filter thresholds semantically similar (metrics.clicks > 0 vs > 1)?
+# Dry run (show what would be done)
+python3 scripts/run_cookbook_gen_test.py --dry-run
+```
 
-#### C. Semantic Equivalence
-- Would both queries return conceptually similar data?
-- **IGNORE**: Minor threshold differences (e.g., clicks > 0 vs clicks > 1)
-- **IGNORE**: Date literal variations (LAST_7_DAYS vs LAST_WEEK_MON_SUN)
-- **NOTE**: Using `--no-defaults` skips implicit `status = 'ENABLED'` filters for fair comparison against reference queries
+**Output format:** Each entry saves a JSON file with:
+```json
+{
+  "entry_name": "...",
+  "description": "...",
+  "reference_query": "...",
+  "generated_query": "...",
+  "explanation": "...",
+  "full_stdout": "...",
+  "status": "success|error|timeout",
+  "returncode": 0
+}
+```
 
-### Step 4: Classification System (with Explanation Context)
+### Step 3: Generate Comparison Report with Claude Code
 
-For each entry, examine the `--explain` output and classify the result as:
+Once the script completes, use Claude Code to analyze the results and generate the comparison report:
+
+1. Read all JSON result files from `reports/gen_results.<timestamp>/`
+2. For each entry, classify the result as EXCELLENT/GOOD/FAIR/POOR
+3. Generate `reports/query_cookbook_gen_comparison.<timestamp>.md`
+
+**Classification criteria:**
 
 | Category | Description | How Explanation Helps |
 |----------|-------------|----------------------|
 | **EXCELLENT** | Generated query is semantically equivalent; would return nearly identical data | LLM reasoning shows correct understanding of requirements and aligns with reference intent |
 | **GOOD** | Generated query captures main intent; minor differences in fields/filters | Reasoning is sound but LLM chose a slightly different approach (e.g., more comprehensive field set) |
 | **FAIR** | Generated query is on the right track but missing important fields or filters | Explanation reveals partial understanding or missing key requirement interpretation |
-| **POOR** | Generated query is incorrect or queries wrong resource entirely | LLM reasoning shows fundamental misunderstanding of the request or wrong scope
+| **POOR** | Generated query is incorrect or queries wrong resource entirely | LLM reasoning shows fundamental misunderstanding of the request or wrong scope |
 
-### Step 5: Output Format
+**Evaluation criteria:**
+- **Selected Fields**: Does the generated query select the same core fields? Extra fields are acceptable; missing key fields are problematic
+- **Data Scope**: Is the same resource being queried? Is the date range semantically equivalent?
+- **Semantic Equivalence**: Would both queries return conceptually similar data?
 
-Write results to `reports/query_cookbook_gen_comparison.${TIMESTAMP}.md` with this structure:
-
+**Output report format:**
 ```markdown
 # Query Cookbook Generation Comparison Report
 
@@ -173,26 +160,44 @@ Write results to `reports/query_cookbook_gen_comparison.${TIMESTAMP}.md` with th
 **Classification:** EXCELLENT/GOOD/FAIR/POOR
 
 **LLM Explanation Analysis:**
-- Reasoning Summary: <high-level summary from --explain output>
-- Key Decision Points: <list of decisions made by LLM>
-- Comparison to Intent: <did reasoning match expected behavior?>
-- Where It Diverged: <any discrepancy between explanation and actual output>
+- Reasoning Summary: <high-level summary>
+- Key Decision Points: <list of decisions>
+- Comparison to Intent: <did reasoning match expected?>
+- Where It Diverged: <discrepancy between explanation and output>
 
 **Analysis:**
 - Selected Fields: <comparison>
 - Data Scope: <comparison>
 - Semantic Equivalence: <assessment>
 
-**Key Differences (with Reasoning Context):**
-- <difference 1> - <relevant explanation snippet>
-- <difference 2> - <relevant explanation snippet>
+**Key Differences:**
+- <difference 1>
+- <difference 2>
 
 ---
 
 ## Overall Assessment
-
-<Summary of patterns observed, common failure modes, recommendations>
+<Summary of patterns, failure modes, recommendations>
 ```
+
+## Dynamic Discovery of Cookbook Entries
+
+To count entries accurately without false exclusions:
+
+```bash
+# CORRECT: Counts all entries (116)
+grep '^\[' ~/.config/mcc-gaql/query_cookbook.toml | wc -l
+
+# WRONG: Excludes entries containing 'version' or 'conversion' substrings
+grep '^\[' ~/.config/mcc-gaql/query_cookbook.toml | grep -v 'metadata\|version' | wc -l
+```
+
+The Python script correctly parses TOML and skips only actual `[metadata]` or `[version]` sections.
+
+## Time Estimate
+
+- Python script execution: ~60-90 minutes for 116 entries (5 concurrent workers, ~30-45 seconds per entry)
+- Report generation: ~15-20 minutes base + ~1 minute per 10 entries
 
 ## Special Considerations
 
@@ -201,14 +206,13 @@ Write results to `reports/query_cookbook_gen_comparison.${TIMESTAMP}.md` with th
    - Only use `--queries <path>` if the cookbook is in a non-standard location
    - When `--use-query-cookbook` is enabled, the system retrieves similar queries as RAG context
 
-2. **Using Subagents for Execution**
-   - Use the Claude Code Agent tool (with subagent type `general-purpose`) to run generation commands
-   - Subagents can execute `mcc-gaql-gen generate` commands and capture both output and explanation
-   - This enables automated execution for all 26 cookbook entries
-   - The `--explain` flag provides crucial context for understanding LLM decision-making
+2. **Using the Python Script**
+   - Handles TOML parsing, concurrency, timeouts, and JSON output automatically
+   - Creates timestamped directories automatically
+   - Saves both generated queries and LLM explanations for analysis
 
 3. **Additional Generate Options**
-   - `--explain`: Print explanation of the LLM selection process to stdout (REQUIRED for this analysis)
+   - `--explain`: Print explanation of the LLM selection process to stdout (captured by script)
    - `--no-defaults`: Skip implicit default filters like `status = 'ENABLED'`
    - `--validate`: Validate the generated query against Google Ads API (requires credentials)
    - `--profile <name>`: Specify which credentials profile to use for validation
@@ -223,40 +227,6 @@ Write results to `reports/query_cookbook_gen_comparison.${TIMESTAMP}.md` with th
    - Use the explanation output to understand WHY additional fields were added
 
 6. **Error Handling**
-   - If generation fails for an entry, document the error and classify as POOR
-   - Continue with remaining entries
+   - If generation fails for an entry, the script documents the error in the JSON
+   - Classification should be POOR for failed generations
    - Common issues: missing embeddings cache, missing enriched metadata, LLM connectivity
-
-## Dynamic Discovery of Cookbook Entries
-
-**New queries are continuously added to the cookbook.** To discover all entries dynamically rather than hardcoding them:
-
-```bash
-# Extract all entry names from the cookbook
-grep '^\[' resources/query_cookbook.toml | sed 's/\[\(.*\)\]/\1/' | grep -v 'metadata\|version'
-```
-
-Or use this pattern in subagent automation:
-
-```bash
-# Build array of entries dynamically
-ENTRIES=($(grep '^\[' resources/query_cookbook.toml | sed 's/\[\(.*\)\]/\1/' | grep -v 'metadata\|version'))
-
-# Get count
-echo "Total entries to test: ${#ENTRIES[@]}"
-```
-
-## Time Estimate
-
-Time estimates scale with the number of cookbook entries:
-
-- Per entry: ~30 seconds per generation (with `--explain`)
-- Subagent automation with batch processing (5 concurrent): ~15-20 seconds per entry
-- Report writeup: ~15-20 minutes base + ~1 minute per 10 entries
-
-**To estimate total time:**
-```bash
-ENTRY_COUNT=$(grep '^\[' resources/query_cookbook.toml | grep -cv 'metadata\|version')
-echo "Entries: $ENTRY_COUNT"
-echo "Estimated generation time: $((ENTRY_COUNT * 30 / 60)) minutes"
-```
