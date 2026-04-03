@@ -3294,6 +3294,31 @@ Respond ONLY with valid JSON:
     // Phase 4: Assemble Criteria
     // =========================================================================
 
+    /// Normalizes IN clause values from various LLM output formats to GAQL format.
+    /// Handles:
+    /// - Python/JSON lists: ['A', 'B'] -> ('A', 'B')
+    /// - Already correct GAQL: ('A', 'B') -> ('A', 'B')
+    /// - Single values without parens: 'A' -> ('A')
+    fn normalize_in_value(value: &str) -> String {
+        let trimmed = value.trim();
+
+        // Handle Python/JSON list format: ['A', 'B'] or ["A", "B"]
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            let inner = &trimmed[1..trimmed.len() - 1];
+            // Normalize inner quotes: "A" -> 'A' for GAQL
+            let normalized_inner = inner.replace('"', "'");
+            return format!("({})", normalized_inner);
+        }
+
+        // Handle already-parenthesized GAQL format: ('A', 'B')
+        if trimmed.starts_with('(') && trimmed.ends_with(')') {
+            return trimmed.to_string();
+        }
+
+        // Single value without parentheses - wrap it
+        format!("({})", trimmed)
+    }
+
     fn assemble_criteria(
         &self,
         user_query: &str,
@@ -3416,9 +3441,12 @@ Respond ONLY with valid JSON:
                         continue;
                     }
                 }
-                // IN/NOT IN: use ff.value directly (LLM provides the parenthesized list);
-                // escape_value would corrupt the inner quotes
-                "IN" | "NOT IN" => format!("{} {} {}", ff.field_name, op, ff.value),
+                // IN/NOT IN: normalize LLM-provided value to GAQL format
+                // LLM may return ['A', 'B'] or ('A', 'B') - normalize to GAQL format
+                "IN" | "NOT IN" => {
+                    let normalized_value = Self::normalize_in_value(&ff.value);
+                    format!("{} {} {}", ff.field_name, op, normalized_value)
+                }
                 // Numeric comparisons: skip quoting when value is a number
                 ">" | "<" | ">=" | "<=" => {
                     if escaped_value.parse::<f64>().is_ok() {
@@ -4651,5 +4679,63 @@ mod tests {
         validate_monetary_thresholds(&mut filter_fields, user_query);
 
         assert_eq!(filter_fields[0].value, "0"); // Preserved
+    }
+
+    #[test]
+    fn test_normalize_in_value_json_list() {
+        assert_eq!(
+            MultiStepRAGAgent::normalize_in_value("['MAXIMIZE_CONVERSIONS', 'TARGET_CPA']"),
+            "('MAXIMIZE_CONVERSIONS', 'TARGET_CPA')"
+        );
+    }
+
+    #[test]
+    fn test_normalize_in_value_double_quoted_list() {
+        assert_eq!(
+            MultiStepRAGAgent::normalize_in_value("[\"ENABLED\", \"PAUSED\"]"),
+            "('ENABLED', 'PAUSED')"
+        );
+    }
+
+    #[test]
+    fn test_normalize_in_value_gaql_format() {
+        // Already correct format should pass through
+        assert_eq!(
+            MultiStepRAGAgent::normalize_in_value("('ENABLED', 'PAUSED')"),
+            "('ENABLED', 'PAUSED')"
+        );
+    }
+
+    #[test]
+    fn test_normalize_in_value_single_value() {
+        // Single value without parens
+        assert_eq!(
+            MultiStepRAGAgent::normalize_in_value("'ENABLED'"),
+            "('ENABLED')"
+        );
+    }
+
+    #[test]
+    fn test_normalize_in_value_with_whitespace() {
+        assert_eq!(
+            MultiStepRAGAgent::normalize_in_value("  ['A', 'B']  "),
+            "('A', 'B')"
+        );
+    }
+
+    #[test]
+    fn test_normalize_in_value_empty_list() {
+        assert_eq!(
+            MultiStepRAGAgent::normalize_in_value("[]"),
+            "()"
+        );
+    }
+
+    #[test]
+    fn test_normalize_in_value_numbers() {
+        assert_eq!(
+            MultiStepRAGAgent::normalize_in_value("[1, 2, 3]"),
+            "(1, 2, 3)"
+        );
     }
 }
