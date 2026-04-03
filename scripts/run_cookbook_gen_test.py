@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Run mcc-gaql-gen generate for all cookbook entries.
-Writes intermediate results to reports/gen_results.<timestamp>/
+Writes intermediate results to tmp/gen_results.<timestamp>/
 """
 
 import argparse
@@ -260,7 +260,7 @@ def main():
         '--output', '-o',
         type=Path,
         default=None,
-        help='Output directory (default: reports/gen_results.<timestamp>)'
+        help='Output directory (default: tmp/gen_results.<timestamp>)'
     )
     parser.add_argument(
         '--workers', '-w',
@@ -337,7 +337,7 @@ def main():
         output_dir = args.output
     else:
         timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
-        output_dir = Path('reports') / f'gen_results.{timestamp}'
+        output_dir = Path('tmp') / f'gen_results.{timestamp}'
 
     if args.dry_run:
         print(f"Would create output directory: {output_dir}")

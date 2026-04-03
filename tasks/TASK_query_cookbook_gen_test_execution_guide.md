@@ -8,7 +8,7 @@ Test the effectiveness of `mcc-gaql-gen generate` command by comparing generated
 
 All test outputs are organized with timestamps to preserve historical runs:
 
-- **Intermediate outputs**: `reports/gen_results.<timestamp>/` directory (JSON files)
+- **Intermediate outputs**: `tmp/gen_results.<timestamp>/` directory (Markdown files)
 - **Comparison report**: `reports/query_cookbook_gen_comparison.<timestamp>.md`
 
 ## Prerequisites
@@ -78,7 +78,7 @@ This script will:
 - Parse `~/.config/mcc-gaql/query_cookbook.toml` (auto-discovered)
 - Run `mcc-gaql-gen generate --explain --use-query-cookbook --no-defaults` for each entry
 - Process entries with **concurrency limit of 5**
-- Save results to `reports/gen_results.<timestamp>/`
+- Save results to `tmp/gen_results.<timestamp>/`
 
 **Options:**
 ```bash
@@ -113,7 +113,7 @@ python3 scripts/run_cookbook_gen_test.py --dry-run
 
 Once the script completes, use Claude Code to analyze the results and generate the comparison report:
 
-1. Read all JSON result files from `reports/gen_results.<timestamp>/`
+1. Read all Markdown result files from `tmp/gen_results.<timestamp>/`
 2. For each entry, classify the result as EXCELLENT/GOOD/FAIR/POOR
 3. Generate `reports/query_cookbook_gen_comparison.<timestamp>.md`
 
