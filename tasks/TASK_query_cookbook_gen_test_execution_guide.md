@@ -70,7 +70,7 @@ WHERE
 
 #### Quick Verification (Recommended First Step)
 
-Before running against all 116 cookbook entries, **always start with a small test** to verify everything works:
+Before running against all cookbook entries, **always start with a small test** to verify everything works:
 
 ```bash
 # Test 3 random entries first (~2-3 minutes)
@@ -222,7 +222,7 @@ Once the script completes, use Claude Code to analyze the results and generate t
 To count entries accurately without false exclusions:
 
 ```bash
-# CORRECT: Counts all entries (116)
+# CORRECT: Counts all entries
 grep '^\[' ~/.config/mcc-gaql/query_cookbook.toml | wc -l
 
 # WRONG: Excludes entries containing 'version' or 'conversion' substrings
@@ -233,7 +233,7 @@ The Python script correctly parses TOML and skips only actual `[metadata]` or `[
 
 ## Time Estimate
 
-- Python script execution: ~60-90 minutes for 116 entries (5 concurrent workers, ~30-45 seconds per entry)
+- Python script execution: ~60-90 minutes for full cookbook (5 concurrent workers, ~30-45 seconds per entry)
 - Report generation: ~15-20 minutes base + ~1 minute per 10 entries
 
 ## Special Considerations
