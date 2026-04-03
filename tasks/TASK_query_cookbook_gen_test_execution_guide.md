@@ -68,7 +68,26 @@ WHERE
 
 ### Step 2: Run the Generation Test Script
 
-Execute the Python script to run `mcc-gaql-gen generate` for all entries:
+#### Quick Verification (Recommended First Step)
+
+Before running against all 116 cookbook entries, **always start with a small test** to verify everything works:
+
+```bash
+# Test 3 random entries first (~2-3 minutes)
+python3 scripts/run_cookbook_gen_test.py --random 3
+
+# Or test a specific entry you know well
+python3 scripts/run_cookbook_gen_test.py --entry account_ids_with_access_and_traffic_last_week
+```
+
+Review the generated Markdown files in `tmp/gen_results.<timestamp>/` to ensure:
+- Queries are being generated correctly
+- The output format looks good
+- No errors or timeouts
+
+#### Full Test Run
+
+Once verified, run against all entries:
 
 ```bash
 python3 scripts/run_cookbook_gen_test.py
@@ -91,22 +110,40 @@ python3 scripts/run_cookbook_gen_test.py --mcc-gaql-gen "cargo run -p mcc-gaql-g
 # Test a single entry
 python3 scripts/run_cookbook_gen_test.py --entry account_ids_with_access_and_traffic_last_week
 
+# Test N random entries (for quick validation or sampling)
+python3 scripts/run_cookbook_gen_test.py --random 10
+
+# Reproducible random selection (same seed = same entries)
+python3 scripts/run_cookbook_gen_test.py --random 10 --seed 42
+
 # Dry run (show what would be done)
 python3 scripts/run_cookbook_gen_test.py --dry-run
 ```
 
-**Output format:** Each entry saves a JSON file with:
-```json
-{
-  "entry_name": "...",
-  "description": "...",
-  "reference_query": "...",
-  "generated_query": "...",
-  "explanation": "...",
-  "full_stdout": "...",
-  "status": "success|error|timeout",
-  "returncode": 0
-}
+**Output format:** Each entry saves a Markdown file with:
+```markdown
+# Query Generation Result: [entry_name]
+
+## Description
+...
+
+## Reference Query
+```sql
+...
+```
+
+## Generated Query
+```sql
+...
+```
+
+## Status: SUCCESS (returncode: 0)
+
+## LLM Explanation
+...
+
+## Full Output
+...
 ```
 
 ### Step 3: Generate Comparison Report with Claude Code
@@ -207,7 +244,7 @@ The Python script correctly parses TOML and skips only actual `[metadata]` or `[
    - When `--use-query-cookbook` is enabled, the system retrieves similar queries as RAG context
 
 2. **Using the Python Script**
-   - Handles TOML parsing, concurrency, timeouts, and JSON output automatically
+   - Handles TOML parsing, concurrency, timeouts, and Markdown output automatically
    - Creates timestamped directories automatically
    - Saves both generated queries and LLM explanations for analysis
 
@@ -227,7 +264,7 @@ The Python script correctly parses TOML and skips only actual `[metadata]` or `[
    - Use the explanation output to understand WHY additional fields were added
 
 6. **Error Handling**
-   - If generation fails for an entry, the script documents the error in the JSON
+   - If generation fails for an entry, the script documents the error in the Markdown file
    - Classification should be POOR for failed generations
    - Common issues: missing embeddings cache, missing enriched metadata, LLM connectivity
 
