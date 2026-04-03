@@ -3319,6 +3319,21 @@ Respond ONLY with valid JSON:
         format!("({})", trimmed)
     }
 
+    /// Normalizes string literal values from LLM output.
+    /// Strips outer quotes if present, then returns the clean value.
+    fn normalize_string_value(value: &str) -> String {
+        let trimmed = value.trim();
+        // Strip outer quotes if present (both single and double)
+        if (trimmed.starts_with('\'') && trimmed.ends_with('\''))
+            || (trimmed.starts_with('"') && trimmed.ends_with('"'))
+        {
+            let inner = &trimmed[1..trimmed.len() - 1];
+            inner.to_string()
+        } else {
+            trimmed.to_string()
+        }
+    }
+
     fn assemble_criteria(
         &self,
         user_query: &str,
@@ -3381,8 +3396,9 @@ Respond ONLY with valid JSON:
                 );
                 continue;
             }
-            // Escape single quotes in values
-            let escaped_value = ff.value.replace('\'', "\\'");
+            // Normalize string values (strip outer quotes) then escape single quotes
+            let normalized = Self::normalize_string_value(&ff.value);
+            let escaped_value = normalized.replace('\'', "\\'");
             let clause = match op.as_str() {
                 "IS NULL" | "IS NOT NULL" => format!("{} {}", ff.field_name, op),
                 "DURING" => {
@@ -4736,6 +4752,55 @@ mod tests {
         assert_eq!(
             MultiStepRAGAgent::normalize_in_value("[1, 2, 3]"),
             "(1, 2, 3)"
+        );
+    }
+
+    #[test]
+    fn test_normalize_string_value_single_quoted() {
+        assert_eq!(
+            MultiStepRAGAgent::normalize_string_value("'REMOVED'"),
+            "REMOVED"
+        );
+    }
+
+    #[test]
+    fn test_normalize_string_value_double_quoted() {
+        assert_eq!(
+            MultiStepRAGAgent::normalize_string_value("\"REMOVED\""),
+            "REMOVED"
+        );
+    }
+
+    #[test]
+    fn test_normalize_string_value_unquoted() {
+        assert_eq!(
+            MultiStepRAGAgent::normalize_string_value("REMOVED"),
+            "REMOVED"
+        );
+    }
+
+    #[test]
+    fn test_normalize_string_value_with_whitespace() {
+        assert_eq!(
+            MultiStepRAGAgent::normalize_string_value("  'REMOVED'  "),
+            "REMOVED"
+        );
+    }
+
+    #[test]
+    fn test_normalize_string_value_with_inner_quote() {
+        // Inner quotes should be preserved
+        assert_eq!(
+            MultiStepRAGAgent::normalize_string_value("'IT\\'S'"),
+            "IT\\'S"
+        );
+    }
+
+    #[test]
+    fn test_normalize_string_value_empty_quotes() {
+        assert_eq!(
+            MultiStepRAGAgent::normalize_string_value("''"),
+            ""
         );
     }
 }
