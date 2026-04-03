@@ -230,3 +230,22 @@ The Python script correctly parses TOML and skips only actual `[metadata]` or `[
    - If generation fails for an entry, the script documents the error in the JSON
    - Classification should be POOR for failed generations
    - Common issues: missing embeddings cache, missing enriched metadata, LLM connectivity
+
+## Troubleshooting
+
+### Embeddings Cache Outdated or Missing
+
+If you see this error when running the script:
+```
+ERROR: Embeddings cache is not built or is out-of-date.
+
+To generate GAQL queries, you must first build the embeddings cache:
+  mcc-gaql-gen index
+```
+
+**Solution:** Run the indexing command before the test:
+```bash
+mcc-gaql-gen index
+```
+
+This is a one-time operation that takes 3-5 minutes. After indexing completes, re-run the Python script.
