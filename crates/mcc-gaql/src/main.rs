@@ -1,5 +1,5 @@
 use std::{
-    fs::{self, File},
+    fs::File,
     io::{BufWriter, Write},
     process,
     time::Instant,
@@ -237,25 +237,33 @@ async fn main() -> Result<()> {
     let customer_id = resolved_config.customer_id.as_deref();
 
     // load stored query
-    if let Some(query_name) = args.stored_query {
-        let query_filename = resolved_config
-            .queries_filename
-            .as_ref()
-            .expect("queries_filename validated earlier");
-        let queries_path = config_file_path(query_filename).unwrap();
-
-        args.gaql_query = match get_queries_from_file(&queries_path).await {
-            Ok(map) => {
-                let query_entry = map.get(&query_name).expect("Query not found");
-                log::debug!("Found query '{query_name}'.");
-
-                Some(query_entry.query.to_owned())
+    if let Some(ref query_name) = args.stored_query.clone() {
+        if query_name == "ALL" {
+            // "ALL" is only valid with --validate; it will be handled in the validate block below
+            if !args.validate {
+                anyhow::bail!("-q ALL is only valid with --validate");
             }
-            Err(e) => {
-                let msg = format!("Unable to load query: {e}");
-                log::error!("{msg}");
-                println!("{msg}");
-                process::exit(1);
+            // Leave args.gaql_query as None; the validate block will load all queries
+        } else {
+            let query_filename = resolved_config
+                .queries_filename
+                .as_ref()
+                .expect("queries_filename validated earlier");
+            let queries_path = config_file_path(query_filename).unwrap();
+
+            args.gaql_query = match get_queries_from_file(&queries_path).await {
+                Ok(map) => {
+                    let query_entry = map.get(query_name).expect("Query not found");
+                    log::debug!("Found query '{query_name}'.");
+
+                    Some(query_entry.query.to_owned())
+                }
+                Err(e) => {
+                    let msg = format!("Unable to load query: {e}");
+                    log::error!("{msg}");
+                    println!("{msg}");
+                    process::exit(1);
+                }
             }
         }
     }
@@ -270,7 +278,7 @@ async fn main() -> Result<()> {
     }
 
     // obtain Google Ads API credentials
-    let api_context = match googleads::get_api_access(&googleads::ApiAccessConfig {
+    let api_context = googleads::get_api_access(&googleads::ApiAccessConfig {
         mcc_customer_id: mcc_customer_id.to_string(),
         token_cache_filename: resolved_config.token_cache_filename.clone(),
         user_email: user_email.map(|s| s.to_string()),
@@ -279,47 +287,58 @@ async fn main() -> Result<()> {
     })
     .await
     .context(format!(
-        "Initial OAuth2 authentication failed for MCC: {}, User: {:?}",
+        "OAuth2 authentication failed for MCC: {}, User: {:?}",
         mcc_customer_id, user_email
-    )) {
-        Ok(a) => a,
-        Err(e) => {
-            log::warn!(
-                "Authentication failed: {}. Attempting re-auth by clearing token cache",
-                e
-            );
-
-            // remove cached token to force re-auth and try again
-            let token_cache_path = config_file_path(&resolved_config.token_cache_filename)
-                .context("Failed to determine token cache file path")?;
-
-            fs::remove_file(&token_cache_path).context(format!(
-                "Failed to remove invalid token cache at: {}",
-                token_cache_path.display()
-            ))?;
-
-            log::info!("Removed cached token at: {}", token_cache_path.display());
-
-            googleads::get_api_access(&googleads::ApiAccessConfig {
-                mcc_customer_id: mcc_customer_id.to_string(),
-                token_cache_filename: resolved_config.token_cache_filename.clone(),
-                user_email: user_email.map(|s| s.to_string()),
-                dev_token: resolved_config.dev_token.clone(),
-                use_remote_auth: resolved_config.remote_auth,
-            })
-            .await
-            .context(format!(
-                "Re-authentication failed after clearing token cache. \
-                 MCC: {}, User: {:?}, Token cache: {}",
-                mcc_customer_id,
-                user_email,
-                token_cache_path.display()
-            ))?
-        }
-    };
+    ))?;
 
     // Validate query without executing it
     if args.validate {
+        // -q ALL --validate: validate every query in the cookbook
+        if args.stored_query.as_deref() == Some("ALL") {
+            let query_filename = resolved_config
+                .queries_filename
+                .as_ref()
+                .expect("queries_filename validated earlier");
+            let queries_path = config_file_path(query_filename).unwrap();
+
+            let map = match get_queries_from_file(&queries_path).await {
+                Ok(m) => m,
+                Err(e) => {
+                    eprintln!("Unable to load queries: {e}");
+                    process::exit(1);
+                }
+            };
+
+            let total = map.len();
+            let mut passed = 0usize;
+
+            // Sort by name for deterministic output
+            let mut names: Vec<&String> = map.keys().collect();
+            names.sort();
+
+            for name in names {
+                let query = &map[name].query;
+                match googleads::validate_gaql_query(api_context.clone(), mcc_customer_id, query)
+                    .await
+                {
+                    Ok(()) => {
+                        eprintln!("{name}: PASSED");
+                        passed += 1;
+                    }
+                    Err(e) => {
+                        eprintln!("{name}: FAILED: {e}");
+                    }
+                }
+            }
+
+            eprintln!("\n{passed}/{total} queries passed");
+            if passed < total {
+                process::exit(1);
+            }
+            return Ok(());
+        }
+
+        // Single query validation
         if let Some(query) = args.gaql_query.as_deref() {
             match googleads::validate_gaql_query(api_context, mcc_customer_id, query).await {
                 Ok(()) => {

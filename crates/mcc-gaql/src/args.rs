@@ -84,7 +84,7 @@ pub struct Cli {
     pub list_child_accounts: bool,
 
     /// Query GoogleAdsFieldService to retrieve available fields
-    #[clap(short, long)]
+    #[clap(long)]
     pub field_service: bool,
 
     /// Force query to run across all linked child accounts (some may not be accessible)
