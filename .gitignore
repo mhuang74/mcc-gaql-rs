@@ -20,3 +20,4 @@ perf.data*
 
 *.gz
 .claude/
+/tmp/
