@@ -320,21 +320,22 @@ query = """
 
 [perf_max_campaigns_with_traffic_last_30_days]
 description = """
-Give me daily PMax performance last 30 days - need CTR, CPC, conv, rev, CPA, campaign IDs + names, and currency
+Give me daily PMax performance last 30 days - need CTR, CPC, conv, rev, ROAS, CPA, campaign IDs + names, and currency
 """
 query = """
-	SELECT 
-	  campaign.id, 
+	SELECT
+	  campaign.id,
 	  campaign.name,
   	campaign.advertising_channel_type,
 	  segments.date,
-	  metrics.impressions, 
-	  metrics.clicks, 
+	  metrics.impressions,
+	  metrics.clicks,
 	  metrics.ctr,
 	  metrics.cost_micros,
 	  metrics.average_cost,
 	  metrics.conversions,
 	  metrics.conversions_value,
+	  metrics.conversions_value_per_cost,
 	  metrics.cost_per_conversion,
 	  customer.currency_code 
 	FROM campaign 
@@ -369,24 +370,25 @@ query = """
 
 [campaigns_with_smart_bidding_by_spend]
 description = """
-Pull top 25 Smart Bidding campaigns by spend (>$1K) last week - need acct and campaign IDs + names, budget, bid strategy, CPC, and conv metrics with currency
+Pull top 25 Smart Bidding campaigns by spend (>$1K) last week - need acct and campaign IDs + names, budget, bid strategy, CPC, conv metrics, and ROAS with currency
 """
 query = """
-	SELECT 
-	  customer.id, 
+	SELECT
+	  customer.id,
 	  customer.descriptive_name,
 	  customer.currency_code,
-	  campaign.id, 
+	  campaign.id,
 	  campaign.name,
 	  campaign.advertising_channel_type,
 	  campaign.bidding_strategy_type,
 	  campaign_budget.amount_micros,
 	  metrics.average_cpc,
-	  metrics.clicks, 
+	  metrics.clicks,
 	  metrics.cost_micros,
 	  metrics.conversions,
 	  metrics.cost_per_conversion,
- 	  metrics.conversions_value
+	  metrics.conversions_value,
+	  metrics.conversions_value_per_cost
 	FROM campaign
 	WHERE
 	  campaign.bidding_strategy_type IN ('MAXIMIZE_CONVERSIONS', 'MAXIMIZE_CONVERSION_VALUE', 'TARGET_CPA', 'TARGET_ROAS') 
@@ -399,24 +401,25 @@ query = """
 
 [campaigns_shopping_campaign_performance]
 description = """
-Get me Shopping campaigns by spend (>$100) last 30 days - need acct and campaign details, budget, bid strategy, CPC, and conv metrics with currency
+Get me Shopping campaigns by spend (>$100) last 30 days - need acct and campaign details, budget, bid strategy, CPC, conv metrics, and ROAS with currency
 """
 query = """
-	SELECT 
-	  customer.id, 
+	SELECT
+	  customer.id,
 	  customer.descriptive_name,
 	  customer.currency_code,
-	  campaign.id, 
+	  campaign.id,
 	  campaign.name,
 	  campaign.advertising_channel_type,
 	  campaign.bidding_strategy_type,
 	  campaign_budget.amount_micros,
 	  metrics.average_cpc,
-	  metrics.clicks, 
+	  metrics.clicks,
 	  metrics.cost_micros,
 	  metrics.conversions,
 	  metrics.cost_per_conversion,
- 	  metrics.conversions_value
+	  metrics.conversions_value,
+	  metrics.conversions_value_per_cost
 	FROM campaign
 	WHERE
 	  campaign.advertising_channel_type IN ('SHOPPING') 
@@ -541,7 +544,7 @@ query = """
 
 [locations_with_highest_revenue_per_conversion]
 description = """
-Pull performance data for top 20 locations for each campaign by rev per conv (>10 conv) last 7 days - need account and campaign info, geo target IDs, and conversion metrics with currency
+Pull performance data for top 20 locations for each campaign by rev per conv (>10 conv) last 7 days - need account and campaign info, geo target IDs, conversion metrics, and ROAS with currency
 """
 query = """
 SELECT
@@ -561,6 +564,7 @@ SELECT
   metrics.conversions,
   metrics.cost_per_conversion,
   metrics.conversions_value,
+  metrics.conversions_value_per_cost,
   metrics.value_per_conversion
 FROM location_view
 WHERE
@@ -739,7 +743,7 @@ ORDER BY campaign.name
 
 [campaigns_with_performance_last_7_days]
 description = """
-Get me campaign performance last 7 days - need impressions, clicks, spend, conversions, conversion value, and CPA
+Get me campaign performance last 7 days - need impressions, clicks, spend, conversions, conversion value, ROAS, and CPA
 """
 query = """
 SELECT
@@ -753,6 +757,7 @@ SELECT
   metrics.cost_micros,
   metrics.conversions,
   metrics.conversions_value,
+  metrics.conversions_value_per_cost,
   metrics.cost_per_conversion,
   segments.date
 FROM campaign
@@ -786,7 +791,7 @@ ORDER BY metrics.cost_micros DESC
 
 [search_terms_for_intent_clustering]
 description = """
-Pull all search terms with performance data last 30 days - need impressions, clicks, spend, conversions, and value for intent analysis
+Pull all search terms with performance data last 30 days - need impressions, clicks, spend, conversions, conversion value, ROAS, and all conversions for intent analysis
 """
 query = """
 SELECT
@@ -801,6 +806,7 @@ SELECT
   metrics.cost_micros,
   metrics.conversions,
   metrics.conversions_value,
+  metrics.conversions_value_per_cost,
   metrics.all_conversions
 FROM search_term_view
 WHERE segments.date DURING LAST_30_DAYS
@@ -1031,7 +1037,7 @@ WHERE campaign.status = 'ENABLED'
 
 [pmax_campaigns_performance]
 description = """
-Get me Performance Max campaigns performance last 30 days - need impressions, clicks, spend, conversions, and conversion value
+Get me Performance Max campaigns performance last 30 days - need impressions, clicks, spend, conversions, conversion value, ROAS, and CPA
 """
 query = """
 SELECT
@@ -1045,6 +1051,7 @@ SELECT
   metrics.cost_micros,
   metrics.conversions,
   metrics.conversions_value,
+  metrics.conversions_value_per_cost,
   metrics.cost_per_conversion
 FROM campaign
 WHERE campaign.advertising_channel_type = 'PERFORMANCE_MAX'
@@ -1812,5 +1819,794 @@ WHERE
   campaign.advertising_channel_type = 'DISPLAY'
   AND campaign.status = 'ENABLED'
   AND segments.date DURING LAST_30_DAYS
+"""
+
+# ============================================================================
+# Queries from Google Ads API documentation
+# https://developers.google.com/google-ads/api/docs/assets/fetching-assets
+# ============================================================================
+
+[assets_catalog]
+description = """
+List all assets in my account - need asset ID, name, resource name, and type
+"""
+query = """
+SELECT
+  asset.id,
+  asset.name,
+  asset.resource_name,
+  asset.type
+FROM asset
+"""
+
+[assets_youtube_video]
+description = """
+Show me all YouTube video assets in my account - need asset ID, name, resource name, and YouTube video ID
+"""
+query = """
+SELECT
+  asset.id,
+  asset.name,
+  asset.resource_name,
+  asset.youtube_video_asset.youtube_video_id
+FROM asset
+WHERE asset.type = 'YOUTUBE_VIDEO'
+"""
+
+[ad_group_assets_with_performance]
+description = """
+Get me ad group asset clicks and impressions last month - need ad group and asset IDs ordered by impressions
+"""
+query = """
+SELECT
+  ad_group.id,
+  asset.id,
+  metrics.clicks,
+  metrics.impressions
+FROM ad_group_asset
+WHERE segments.date DURING LAST_MONTH
+ORDER BY metrics.impressions DESC
+"""
+
+[ad_group_ad_asset_performance_labels]
+description = """
+Pull ad-level asset performance last month - need field type, performance label, impressions, clicks, cost, and conversions sorted by performance label
+"""
+query = """
+SELECT
+  ad_group_ad_asset_view.ad_group_ad,
+  ad_group_ad_asset_view.asset,
+  ad_group_ad_asset_view.field_type,
+  ad_group_ad_asset_view.performance_label,
+  metrics.impressions,
+  metrics.clicks,
+  metrics.cost_micros,
+  metrics.conversions
+FROM ad_group_ad_asset_view
+WHERE segments.date DURING LAST_MONTH
+ORDER BY ad_group_ad_asset_view.performance_label
+"""
+
+# ============================================================================
+# Queries from Google Ads API documentation
+# https://developers.google.com/google-ads/api/performance-max/campaign-reporting
+# ============================================================================
+
+[pmax_placement_view_performance]
+description = """
+Show me where my PMax ads appeared last 30 days - need placement display name, URL, type, campaign ID, and impression count
+"""
+query = """
+SELECT
+  performance_max_placement_view.display_name,
+  performance_max_placement_view.placement,
+  performance_max_placement_view.placement_type,
+  performance_max_placement_view.target_url,
+  metrics.impressions,
+  campaign.id
+FROM performance_max_placement_view
+WHERE segments.date DURING LAST_30_DAYS
+"""
+
+[pmax_campaigns_by_network_and_video]
+description = """
+Break down my PMax campaigns by ad network type and video/product data usage last 30 days - need network type, flags for video and product data usage, impressions, clicks, conversions, and spend
+"""
+query = """
+SELECT
+  campaign.name,
+  segments.ad_network_type,
+  segments.ad_using_product_data,
+  segments.ad_using_video,
+  metrics.impressions,
+  metrics.clicks,
+  metrics.conversions,
+  metrics.cost_micros
+FROM campaign
+WHERE
+  campaign.advertising_channel_type = 'PERFORMANCE_MAX'
+  AND segments.date DURING LAST_30_DAYS
+"""
+
+[pmax_campaigns_with_feed_types]
+description = """
+Get me PMax campaign IDs and their configured feed types - useful for identifying business verticals and campaign configurations
+"""
+query = """
+SELECT
+  campaign.id,
+  campaign.feed_types
+FROM campaign
+WHERE campaign.advertising_channel_type = 'PERFORMANCE_MAX'
+"""
+
+# ============================================================================
+# Queries from Google Ads API documentation
+# https://developers.google.com/google-ads/api/performance-max/asset-group-reporting
+# ============================================================================
+
+[pmax_asset_groups_ad_strength_coverage]
+description = """
+Show me ad strength for all enabled PMax asset groups - need group ID and strength rating
+"""
+query = """
+SELECT
+  asset_group.id,
+  asset_group.ad_strength
+FROM asset_group
+WHERE asset_group.status = 'ENABLED'
+"""
+
+[pmax_asset_groups_store_visit_conversions]
+description = """
+Get me store visit conversion metrics by PMax asset group - need all conversions, view-through conversions, and conversion value from store visits
+"""
+query = """
+SELECT
+  asset_group.id,
+  asset_group.name,
+  metrics.all_conversions,
+  metrics.view_through_conversions,
+  metrics.all_conversions_value,
+  segments.external_conversion_source
+FROM asset_group
+WHERE segments.external_conversion_source = 'STORE_VISITS'
+"""
+
+[pmax_asset_groups_new_customer_purchases]
+description = """
+Pull new customer purchase conversions by PMax asset group - need conversion count filtered to new customers and purchase category
+"""
+query = """
+SELECT
+  asset_group.id,
+  asset_group.name,
+  metrics.conversions,
+  segments.new_versus_returning_customers,
+  segments.conversion_action_category
+FROM asset_group
+WHERE
+  segments.new_versus_returning_customers = 'NEW'
+  AND segments.conversion_action_category = 'PURCHASE'
+"""
+
+# ============================================================================
+# Queries from Google Ads API documentation
+# https://developers.google.com/google-ads/api/performance-max/asset-reporting
+# ============================================================================
+
+[pmax_asset_group_assets_with_status]
+description = """
+Get primary status and policy details for all PMax asset group assets - need field type, status, policy topics, and full performance metrics (including ROAS) last 30 days
+"""
+query = """
+SELECT
+  campaign.id,
+  asset_group.id,
+  asset_group_asset.asset,
+  asset_group_asset.field_type,
+  asset_group_asset.primary_status,
+  asset_group_asset.primary_status_details,
+  asset_group_asset.primary_status_reasons,
+  asset_group_asset.policy_summary.policy_topic_entries,
+  asset_group_asset.status,
+  metrics.impressions,
+  metrics.clicks,
+  metrics.ctr,
+  metrics.conversions,
+  metrics.conversions_value,
+  metrics.conversions_value_per_cost,
+  metrics.cost_micros
+FROM asset_group_asset
+WHERE asset_group_asset.status != 'REMOVED'
+  AND segments.date DURING LAST_30_DAYS
+"""
+
+[pmax_asset_group_assets_by_network]
+description = """
+Break down PMax asset group asset performance by ad network type last 30 days - need field type, status, network, conversions, ROAS, impressions, and spend for enabled assets
+"""
+query = """
+SELECT
+  asset_group_asset.asset,
+  asset_group_asset.asset_group,
+  asset_group_asset.field_type,
+  asset_group_asset.status,
+  segments.ad_network_type,
+  metrics.conversions,
+  metrics.conversions_value,
+  metrics.conversions_value_per_cost,
+  metrics.cost_micros,
+  metrics.impressions,
+  metrics.clicks
+FROM asset_group_asset
+WHERE
+  segments.date DURING LAST_30_DAYS
+  AND asset_group_asset.status = 'ENABLED'
+"""
+
+[pmax_asset_group_top_combinations]
+description = """
+Show me top-performing asset combinations for all PMax asset groups - useful for understanding which creative combinations drive the best results
+"""
+query = """
+SELECT
+  campaign.id,
+  asset_group.id,
+  asset_group_top_combination_view.asset_group_top_combinations
+FROM asset_group_top_combination_view
+"""
+
+# ============================================================================
+# Queries from Google Ads API documentation
+# https://developers.google.com/google-ads/api/performance-max/retail-reporting
+# ============================================================================
+
+[pmax_retail_campaigns_performance]
+description = """
+Get me PMax retail campaign performance last 30 days - filtered to shopping campaigns with a merchant ID linked
+"""
+query = """
+SELECT
+  metrics.impressions,
+  metrics.clicks,
+  metrics.conversions,
+  metrics.cost_micros
+FROM campaign
+WHERE campaign.advertising_channel_type = 'PERFORMANCE_MAX'
+  AND campaign.shopping_setting.merchant_id IS NOT NULL
+  AND segments.date DURING LAST_30_DAYS
+"""
+
+[pmax_retail_campaigns_by_channel_and_product_data]
+description = """
+Break down PMax retail campaign performance by ad channel and whether product data was used last 30 days
+"""
+query = """
+SELECT
+  campaign.name,
+  segments.ad_network_type,
+  segments.ad_using_product_data,
+  metrics.impressions,
+  metrics.clicks,
+  metrics.conversions,
+  metrics.cost_micros
+FROM campaign
+WHERE campaign.advertising_channel_type = 'PERFORMANCE_MAX'
+  AND campaign.shopping_setting.merchant_id IS NOT NULL
+  AND segments.date DURING LAST_30_DAYS
+  AND segments.ad_using_product_data = true
+"""
+
+[pmax_retail_products_with_impression_share]
+description = """
+Pull PMax retail product-level metrics with impression share last 30 days - need product ID, budget/rank lost share, all conversions, clicks ordered by conversion volume
+"""
+query = """
+SELECT
+  segments.product_item_id,
+  metrics.clicks,
+  metrics.cost_micros,
+  metrics.impressions,
+  metrics.search_budget_lost_impression_share,
+  metrics.search_rank_lost_impression_share,
+  metrics.search_budget_lost_absolute_top_impression_share,
+  metrics.search_rank_lost_absolute_top_impression_share,
+  metrics.conversions,
+  metrics.all_conversions,
+  campaign.advertising_channel_type
+FROM shopping_performance_view
+WHERE campaign.advertising_channel_type = 'PERFORMANCE_MAX'
+  AND segments.date DURING LAST_30_DAYS
+  AND metrics.clicks > 0
+ORDER BY
+  metrics.all_conversions DESC,
+  metrics.conversions DESC,
+  metrics.clicks DESC
+"""
+
+[pmax_retail_products_with_cart_data]
+description = """
+Get me PMax retail product profitability metrics last 30 days - need cart size, order value, ROAS, gross profit margin, revenue, and units sold ordered by margin
+"""
+query = """
+SELECT
+  segments.product_item_id,
+  segments.product_title,
+  metrics.average_cart_size,
+  metrics.average_order_value_micros,
+  metrics.conversions,
+  metrics.conversions_value,
+  metrics.conversions_value_per_cost,
+  metrics.gross_profit_micros,
+  metrics.gross_profit_margin,
+  metrics.revenue_micros,
+  metrics.units_sold,
+  campaign.advertising_channel_type
+FROM shopping_performance_view
+WHERE campaign.advertising_channel_type = 'PERFORMANCE_MAX'
+  AND segments.date DURING LAST_30_DAYS
+  AND metrics.conversions > 0
+ORDER BY
+  metrics.gross_profit_margin DESC,
+  metrics.revenue_micros DESC
+"""
+
+[pmax_retail_campaigns_with_cart_data]
+description = """
+Pull PMax retail campaign profitability last 30 days - need gross profit, profit margin, average order value, and conversion data ordered by margin
+"""
+query = """
+SELECT
+  campaign.id,
+  campaign.name,
+  campaign.advertising_channel_type,
+  metrics.impressions,
+  metrics.clicks,
+  metrics.conversions,
+  metrics.cost_micros,
+  metrics.average_order_value_micros,
+  metrics.gross_profit_micros,
+  metrics.gross_profit_margin
+FROM campaign
+WHERE campaign.advertising_channel_type = 'PERFORMANCE_MAX'
+  AND campaign.shopping_setting.merchant_id IS NOT NULL
+  AND segments.date DURING LAST_30_DAYS
+ORDER BY
+  metrics.gross_profit_margin DESC,
+  metrics.average_order_value_micros DESC
+"""
+
+[pmax_retail_product_groups_by_campaign]
+description = """
+Get me product group performance for all PMax campaigns last 30 days - need asset group ID, listing group filter ID, impressions, clicks, conversions, and spend
+"""
+query = """
+SELECT
+  asset_group.id,
+  asset_group_listing_group_filter.id,
+  metrics.impressions,
+  metrics.clicks,
+  metrics.conversions,
+  metrics.cost_micros
+FROM asset_group_product_group_view
+WHERE segments.date DURING LAST_30_DAYS
+"""
+
+[pmax_retail_product_groups_by_brand]
+description = """
+Analyze PMax retail product group performance by brand last 30 days - need brand value, impressions, clicks, conversions, and spend
+"""
+query = """
+SELECT
+  asset_group_listing_group_filter.case_value.product_brand.value,
+  metrics.impressions,
+  metrics.clicks,
+  metrics.conversions,
+  metrics.cost_micros
+FROM asset_group_product_group_view
+WHERE segments.date DURING LAST_30_DAYS
+"""
+
+# ============================================================================
+# Queries from Google Ads API documentation
+# https://developers.google.com/google-ads/api/docs/app-campaigns/reporting
+# ============================================================================
+
+[app_campaigns_with_performance]
+description = """
+Show me App campaign performance last 30 days by day - need app ID, store, bidding goal, sub-type, impressions, and clicks for both App and App for Engagement campaigns
+"""
+query = """
+SELECT
+  campaign.id,
+  campaign.name,
+  campaign.advertising_channel_type,
+  campaign.advertising_channel_sub_type,
+  campaign.app_campaign_setting.app_id,
+  campaign.app_campaign_setting.app_store,
+  campaign.app_campaign_setting.bidding_strategy_goal_type,
+  segments.date,
+  metrics.impressions,
+  metrics.clicks
+FROM campaign
+WHERE
+  campaign.advertising_channel_type = 'MULTI_CHANNEL'
+  AND campaign.advertising_channel_sub_type IN ('APP_CAMPAIGN', 'APP_CAMPAIGN_FOR_ENGAGEMENT')
+  AND segments.date DURING LAST_30_DAYS
+"""
+
+[app_campaign_top_apps_by_conversions]
+description = """
+Find my top 10 apps by conversion volume - need app ID, all conversions, and view-through conversions filtered by app ID pattern
+"""
+query = """
+SELECT
+  campaign.app_campaign_setting.app_id,
+  metrics.all_conversions,
+  metrics.view_through_conversions
+FROM campaign
+WHERE campaign.app_campaign_setting.app_id LIKE 'com.example.%'
+ORDER BY metrics.all_conversions DESC
+LIMIT 10
+"""
+
+# ============================================================================
+# Queries from Google Ads API documentation
+# https://developers.google.com/google-ads/api/docs/demand-gen/reporting
+# ============================================================================
+
+[demand_gen_campaigns]
+description = """
+Get me Demand Gen campaign attributes - need campaign ID, status, and bidding strategy type
+"""
+query = """
+SELECT
+  campaign.id,
+  campaign.status,
+  campaign.bidding_strategy_type
+FROM campaign
+WHERE campaign.advertising_channel_type = 'DEMAND_GEN'
+"""
+
+[demand_gen_multi_asset_ads]
+description = """
+Show me Demand Gen Multi-Asset Ad creative details - need all image types, logo, headlines, descriptions, business name, CTA text, and lead form flag
+"""
+query = """
+SELECT
+  ad_group_ad.ad.id,
+  ad_group_ad.ad.type,
+  ad_group_ad.ad.demand_gen_multi_asset_ad.marketing_images,
+  ad_group_ad.ad.demand_gen_multi_asset_ad.square_marketing_images,
+  ad_group_ad.ad.demand_gen_multi_asset_ad.portrait_marketing_images,
+  ad_group_ad.ad.demand_gen_multi_asset_ad.logo_images,
+  ad_group_ad.ad.demand_gen_multi_asset_ad.headlines,
+  ad_group_ad.ad.demand_gen_multi_asset_ad.descriptions,
+  ad_group_ad.ad.demand_gen_multi_asset_ad.business_name,
+  ad_group_ad.ad.demand_gen_multi_asset_ad.call_to_action_text
+FROM ad_group_ad
+WHERE ad_group_ad.ad.type = 'DEMAND_GEN_MULTI_ASSET_AD'
+"""
+
+[demand_gen_carousel_ads]
+description = """
+Pull Demand Gen Carousel Ad specifications - need business name, logo image, headline, description, CTA text, and carousel card assets
+"""
+query = """
+SELECT
+  ad_group_ad.ad.id,
+  ad_group_ad.ad.type,
+  ad_group_ad.ad.demand_gen_carousel_ad.business_name,
+  ad_group_ad.ad.demand_gen_carousel_ad.logo_image,
+  ad_group_ad.ad.demand_gen_carousel_ad.headline,
+  ad_group_ad.ad.demand_gen_carousel_ad.description,
+  ad_group_ad.ad.demand_gen_carousel_ad.call_to_action_text,
+  ad_group_ad.ad.demand_gen_carousel_ad.carousel_cards
+FROM ad_group_ad
+WHERE ad_group_ad.ad.type = 'DEMAND_GEN_CAROUSEL_AD'
+"""
+
+[demand_gen_video_responsive_ads]
+description = """
+Get me Demand Gen Video Responsive Ad details - need breadcrumbs, business name, CTA options, descriptions, headlines, logos, long headlines, and videos
+"""
+query = """
+SELECT
+  ad_group_ad.ad.id,
+  ad_group_ad.ad.type,
+  ad_group_ad.ad.demand_gen_video_responsive_ad.breadcrumb1,
+  ad_group_ad.ad.demand_gen_video_responsive_ad.breadcrumb2,
+  ad_group_ad.ad.demand_gen_video_responsive_ad.business_name,
+  ad_group_ad.ad.demand_gen_video_responsive_ad.call_to_actions,
+  ad_group_ad.ad.demand_gen_video_responsive_ad.descriptions,
+  ad_group_ad.ad.demand_gen_video_responsive_ad.headlines,
+  ad_group_ad.ad.demand_gen_video_responsive_ad.logo_images,
+  ad_group_ad.ad.demand_gen_video_responsive_ad.long_headlines,
+  ad_group_ad.ad.demand_gen_video_responsive_ad.videos
+FROM ad_group_ad
+WHERE ad_group_ad.ad.type = 'DEMAND_GEN_VIDEO_RESPONSIVE_AD'
+"""
+
+# ============================================================================
+# Queries from Google Ads API documentation
+# https://developers.google.com/google-ads/api/docs/campaigns/local-service-campaigns
+# ============================================================================
+
+[local_services_campaigns]
+description = """
+Get me Local Services campaigns with budget details - need campaign ID, status, budget ID, period, amount, and budget type
+"""
+query = """
+SELECT
+  campaign.id,
+  campaign.status,
+  campaign_budget.id,
+  campaign_budget.period,
+  campaign_budget.amount_micros,
+  campaign_budget.type
+FROM campaign
+WHERE campaign.advertising_channel_type = 'LOCAL_SERVICES'
+"""
+
+[local_services_leads]
+description = """
+Show me all Local Services leads - need lead type, category, service, contact details, status, charge flag, and credit state with last update time
+"""
+query = """
+SELECT
+  local_services_lead.lead_type,
+  local_services_lead.category_id,
+  local_services_lead.service_id,
+  local_services_lead.contact_details,
+  local_services_lead.lead_status,
+  local_services_lead.creation_date_time,
+  local_services_lead.locale,
+  local_services_lead.lead_charged,
+  local_services_lead.credit_details.credit_state,
+  local_services_lead.credit_details.credit_state_last_update_date_time
+FROM local_services_lead
+"""
+
+[local_services_lead_conversations_phone]
+description = """
+Pull Local Services phone call conversation details - need conversation channel, participant type, lead, event time, call duration, and recording URL
+"""
+query = """
+SELECT
+  local_services_lead_conversation.id,
+  local_services_lead_conversation.conversation_channel,
+  local_services_lead_conversation.participant_type,
+  local_services_lead_conversation.lead,
+  local_services_lead_conversation.event_date_time,
+  local_services_lead_conversation.phone_call_details.call_duration_millis,
+  local_services_lead_conversation.phone_call_details.call_recording_url,
+  local_services_lead_conversation.message_details.text,
+  local_services_lead_conversation.message_details.attachment_urls
+FROM local_services_lead_conversation
+WHERE local_services_lead_conversation.conversation_channel = 'PHONE_CALL'
+"""
+
+[local_services_employees]
+description = """
+Get me Local Services employee profiles - need status, type, educational credentials (degrees, residencies, fellowships), job title, years practicing, languages, and name
+"""
+query = """
+SELECT
+  local_services_employee.status,
+  local_services_employee.type,
+  local_services_employee.university_degrees,
+  local_services_employee.residencies,
+  local_services_employee.fellowships,
+  local_services_employee.job_title,
+  local_services_employee.year_started_practicing,
+  local_services_employee.languages_spoken,
+  local_services_employee.first_name,
+  local_services_employee.middle_name,
+  local_services_employee.last_name
+FROM local_services_employee
+"""
+
+# ============================================================================
+# Queries from cohnen/mcp-google-ads great-gaql-samples.md
+# https://github.com/cohnen/mcp-google-ads/blob/main/docs/great-gaql-samples.md
+# ============================================================================
+
+[campaigns_with_device_and_dayofweek_performance_last_30_days]
+description = """
+Break down my campaign performance by device and day of week last 30 days - need device, day, impressions, clicks, conversions, ROAS, and spend for enabled campaigns
+"""
+query = """
+SELECT
+  campaign.id,
+  campaign.name,
+  segments.device,
+  segments.day_of_week,
+  metrics.impressions,
+  metrics.clicks,
+  metrics.conversions,
+  metrics.conversions_value,
+  metrics.conversions_value_per_cost,
+  metrics.cost_micros,
+  metrics.cost_per_conversion
+FROM campaign
+WHERE
+  campaign.status = 'ENABLED'
+  AND segments.date DURING LAST_30_DAYS
+  AND metrics.impressions > 100
+ORDER BY
+  segments.device,
+  segments.day_of_week,
+  metrics.conversions_value DESC
+LIMIT 1000
+"""
+
+[campaigns_with_bidding_strategy_daily_performance]
+description = """
+Analyze my bidding strategy effectiveness last 30 days by day - need strategy name, type, target CPA/ROAS settings, conversion metrics, and actual ROAS to compare automated bidding approaches
+"""
+query = """
+SELECT
+  campaign.id,
+  campaign.name,
+  campaign.bidding_strategy_type,
+  bidding_strategy.id,
+  bidding_strategy.name,
+  bidding_strategy.type,
+  campaign.target_cpa.target_cpa_micros,
+  campaign.target_roas.target_roas,
+  segments.date,
+  metrics.impressions,
+  metrics.clicks,
+  metrics.conversions,
+  metrics.conversions_value,
+  metrics.conversions_value_per_cost,
+  metrics.cost_micros,
+  metrics.average_cpc,
+  metrics.cost_per_conversion
+FROM campaign
+WHERE
+  campaign.status = 'ENABLED'
+  AND segments.date DURING LAST_30_DAYS
+  AND metrics.impressions > 0
+ORDER BY
+  campaign.bidding_strategy_type,
+  segments.date
+"""
+
+[keywords_with_impression_share_opportunities]
+description = """
+Show me keyword impression share opportunities last 30 days - need match type, impression share, rank-lost and budget-lost share, conversion metrics, and ROAS to find high-performing keywords limited by budget or rank
+"""
+query = """
+SELECT
+  campaign.id,
+  campaign.name,
+  ad_group.id,
+  ad_group.name,
+  ad_group_criterion.criterion_id,
+  ad_group_criterion.keyword.text,
+  ad_group_criterion.keyword.match_type,
+  metrics.impressions,
+  metrics.clicks,
+  metrics.conversions,
+  metrics.conversions_value,
+  metrics.conversions_value_per_cost,
+  metrics.cost_micros,
+  metrics.absolute_top_impression_percentage,
+  metrics.top_impression_percentage,
+  metrics.search_impression_share,
+  metrics.search_rank_lost_impression_share
+FROM keyword_view
+WHERE
+  campaign.status = 'ENABLED'
+  AND ad_group.status = 'ENABLED'
+  AND ad_group_criterion.status = 'ENABLED'
+  AND segments.date DURING LAST_30_DAYS
+  AND metrics.impressions > 10
+ORDER BY
+  metrics.conversions_value DESC,
+  metrics.search_impression_share ASC
+"""
+
+[shopping_products_with_roas_performance]
+description = """
+Pull shopping product performance last 30 days - need product brand, type hierarchy, item ID, title, conversion metrics, and ROAS to identify high-performing products and categories
+"""
+query = """
+SELECT
+  campaign.id,
+  campaign.name,
+  campaign.advertising_channel_type,
+  campaign.status,
+  ad_group.id,
+  ad_group.name,
+  ad_group.status,
+  segments.product_item_id,
+  segments.product_title,
+  segments.product_type_l1,
+  segments.product_type_l2,
+  segments.product_type_l3,
+  segments.product_type_l4,
+  segments.product_type_l5,
+  segments.product_brand,
+  metrics.impressions,
+  metrics.clicks,
+  metrics.conversions,
+  metrics.conversions_value,
+  metrics.conversions_value_per_cost,
+  metrics.cost_micros,
+  metrics.ctr,
+  metrics.cost_per_conversion
+FROM shopping_performance_view
+WHERE
+  campaign.advertising_channel_type = 'SHOPPING'
+  AND campaign.status = 'ENABLED'
+  AND ad_group.status = 'ENABLED'
+  AND segments.date DURING LAST_30_DAYS
+  AND metrics.impressions > 0
+ORDER BY
+  metrics.conversions_value DESC
+"""
+
+[ad_schedule_with_bid_modifier_performance]
+description = """
+Show me ad schedule performance by day and hour last 14 days - need bid modifiers, conversion metrics, and ROAS to find the best-performing time slots and tune schedule-based bid adjustments
+"""
+query = """
+SELECT
+  campaign.id,
+  campaign.name,
+  campaign_criterion.ad_schedule.day_of_week,
+  campaign_criterion.ad_schedule.start_hour,
+  campaign_criterion.ad_schedule.end_hour,
+  campaign_criterion.bid_modifier,
+  segments.date,
+  metrics.impressions,
+  metrics.clicks,
+  metrics.conversions,
+  metrics.conversions_value,
+  metrics.conversions_value_per_cost,
+  metrics.cost_micros,
+  metrics.ctr,
+  metrics.value_per_conversion
+FROM ad_schedule_view
+WHERE
+  campaign.status = 'ENABLED'
+  AND segments.date DURING LAST_14_DAYS
+ORDER BY
+  campaign_criterion.ad_schedule.day_of_week,
+  campaign_criterion.ad_schedule.start_hour
+"""
+
+[campaigns_with_budget_utilization_last_30_days]
+description = """
+Get me campaign budget utilization last 30 days - need daily budget amount, delivery method, recommended budget, actual spend, and ROAS to identify campaigns consistently maxing out their budget
+"""
+query = """
+SELECT
+  campaign.id,
+  campaign.name,
+  campaign.status,
+  campaign_budget.amount_micros,
+  campaign_budget.total_amount_micros,
+  campaign_budget.delivery_method,
+  campaign_budget.reference_count,
+  campaign_budget.has_recommended_budget,
+  campaign_budget.recommended_budget_amount_micros,
+  segments.date,
+  metrics.cost_micros,
+  metrics.impressions,
+  metrics.clicks,
+  metrics.conversions,
+  metrics.conversions_value,
+  metrics.conversions_value_per_cost
+FROM campaign
+WHERE
+  campaign.status IN ('ENABLED', 'PAUSED')
+  AND segments.date DURING LAST_30_DAYS
+ORDER BY
+  segments.date DESC,
+  metrics.cost_micros DESC
 """
 
