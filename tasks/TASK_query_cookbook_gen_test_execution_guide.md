@@ -227,40 +227,36 @@ Write results to `reports/query_cookbook_gen_comparison.${TIMESTAMP}.md` with th
    - Continue with remaining entries
    - Common issues: missing embeddings cache, missing enriched metadata, LLM connectivity
 
-## Complete List of Cookbook Entries to Test
+## Dynamic Discovery of Cookbook Entries
 
-From `resources/query_cookbook.toml`:
+**New queries are continuously added to the cookbook.** To discover all entries dynamically rather than hardcoding them:
 
-1. `account_ids_with_access_and_traffic_last_week`
-2. `accounts_with_traffic_last_week`
-3. `keywords_with_top_traffic_last_week`
-4. `accounts_with_perf_max_campaigns_last_week`
-5. `accounts_with_smart_campaigns_last_week`
-6. `accounts_with_local_campaigns_last_week`
-7. `accounts_with_shopping_campaigns_last_week`
-8. `accounts_with_multichannel_campaigns_last_week`
-9. `accounts_with_asset_sitelink_last_week`
-10. `accounts_with_asset_call_last_week`
-11. `accounts_with_asset_callout_last_week`
-12. `accounts_with_asset_app_last_week`
-13. `perf_max_campaigns_with_traffic_last_30_days`
-14. `asset_fields_with_traffic_ytd`
-15. `campaigns_with_smart_bidding_by_spend`
-16. `campaigns_shopping_campaign_performance`
-17. `smart_campaign_search_terms_with_top_spend`
-18. `all_search_terms_with_clicks`
-19. `search_terms_with_top_cpa`
-20. `search_terms_with_low_roas`
-21. `locations_with_highest_revenue_per_conversion`
-22. `asset_performance_rsa`
-23. `recent_campaign_changes`
-24. `recent_changes`
-25. `all_campaigns`
-26. `performance_max_impression_share`
+```bash
+# Extract all entry names from the cookbook
+grep '^\[' resources/query_cookbook.toml | sed 's/\[\(.*\)\]/\1/' | grep -v 'metadata\|version'
+```
+
+Or use this pattern in subagent automation:
+
+```bash
+# Build array of entries dynamically
+ENTRIES=($(grep '^\[' resources/query_cookbook.toml | sed 's/\[\(.*\)\]/\1/' | grep -v 'metadata\|version'))
+
+# Get count
+echo "Total entries to test: ${#ENTRIES[@]}"
+```
 
 ## Time Estimate
 
-- 26 entries × ~30 seconds per generation (with `--explain`) = ~13 minutes of generation time
-- Subagent automation can leverage explanation output to reduce analysis time: ~15 minutes
-- Report writeup: ~15 minutes
-- Total: ~40-45 minutes
+Time estimates scale with the number of cookbook entries:
+
+- Per entry: ~30 seconds per generation (with `--explain`)
+- Subagent automation with batch processing (5 concurrent): ~15-20 seconds per entry
+- Report writeup: ~15-20 minutes base + ~1 minute per 10 entries
+
+**To estimate total time:**
+```bash
+ENTRY_COUNT=$(grep '^\[' resources/query_cookbook.toml | grep -cv 'metadata\|version')
+echo "Entries: $ENTRY_COUNT"
+echo "Estimated generation time: $((ENTRY_COUNT * 30 / 60)) minutes"
+```
