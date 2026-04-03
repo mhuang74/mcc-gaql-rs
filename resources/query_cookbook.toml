@@ -311,7 +311,7 @@ query = """
 	FROM campaign_asset 
 	WHERE
 	  segments.date DURING LAST_WEEK_MON_SUN 
-	  AND campaign_asset.field_type = 'APP' 
+	  AND campaign_asset.field_type = 'MOBILE_APP'
 	  AND metrics.impressions > 1
 	ORDER BY 
 	  metrics.impressions DESC 
@@ -389,7 +389,7 @@ query = """
  	  metrics.conversions_value
 	FROM campaign
 	WHERE
-	  campaign.bidding_strategy_type IN ('MAXIMIZE_CLICKS', 'MAXIMIZE_CONVERSIONS', 'MAXIMIZE_CONVERSION_VALUE', 'TARGET_CPA', 'TARGET_ROAS', 'TARGET_SPEND') 
+	  campaign.bidding_strategy_type IN ('MAXIMIZE_CONVERSIONS', 'MAXIMIZE_CONVERSION_VALUE', 'TARGET_CPA', 'TARGET_ROAS') 
 	  AND campaign.status IN ('ENABLED') 
 	  AND segments.date DURING LAST_WEEK_MON_SUN 
 	  AND metrics.cost_micros > 1000000000
@@ -427,7 +427,7 @@ query = """
 
 [smart_campaign_search_terms_with_top_spend]
 description = """
-Show me volume and spend metrics (impressions, clicks, cost) from top 100 search terms by spend from Smart campaigns last 30 days.  need acct and campaign info with currency, and match type.
+Show me volume and spend metrics (impressions, clicks, cost) from top 100 search terms by spend from Smart campaigns last 30 days.  need acct and campaign info with currency.
 """
 query = """
 	SELECT 
@@ -438,7 +438,6 @@ query = """
 	  campaign.advertising_channel_type, 
 	  campaign.name, 
 	  smart_campaign_search_term_view.search_term,
-	  segments.search_term_match_type,
 	  metrics.impressions, 
 	  metrics.clicks, 
 	  metrics.cost_micros
@@ -1076,16 +1075,17 @@ WHERE campaign.advertising_channel_type = 'PERFORMANCE_MAX'
 
 [pmax_search_terms_query_rows]
 description = """
-Get PMax search terms for a specific campaign last 30 days - need search term text (requires single campaign filter)
+Get PMax search terms across all Performance Max campaigns last 30 days - need search term text with campaign info
 """
 query = """
 SELECT
   customer.id,
   customer.descriptive_name,
-  campaign_search_term_view.search_term,
-  campaign_search_term_view.campaign
+  campaign.id,
+  campaign.name,
+  campaign_search_term_view.search_term
 FROM campaign_search_term_view
-WHERE campaign_search_term_view.campaign = 'customers/1234567890/campaigns/23456012538'
+WHERE campaign.advertising_channel_type = 'PERFORMANCE_MAX'
   AND segments.date DURING LAST_30_DAYS
 LIMIT 100
 """
@@ -1775,8 +1775,8 @@ SELECT
   campaign.name,
   campaign.status,
   metrics.impressions,
-  metrics.video_views,
-  metrics.video_view_rate,
+  metrics.video_trueview_views,
+  metrics.video_trueview_view_rate,
   metrics.video_quartile_p25_rate,
   metrics.video_quartile_p50_rate,
   metrics.video_quartile_p75_rate,
