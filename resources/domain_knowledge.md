@@ -24,6 +24,39 @@
   Use `asset_field_type_view`. Do NOT use `asset` (static entity definition, no metrics support).
 - For Smart campaign performance with metrics:
   Use `campaign` with `advertising_channel_type IN ('SMART')`. Do NOT use `smart_campaign_setting` (configuration only, no metrics).
+- For campaign budget configuration WITH campaign identity (campaign.id, campaign.name, campaign.status):
+  Use `campaign` with `campaign_budget.*` fields. Do NOT use `campaign_budget` alone.
+  
+  The `campaign_budget` resource provides budget-level data in isolation (amount, delivery method, type).
+  The `campaign` resource provides the SAME budget fields PLUS campaign identity and metrics.
+  
+  **When to use `campaign` (most common):**
+  - User wants budget info for specific campaigns (needs campaign.id, campaign.name)
+  - User wants budget AND performance metrics (cost, impressions, conversions)
+  - User wants to analyze budget utilization/spend vs budget
+  - User asks for "campaign budgets" (plural implies per-campaign breakdown)
+  
+  **When to use `campaign_budget` (rare):**
+  - User explicitly asks for the budget ENTITY without campaign context
+  - User wants to list all budgets regardless of campaign association
+  - User is looking at budget-level attributes not tied to campaign performance
+- For bidding strategy analysis WITH per-campaign breakdown:
+  Use `campaign` with `bidding_strategy.*` and `campaign.target_cpa.*` / `campaign.target_roas.*` fields.
+  
+  **Resource comparison:**
+  - `bidding_strategy` → Aggregates metrics ACROSS ALL campaigns using that strategy
+  - `campaign` → Per-campaign metrics WITHIN each bidding strategy
+  
+  **When to use `campaign` (most common):**
+  - User asks for "bidding strategy effectiveness per campaign"
+  - User wants to compare campaigns using the same strategy
+  - User wants campaign-level bid settings (target CPA/ROAS)
+  - User mentions "campaign" anywhere in the request
+  
+  **When to use `bidding_strategy` (rare):**
+  - User explicitly asks for portfolio-level bidding strategy performance
+  - User wants to compare different bidding strategies to each other (not campaigns)
+  - User asks "how is my target CPA strategy performing overall"
 - For location-level performance data ("top locations", "best performing regions", "geo performance"):
   Use `location_view` with `campaign_criterion` fields. Each row represents a UNIQUE COMBINATION of campaign + geo target, so it naturally supports "top locations per campaign" analysis.
   The `campaign_criterion.location.geo_target_constant` field provides the geo target ID.
@@ -175,3 +208,17 @@ When the request asks for asset content (phrases: "include [X] text", "show me t
 - asset.id
 - asset.name
 - asset.type
+
+### Budget Utilization Analysis Pattern
+When the request mentions budget analysis (phrases: "budget utilization", "budget vs spend", "budget usage", "maxing out budget", "budget efficiency"):
+- ALWAYS include `campaign_budget.amount_micros` (daily budget)
+- ALWAYS include `metrics.cost_micros` (actual spend)
+- Include `campaign_budget.delivery_method` (standard vs accelerated)
+- Include `campaign_budget.has_recommended_budget` and `campaign_budget.recommended_budget_amount_micros` if available
+- For budget-constrained analysis, include `metrics.search_budget_lost_impression_share`
+
+### Spend Analysis Pattern
+When the request mentions spend or cost analysis (phrases: "actual spend", "spend last X days", "cost breakdown", "budget and spend"):
+- ALWAYS include the core volume metrics: `metrics.impressions`, `metrics.clicks`
+- ALWAYS include outcome metrics: `metrics.conversions` (unless explicitly excluded)
+- Include `customer.currency_code` for proper monetary interpretation
