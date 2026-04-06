@@ -5083,7 +5083,7 @@ dependencies = [
 
 [[package]]
 name = "mcc-gaql"
-version = "0.16.3"
+version = "0.16.4"
 dependencies = [
  "anyhow",
  "bincode",
@@ -5114,7 +5114,7 @@ dependencies = [
 
 [[package]]
 name = "mcc-gaql-common"
-version = "0.16.3"
+version = "0.16.4"
 dependencies = [
  "anyhow",
  "chrono",
@@ -5132,7 +5132,7 @@ dependencies = [
 
 [[package]]
 name = "mcc-gaql-gen"
-version = "0.16.3"
+version = "0.16.4"
 dependencies = [
  "anyhow",
  "arrow-array",
