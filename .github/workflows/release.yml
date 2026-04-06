@@ -7,7 +7,7 @@ on:
 
 jobs:
   release-macos-arm64:
-    name: Build and Release macOS Apple Silicon
+    name: Build macOS Apple Silicon
     runs-on: macos-latest
 
     steps:
@@ -35,10 +35,6 @@ jobs:
           MCC_GAQL_R2_PUBLIC_ID: ${{ vars.MCC_GAQL_R2_PUBLIC_ID }}
         run: cargo build -p mcc-gaql-gen --release --target aarch64-apple-darwin
 
-      - name: Extract version from tag
-        id: version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
-
       - name: Create release archive
         run: |
           mkdir -p release
@@ -47,12 +43,92 @@ jobs:
           cp README.md release/
           cp LICENSE release/
           cd release
-          tar -czf ../mcc-gaql-${{ steps.version.outputs.VERSION }}-macos-aarch64.tar.gz *
+          tar -czf ../mcc-gaql-macos-aarch64.tar.gz *
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-aarch64
+          path: mcc-gaql-macos-aarch64.tar.gz
+
+  release-linux-x64:
+    name: Build Linux x86_64 (musl)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+
+      - name: Install musl tools and protobuf
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools protobuf-compiler
+
+      - name: Build mcc-gaql release binary
+        env:
+          MCC_GAQL_EMBED_CLIENT_SECRET: ${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}
+          MCC_GAQL_DEV_TOKEN: ${{ secrets.GOOGLE_ADS_DEV_TOKEN }}
+        run: cargo build -p mcc-gaql --release --target x86_64-unknown-linux-musl
+
+      - name: Build mcc-gaql-gen release binary
+        env:
+          MCC_GAQL_EMBED_CLIENT_SECRET: ${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}
+          MCC_GAQL_DEV_TOKEN: ${{ secrets.GOOGLE_ADS_DEV_TOKEN }}
+          MCC_GAQL_R2_PUBLIC_ID: ${{ vars.MCC_GAQL_R2_PUBLIC_ID }}
+        run: cargo build -p mcc-gaql-gen --release --target x86_64-unknown-linux-musl
+
+      - name: Create release archive
+        run: |
+          mkdir -p release
+          cp target/x86_64-unknown-linux-musl/release/mcc-gaql release/
+          cp target/x86_64-unknown-linux-musl/release/mcc-gaql-gen release/
+          cp README.md release/
+          cp LICENSE release/
+          cd release
+          tar -czf ../mcc-gaql-linux-x86_64.tar.gz *
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-x86_64
+          path: mcc-gaql-linux-x86_64.tar.gz
+
+  create-release:
+    name: Create GitHub Release
+    needs: [release-macos-arm64, release-linux-x64]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-aarch64
+
+      - name: Download Linux artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-x86_64
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Rename archives with version
+        run: |
+          mv mcc-gaql-macos-aarch64.tar.gz mcc-gaql-${{ steps.version.outputs.VERSION }}-macos-aarch64.tar.gz
+          mv mcc-gaql-linux-x86_64.tar.gz mcc-gaql-${{ steps.version.outputs.VERSION }}-linux-x86_64.tar.gz
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
-          files: mcc-gaql-${{ steps.version.outputs.VERSION }}-macos-aarch64.tar.gz
+          files: |
+            mcc-gaql-${{ steps.version.outputs.VERSION }}-macos-aarch64.tar.gz
+            mcc-gaql-${{ steps.version.outputs.VERSION }}-linux-x86_64.tar.gz
           generate_release_notes: true
           draft: false
           prerelease: false
