@@ -64,8 +64,8 @@ jobs:
         with:
           targets: x86_64-unknown-linux-musl
 
-      - name: Install protobuf and OpenSSL
-        run: sudo apt-get update && sudo apt-get -y install protobuf-compiler libssl-dev musl-tools
+      - name: Install protobuf
+        run: sudo apt-get update && sudo apt-get -y install protobuf-compiler
 
       - name: Install cross
         run: cargo install cross --git https://github.com/cross-rs/cross
@@ -75,7 +75,6 @@ jobs:
           MCC_GAQL_EMBED_CLIENT_SECRET: ${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}
           MCC_GAQL_DEV_TOKEN: ${{ secrets.GOOGLE_ADS_DEV_TOKEN }}
           PROTOC: /usr/bin/protoc
-          OPENSSL_DIR: /usr
         run: cross build -p mcc-gaql --release --target x86_64-unknown-linux-musl
 
       - name: Build mcc-gaql-gen release binary
@@ -84,7 +83,6 @@ jobs:
           MCC_GAQL_DEV_TOKEN: ${{ secrets.GOOGLE_ADS_DEV_TOKEN }}
           MCC_GAQL_R2_PUBLIC_ID: ${{ vars.MCC_GAQL_R2_PUBLIC_ID }}
           PROTOC: /usr/bin/protoc
-          OPENSSL_DIR: /usr
         run: cross build -p mcc-gaql-gen --release --target x86_64-unknown-linux-musl
 
       - name: Create release archive

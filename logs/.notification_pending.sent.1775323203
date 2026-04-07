@@ -1,0 +1,15 @@
+{
+  "test_run": "20260405_005001",
+  "status": "PASSED",
+  "exit_code": 0,
+  "log_file": "/home/mhuang/Development/googleads/mcc-gaql/logs/claude_test_run_20260405_005001.log",
+  "time": "2026-04-05T00:52:34.162952",
+  "project": "mcc-gaql"
+}
+---
+Test Run: 20260405_005001
+Status: PASSED
+Exit Code: 0
+Log File: /home/mhuang/Development/googleads/mcc-gaql/logs/claude_test_run_20260405_005001.log
+Time: 2026-04-05T00:52:34.162952
+Project: mcc-gaql

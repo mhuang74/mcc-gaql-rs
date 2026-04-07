@@ -1,0 +1,20 @@
+# mcc-gaql test runs - 5 times daily (Asia/Taipei timezone)
+# Schedule: 4:30 AM, 9:35 AM, 2:40 PM, 7:45 PM, 12:50 AM
+
+SHELL=/bin/bash
+HOME=/home/mhuang
+PATH=$HOME/.local/bin:$HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin
+
+# Test runs
+30 4 * * * TZ=Asia/Taipei $HOME/Development/googleads/mcc-gaql/run_tests.sh >> $HOME/Development/googleads/mcc-gaql/logs/cron_test.log 2>&1
+35 9 * * * TZ=Asia/Taipei $HOME/Development/googleads/mcc-gaql/run_tests.sh >> $HOME/Development/googleads/mcc-gaql/logs/cron_test.log 2>&1
+40 14 * * * TZ=Asia/Taipei $HOME/Development/googleads/mcc-gaql/run_tests.sh >> $HOME/Development/googleads/mcc-gaql/logs/cron_test.log 2>&1
+45 19 * * * TZ=Asia/Taipei $HOME/Development/googleads/mcc-gaql/run_tests.sh >> $HOME/Development/googleads/mcc-gaql/logs/cron_test.log 2>&1
+50 0 * * * TZ=Asia/Taipei $HOME/Development/googleads/mcc-gaql/run_tests.sh >> $HOME/Development/googleads/mcc-gaql/logs/cron_test.log 2>&1
+
+# Notification jobs (30 minutes after each test run)
+0 5 * * * TZ=Asia/Taipei $HOME/Development/googleads/mcc-gaql/send_notification.sh telegram 8281248569 >> $HOME/Development/googleads/mcc-gaql/logs/notify.log 2>&1
+5 10 * * * TZ=Asia/Taipei $HOME/Development/googleads/mcc-gaql/send_notification.sh telegram 8281248569 >> $HOME/Development/googleads/mcc-gaql/logs/notify.log 2>&1
+10 15 * * * TZ=Asia/Taipei $HOME/Development/googleads/mcc-gaql/send_notification.sh telegram 8281248569 >> $HOME/Development/googleads/mcc-gaql/logs/notify.log 2>&1
+15 20 * * * TZ=Asia/Taipei $HOME/Development/googleads/mcc-gaql/send_notification.sh telegram 8281248569 >> $HOME/Development/googleads/mcc-gaql/logs/notify.log 2>&1
+20 1 * * * TZ=Asia/Taipei $HOME/Development/googleads/mcc-gaql/send_notification.sh telegram 8281248569 >> $HOME/Development/googleads/mcc-gaql/logs/notify.log 2>&1

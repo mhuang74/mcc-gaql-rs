@@ -10,6 +10,7 @@ mcc-gaql = { workspace = true }
 mcc-gaql-common = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
+openssl = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }

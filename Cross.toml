@@ -9,13 +9,12 @@
 # Using ghcr.io/cross-rs/x86_64-unknown-linux-musl with protoc pre-installed
 # Alternative: use clux/muslrust:stable which has OpenSSL for musl
 # But clux/muslrust:stable requires matching rust version with project
-pre-build = ["apt-get update && apt-get install -y protobuf-compiler"]
+pre-build = ["apt-get update && apt-get install -y protobuf-compiler perl"]
 
 [build.env]
 passthrough = [
     "MCC_GAQL_EMBED_CLIENT_SECRET",
     "MCC_GAQL_DEV_TOKEN",
     "MCC_GAQL_R2_PUBLIC_ID",
-    "PROTOC",
-    "OPENSSL_DIR"
+    "PROTOC"
 ]
