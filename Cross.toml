@@ -1,5 +1,21 @@
+# Cross configuration for musl builds
+# Note: mcc-gaql builds successfully with this config, but mcc-gaql-gen
+# requires OpenSSL which needs additional setup (kernel headers for musl).
+#
+# For CI, using clux/muslrust directly (as in commit bf010e8) is simpler
+# than cross, but requires rust-toolchain.toml to match muslrust's version.
+
 [target.x86_64-unknown-linux-musl]
+# Using ghcr.io/cross-rs/x86_64-unknown-linux-musl with protoc pre-installed
+# Alternative: use clux/muslrust:stable which has OpenSSL for musl
+# But clux/muslrust:stable requires matching rust version with project
 pre-build = ["apt-get update && apt-get install -y protobuf-compiler"]
 
 [build.env]
-passthrough = ["MCC_GAQL_EMBED_CLIENT_SECRET", "MCC_GAQL_DEV_TOKEN", "MCC_GAQL_R2_PUBLIC_ID"]
+passthrough = [
+    "MCC_GAQL_EMBED_CLIENT_SECRET",
+    "MCC_GAQL_DEV_TOKEN",
+    "MCC_GAQL_R2_PUBLIC_ID",
+    "PROTOC",
+    "OPENSSL_DIR"
+]
