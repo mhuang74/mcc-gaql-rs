@@ -67,10 +67,10 @@ jobs:
       - name: Install musl target
         run: rustup target add x86_64-unknown-linux-musl
 
-      - name: Install musl tools and protobuf
+      - name: Install musl tools, protobuf, and kernel headers
         run: |
           sudo apt-get update
-          sudo apt-get install -y musl-tools protobuf-compiler
+          sudo apt-get install -y musl-tools protobuf-compiler linux-libc-dev
 
       - name: Build OpenSSL for musl
         run: |
@@ -78,7 +78,7 @@ jobs:
           wget -q https://www.openssl.org/source/openssl-${OPENSSL_VERSION}.tar.gz
           tar -xzf openssl-${OPENSSL_VERSION}.tar.gz
           cd openssl-${OPENSSL_VERSION}
-          CC=x86_64-linux-musl-gcc ./Configure linux-x86_64 no-shared --prefix=/usr/local/musl
+          CC=x86_64-linux-musl-gcc ./Configure linux-x86_64 no-shared --prefix=/usr/local/musl -I/usr/include
           make -j$(nproc)
           sudo make install
 
