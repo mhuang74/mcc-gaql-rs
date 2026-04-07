@@ -67,16 +67,26 @@ jobs:
       - name: Install musl target
         run: rustup target add x86_64-unknown-linux-musl
 
-      - name: Install musl tools, protobuf, and OpenSSL
+      - name: Install musl tools and protobuf
         run: |
           sudo apt-get update
-          sudo apt-get install -y musl-tools musl-dev protobuf-compiler libssl-dev pkg-config
+          sudo apt-get install -y musl-tools protobuf-compiler
+
+      - name: Build OpenSSL for musl
+        run: |
+          OPENSSL_VERSION=3.2.1
+          wget -q https://www.openssl.org/source/openssl-${OPENSSL_VERSION}.tar.gz
+          tar -xzf openssl-${OPENSSL_VERSION}.tar.gz
+          cd openssl-${OPENSSL_VERSION}
+          CC=x86_64-linux-musl-gcc ./Configure linux-x86_64 no-shared --prefix=/usr/local/musl
+          make -j$(nproc)
+          sudo make install
 
       - name: Build mcc-gaql release binary
         env:
           MCC_GAQL_EMBED_CLIENT_SECRET: ${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}
           MCC_GAQL_DEV_TOKEN: ${{ secrets.GOOGLE_ADS_DEV_TOKEN }}
-          PKG_CONFIG_ALLOW_CROSS: 1
+          OPENSSL_DIR: /usr/local/musl
           OPENSSL_STATIC: 1
         run: cargo build -p mcc-gaql --release --target x86_64-unknown-linux-musl
 
@@ -85,7 +95,7 @@ jobs:
           MCC_GAQL_EMBED_CLIENT_SECRET: ${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}
           MCC_GAQL_DEV_TOKEN: ${{ secrets.GOOGLE_ADS_DEV_TOKEN }}
           MCC_GAQL_R2_PUBLIC_ID: ${{ vars.MCC_GAQL_R2_PUBLIC_ID }}
-          PKG_CONFIG_ALLOW_CROSS: 1
+          OPENSSL_DIR: /usr/local/musl
           OPENSSL_STATIC: 1
         run: cargo build -p mcc-gaql-gen --release --target x86_64-unknown-linux-musl
 
