@@ -54,28 +54,31 @@ jobs:
   release-linux-x64:
     name: Build Linux x86_64 (musl)
     runs-on: ubuntu-latest
-    container:
-      image: clux/muslrust:latest
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install protobuf
-        run: apt-get update && apt-get install -y protobuf-compiler
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+
+      - name: Install cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
 
       - name: Build mcc-gaql release binary
         env:
           MCC_GAQL_EMBED_CLIENT_SECRET: ${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}
           MCC_GAQL_DEV_TOKEN: ${{ secrets.GOOGLE_ADS_DEV_TOKEN }}
-        run: cargo build -p mcc-gaql --release
+        run: cross build -p mcc-gaql --release --target x86_64-unknown-linux-musl
 
       - name: Build mcc-gaql-gen release binary
         env:
           MCC_GAQL_EMBED_CLIENT_SECRET: ${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}
           MCC_GAQL_DEV_TOKEN: ${{ secrets.GOOGLE_ADS_DEV_TOKEN }}
           MCC_GAQL_R2_PUBLIC_ID: ${{ vars.MCC_GAQL_R2_PUBLIC_ID }}
-        run: cargo build -p mcc-gaql-gen --release
+        run: cross build -p mcc-gaql-gen --release --target x86_64-unknown-linux-musl
 
       - name: Create release archive
         run: |
