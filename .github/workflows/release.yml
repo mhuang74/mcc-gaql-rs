@@ -64,6 +64,9 @@ jobs:
         with:
           targets: x86_64-unknown-linux-musl
 
+      - name: Install protobuf
+        run: sudo apt-get update && sudo apt-get -y install protobuf-compiler
+
       - name: Install cross
         run: cargo install cross --git https://github.com/cross-rs/cross
 
