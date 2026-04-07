@@ -52,7 +52,7 @@ jobs:
           path: mcc-gaql-macos-aarch64.tar.gz
 
   release-linux-x64:
-    name: Build Linux x86_64 (musl)
+    name: Build Linux x86_64
     runs-on: ubuntu-latest
 
     steps:
@@ -61,35 +61,28 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-unknown-linux-musl
 
-      - name: Install protobuf
-        run: sudo apt-get update && sudo apt-get -y install protobuf-compiler
-
-      - name: Install cross
-        run: cargo install cross --git https://github.com/cross-rs/cross
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get -y install protobuf-compiler libssl-dev
 
       - name: Build mcc-gaql release binary
         env:
           MCC_GAQL_EMBED_CLIENT_SECRET: ${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}
           MCC_GAQL_DEV_TOKEN: ${{ secrets.GOOGLE_ADS_DEV_TOKEN }}
-          PROTOC: /usr/bin/protoc
-        run: cross build -p mcc-gaql --release --target x86_64-unknown-linux-musl
+        run: cargo build -p mcc-gaql --release
 
       - name: Build mcc-gaql-gen release binary
         env:
           MCC_GAQL_EMBED_CLIENT_SECRET: ${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}
           MCC_GAQL_DEV_TOKEN: ${{ secrets.GOOGLE_ADS_DEV_TOKEN }}
           MCC_GAQL_R2_PUBLIC_ID: ${{ vars.MCC_GAQL_R2_PUBLIC_ID }}
-          PROTOC: /usr/bin/protoc
-        run: cross build -p mcc-gaql-gen --release --target x86_64-unknown-linux-musl
+        run: cargo build -p mcc-gaql-gen --release
 
       - name: Create release archive
         run: |
           mkdir -p release
-          cp target/x86_64-unknown-linux-musl/release/mcc-gaql release/
-          cp target/x86_64-unknown-linux-musl/release/mcc-gaql-gen release/
+          cp target/release/mcc-gaql release/
+          cp target/release/mcc-gaql-gen release/
           cp README.md release/
           cp LICENSE release/
           cd release
