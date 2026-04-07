@@ -64,6 +64,9 @@ jobs:
         with:
           targets: x86_64-unknown-linux-musl
 
+      - name: Install musl target
+        run: rustup target add x86_64-unknown-linux-musl
+
       - name: Install musl tools and protobuf
         run: |
           sudo apt-get update
