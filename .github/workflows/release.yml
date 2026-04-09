@@ -94,9 +94,52 @@ jobs:
           name: linux-x86_64
           path: mcc-gaql-linux-x86_64.tar.gz
 
+  release-linux-arm64:
+    name: Build Linux ARM64
+    runs-on: ubuntu-24.04-arm
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get -y install protobuf-compiler libssl-dev
+
+      - name: Build mcc-gaql release binary
+        env:
+          MCC_GAQL_EMBED_CLIENT_SECRET: ${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}
+          MCC_GAQL_DEV_TOKEN: ${{ secrets.GOOGLE_ADS_DEV_TOKEN }}
+        run: cargo build -p mcc-gaql --release
+
+      - name: Build mcc-gaql-gen release binary
+        env:
+          MCC_GAQL_EMBED_CLIENT_SECRET: ${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}
+          MCC_GAQL_DEV_TOKEN: ${{ secrets.GOOGLE_ADS_DEV_TOKEN }}
+          MCC_GAQL_R2_PUBLIC_ID: ${{ vars.MCC_GAQL_R2_PUBLIC_ID }}
+        run: cargo build -p mcc-gaql-gen --release
+
+      - name: Create release archive
+        run: |
+          mkdir -p release
+          cp target/release/mcc-gaql release/
+          cp target/release/mcc-gaql-gen release/
+          cp README.md release/
+          cp LICENSE release/
+          cd release
+          tar -czf ../mcc-gaql-linux-aarch64.tar.gz *
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-aarch64
+          path: mcc-gaql-linux-aarch64.tar.gz
+
   create-release:
     name: Create GitHub Release
-    needs: [release-macos-arm64, release-linux-x64]
+    needs: [release-macos-arm64, release-linux-x64, release-linux-arm64]
     runs-on: ubuntu-latest
 
     steps:
@@ -110,6 +153,11 @@ jobs:
         with:
           name: linux-x86_64
 
+      - name: Download Linux ARM64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-aarch64
+
       - name: Extract version from tag
         id: version
         run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
@@ -118,6 +166,7 @@ jobs:
         run: |
           mv mcc-gaql-macos-aarch64.tar.gz mcc-gaql-${{ steps.version.outputs.VERSION }}-macos-aarch64.tar.gz
           mv mcc-gaql-linux-x86_64.tar.gz mcc-gaql-${{ steps.version.outputs.VERSION }}-linux-x86_64.tar.gz
+          mv mcc-gaql-linux-aarch64.tar.gz mcc-gaql-${{ steps.version.outputs.VERSION }}-linux-aarch64.tar.gz
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
@@ -125,6 +174,7 @@ jobs:
           files: |
             mcc-gaql-${{ steps.version.outputs.VERSION }}-macos-aarch64.tar.gz
             mcc-gaql-${{ steps.version.outputs.VERSION }}-linux-x86_64.tar.gz
+            mcc-gaql-${{ steps.version.outputs.VERSION }}-linux-aarch64.tar.gz
           generate_release_notes: true
           draft: false
           prerelease: false
