@@ -483,10 +483,10 @@ pub async fn fields_query(api_context: GoogleAdsAPIAccess, query: &str) {
     for row in response.results {
         let val = format!(
             "{}\t{:?}\t{}\t{}\t{:?}\n",
-            row.name,
+            row.name.as_deref().unwrap_or(""),
             row.category(),
-            row.selectable,
-            row.filterable,
+            row.selectable.unwrap_or(false),
+            row.filterable.unwrap_or(false),
             row.selectable_with,
         );
         stdout.write_all(val.as_bytes()).await.unwrap();

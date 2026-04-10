@@ -3318,12 +3318,14 @@ dependencies = [
 
 [[package]]
 name = "googleads-rs"
-version = "0.13.0"
-source = "git+https://github.com/mhuang74/googleads-rs.git?branch=main#de396cc998798927164917b78ebd81a3a4e455fb"
+version = "23.2.0"
 dependencies = [
  "build-print",
+ "bytes",
+ "once_cell",
  "prost 0.14.3",
  "prost-build 0.14.3",
+ "prost-reflect",
  "prost-types 0.14.3",
  "tonic",
  "tonic-build",
@@ -5083,7 +5085,7 @@ dependencies = [
 
 [[package]]
 name = "mcc-gaql"
-version = "0.16.5"
+version = "0.17.0"
 dependencies = [
  "anyhow",
  "bincode",
@@ -5114,7 +5116,7 @@ dependencies = [
 
 [[package]]
 name = "mcc-gaql-common"
-version = "0.16.5"
+version = "0.17.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -5132,7 +5134,7 @@ dependencies = [
 
 [[package]]
 name = "mcc-gaql-gen"
-version = "0.16.5"
+version = "0.17.0"
 dependencies = [
  "anyhow",
  "arrow-array",
@@ -6728,6 +6730,16 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
+]
+
+[[package]]
+name = "prost-reflect"
+version = "0.16.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b89455ef41ed200cafc47c76c552ee7792370ac420497e551f16123a9135f76e"
+dependencies = [
+ "prost 0.14.3",
+ "prost-types 0.14.3",
 ]
 
 [[package]]
