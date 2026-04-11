@@ -90,9 +90,10 @@ pub async fn fetch_from_api(api_context: &GoogleAdsAPIAccess) -> Result<FieldMet
             5 => "SEGMENT",
             6 => "METRIC",
             _ => {
-                if row.name.starts_with("metrics.") {
+                let name = row.name.as_ref().expect("GoogleAdsField must have a name");
+                if name.starts_with("metrics.") {
                     "METRIC"
-                } else if row.name.starts_with("segments.") {
+                } else if name.starts_with("segments.") {
                     "SEGMENT"
                 } else {
                     "UNKNOWN"
@@ -124,13 +125,15 @@ pub async fn fetch_from_api(api_context: &GoogleAdsAPIAccess) -> Result<FieldMet
 
         let metrics_compatible = category == "ATTRIBUTE" || category == "SEGMENT";
 
+        let field_name = row.name.clone().expect("GoogleAdsField must have a name");
+
         let field_meta = FieldMetadata {
-            name: row.name.clone(),
+            name: field_name.clone(),
             category,
             data_type,
-            selectable: row.selectable,
-            filterable: row.filterable,
-            sortable: row.sortable,
+            selectable: row.selectable.unwrap_or(false),
+            filterable: row.filterable.unwrap_or(false),
+            sortable: row.sortable.unwrap_or(false),
             metrics_compatible,
             resource_name: if row.resource_name.is_empty() {
                 None
@@ -149,10 +152,10 @@ pub async fn fetch_from_api(api_context: &GoogleAdsAPIAccess) -> Result<FieldMet
             resources
                 .entry(resource)
                 .or_default()
-                .push(row.name.clone());
+                .push(field_name.clone());
         }
 
-        fields.insert(row.name, field_meta);
+        fields.insert(field_name, field_meta);
     }
 
     log::info!(
