@@ -13,8 +13,8 @@ This project provides two separate tools:
 
 | Tool | Size | Purpose |
 |------|------|---------|
-| `mcc-gaql` | ~15-20 MB | Lightweight query tool for executing GAQL queries |
-| `mcc-gaql-gen` | ~400 MB | GAQL generation tool with LLM/RAG for natural language queries |
+| `mcc-gaql` | ~52 MB | Lightweight query tool for executing GAQL queries |
+| `mcc-gaql-gen` | ~246 MB | GAQL generation tool with LLM/RAG for natural language queries |
 
 **Why two tools?** The core query tool is fast, lightweight, and has minimal dependencies. The generation tool includes LLM/RAG functionality for natural language queries, which requires many heavy dependencies. Keeping them separate allows most users to install only what they need.
 
@@ -22,13 +22,48 @@ This project provides two separate tools:
 
 ## Installation
 
-### Download Pre-built Binaries (macOS Apple Silicon)
+### Download Pre-built Binaries
 
-Download the latest release from [GitHub Releases](https://github.com/mhuang74/mcc-gaql-rs/releases):
+Pre-built binaries are available for the following platforms:
 
+| Platform | Architecture | Filename Pattern |
+|----------|--------------|------------------|
+| macOS | Apple Silicon (ARM64) | `mcc-gaql-*-macos-aarch64.tar.gz` |
+| Linux | x86_64 | `mcc-gaql-*-linux-x86_64.tar.gz` |
+| Linux | ARM64 (Graviton) | `mcc-gaql-*-linux-aarch64.tar.gz` |
+
+Download the latest release from [GitHub Releases](https://github.com/mhuang74/mcc-gaql-rs/releases/tag/v0.17.0):
+
+**macOS Apple Silicon:**
 ```bash
 # Download and extract
 curl -L https://github.com/mhuang74/mcc-gaql-rs/releases/latest/download/mcc-gaql-<version>-macos-aarch64.tar.gz | tar xz
+
+# Move to PATH
+mv mcc-gaql mcc-gaql-gen /usr/local/bin/
+
+# Verify installation
+mcc-gaql --version
+mcc-gaql-gen --version
+```
+
+**Linux x86_64:**
+```bash
+# Download and extract
+curl -L https://github.com/mhuang74/mcc-gaql-rs/releases/latest/download/mcc-gaql-<version>-linux-x86_64.tar.gz | tar xz
+
+# Move to PATH
+mv mcc-gaql mcc-gaql-gen /usr/local/bin/
+
+# Verify installation
+mcc-gaql --version
+mcc-gaql-gen --version
+```
+
+**Linux ARM64 (for AWS Graviton):**
+```bash
+# Download and extract
+curl -L https://github.com/mhuang74/mcc-gaql-rs/releases/latest/download/mcc-gaql-<version>-linux-aarch64.tar.gz | tar xz
 
 # Move to PATH
 mv mcc-gaql mcc-gaql-gen /usr/local/bin/
