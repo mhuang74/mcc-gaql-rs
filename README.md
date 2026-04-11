@@ -623,12 +623,25 @@ mcc-gaql-gen bootstrap --verify-only
 Generate GAQL from natural language:
 
 ```bash
-mcc-gaql-gen generate "campaign performance last 30 days" --validate
+mcc-gaql-gen generate "campaign performance last 30 days"
+```
+
+**Generate and validate:**
+
+To validate the generated query, pipe it to `mcc-gaql --validate`:
+
+```bash
+mcc-gaql-gen generate "show campaign performance for past week" | mcc-gaql --validate
+```
+
+The `--validate` command automatically uses the last profile from your config. If you need to use a specific profile:
+
+```bash
+mcc-gaql-gen generate "campaign changes from last 14 days" | xargs mcc-gaql --profile myprofile --validate
 ```
 
 **Options:**
-- `--validate` - Validate the generated query against Google Ads API
-- `--profile <name>` - Profile to use for validation credentials
+- `--profile <name>` - Profile to use for credentials (when piping to mcc-gaql)
 - `--no-defaults` - Skip implicit default filters
 - `--use-query-cookbook` - Enable RAG search for query examples
 - `--explain` - Print explanation of the LLM selection process
