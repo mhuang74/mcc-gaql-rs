@@ -164,7 +164,9 @@ pub fn run_wizard() -> Result<()> {
     let has_runtime_secret = std::env::var("MCC_GAQL_EMBED_CLIENT_SECRET").is_ok();
 
     if has_runtime_secret {
-        println!("  1. OAuth2 credentials found in MCC_GAQL_EMBED_CLIENT_SECRET environment variable");
+        println!(
+            "  1. OAuth2 credentials found in MCC_GAQL_EMBED_CLIENT_SECRET environment variable"
+        );
     } else {
         println!(
             "  1. Place your OAuth2 credentials in: {:?}",

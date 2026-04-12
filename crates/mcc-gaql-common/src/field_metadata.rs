@@ -139,7 +139,9 @@ impl ResourceMetadata {
     /// Returns true if this resource supports metrics (performance data).
     /// Derived from selectable_with: any field starting with "metrics." indicates metrics support.
     pub fn has_metrics(&self) -> bool {
-        self.selectable_with.iter().any(|f| f.starts_with("metrics."))
+        self.selectable_with
+            .iter()
+            .any(|f| f.starts_with("metrics."))
     }
 }
 
@@ -339,9 +341,10 @@ impl FieldMetadataCache {
         self.fields.retain(|_, field| {
             // Keep if field belongs to a retained resource (e.g., "keyword_view.resource_name")
             if let Some(r) = field.get_resource()
-                && keep_set.contains(&r) {
-                    return true;
-                }
+                && keep_set.contains(&r)
+            {
+                return true;
+            }
 
             // Keep RESOURCE-category fields whose name matches a kept resource (e.g., "keyword_view")
             if field.is_resource() && keep_set.contains(&field.name) {
@@ -524,7 +527,10 @@ impl FieldMetadataCache {
                 output.push_str(&format!("Key metrics: {}\n", key_metrics.join(", ")));
             }
             if !identity_fields.is_empty() {
-                output.push_str(&format!("Identity fields: {}\n", identity_fields.join(", ")));
+                output.push_str(&format!(
+                    "Identity fields: {}\n",
+                    identity_fields.join(", ")
+                ));
             }
 
             output.push('\n');
@@ -554,11 +560,10 @@ impl FieldMetadataCache {
                 .resource_metadata
                 .as_mut()
                 .and_then(|m| m.get_mut(resource))
+                && rm.identity_fields.is_empty()
             {
-                if rm.identity_fields.is_empty() {
-                    rm.identity_fields = identity;
-                    count += 1;
-                }
+                rm.identity_fields = identity;
+                count += 1;
             }
         }
         count
@@ -779,7 +784,11 @@ const RESOURCE_HIERARCHY: &[(&str, Option<&str>, &[&str])] = &[
         Some("campaign"),
         &["campaign_criterion.criterion_id"],
     ),
-    ("ad_group", Some("campaign"), &["ad_group.id", "ad_group.name"]),
+    (
+        "ad_group",
+        Some("campaign"),
+        &["ad_group.id", "ad_group.name"],
+    ),
     (
         "ad_group_ad",
         Some("ad_group"),
@@ -816,11 +825,7 @@ const RESOURCE_HIERARCHY: &[(&str, Option<&str>, &[&str])] = &[
         Some("campaign"),
         &["asset.id", "asset.name"],
     ),
-    (
-        "change_event",
-        Some("campaign"),
-        &[],
-    ),
+    ("change_event", Some("campaign"), &[]),
 ];
 
 /// Walk the resource hierarchy chain from `resource` up to the root (customer inclusive).
@@ -831,16 +836,11 @@ fn get_hierarchy_chain(resource: &str) -> Vec<&'static str> {
     let mut current = resource;
 
     // Walk up by finding the parent of each resource
-    loop {
-        if let Some(&(name, parent, _)) = RESOURCE_HIERARCHY.iter().find(|(n, _, _)| *n == current) {
-            chain.push(name);
-            match parent {
-                Some(p) => current = p,
-                None => break,
-            }
-        } else {
-            // Unmapped resource: just add it and stop (customer.id will be handled by heuristic)
-            break;
+    while let Some(&(name, parent, _)) = RESOURCE_HIERARCHY.iter().find(|(n, _, _)| *n == current) {
+        chain.push(name);
+        match parent {
+            Some(p) => current = p,
+            None => break,
         }
     }
     chain.reverse();
@@ -1745,11 +1745,17 @@ mod tests {
             .unwrap()
             .get("campaign")
             .unwrap();
-        assert!(!rm.identity_fields.is_empty(), "campaign identity_fields should be populated");
+        assert!(
+            !rm.identity_fields.is_empty(),
+            "campaign identity_fields should be populated"
+        );
         assert!(rm.identity_fields.contains(&"customer.id".to_string()));
         assert!(rm.identity_fields.contains(&"campaign.id".to_string()));
         assert!(rm.identity_fields.contains(&"campaign.name".to_string()));
-        assert!(rm.identity_fields.contains(&"campaign.advertising_channel_type".to_string()));
+        assert!(
+            rm.identity_fields
+                .contains(&"campaign.advertising_channel_type".to_string())
+        );
 
         // customer identity_fields should be untouched
         let rm_cust = cache
@@ -1810,11 +1816,26 @@ mod tests {
         let fields = build_test_run_fields();
         // Realistic: campaign's selectable_with does NOT include campaign's own fields
         let result = compute_identity_fields("campaign", &fields, &[]);
-        assert!(result.contains(&"customer.id".to_string()), "missing customer.id");
-        assert!(result.contains(&"customer.descriptive_name".to_string()), "missing customer.descriptive_name");
-        assert!(result.contains(&"campaign.id".to_string()), "missing campaign.id");
-        assert!(result.contains(&"campaign.name".to_string()), "missing campaign.name");
-        assert!(result.contains(&"campaign.advertising_channel_type".to_string()), "missing campaign.advertising_channel_type");
+        assert!(
+            result.contains(&"customer.id".to_string()),
+            "missing customer.id"
+        );
+        assert!(
+            result.contains(&"customer.descriptive_name".to_string()),
+            "missing customer.descriptive_name"
+        );
+        assert!(
+            result.contains(&"campaign.id".to_string()),
+            "missing campaign.id"
+        );
+        assert!(
+            result.contains(&"campaign.name".to_string()),
+            "missing campaign.name"
+        );
+        assert!(
+            result.contains(&"campaign.advertising_channel_type".to_string()),
+            "missing campaign.advertising_channel_type"
+        );
     }
 
     #[test]
@@ -1822,11 +1843,26 @@ mod tests {
         let fields = build_test_run_fields();
         let result = compute_identity_fields("ad_group", &fields, &[]);
         // Inherits customer + campaign chain
-        assert!(result.contains(&"customer.id".to_string()), "missing customer.id");
-        assert!(result.contains(&"campaign.id".to_string()), "missing campaign.id");
-        assert!(result.contains(&"campaign.name".to_string()), "missing campaign.name");
-        assert!(result.contains(&"ad_group.id".to_string()), "missing ad_group.id");
-        assert!(result.contains(&"ad_group.name".to_string()), "missing ad_group.name");
+        assert!(
+            result.contains(&"customer.id".to_string()),
+            "missing customer.id"
+        );
+        assert!(
+            result.contains(&"campaign.id".to_string()),
+            "missing campaign.id"
+        );
+        assert!(
+            result.contains(&"campaign.name".to_string()),
+            "missing campaign.name"
+        );
+        assert!(
+            result.contains(&"ad_group.id".to_string()),
+            "missing ad_group.id"
+        );
+        assert!(
+            result.contains(&"ad_group.name".to_string()),
+            "missing ad_group.name"
+        );
     }
 
     #[test]
@@ -1834,11 +1870,26 @@ mod tests {
         let fields = build_test_run_fields();
         let result = compute_identity_fields("ad_group_ad", &fields, &[]);
         // Inherits customer + campaign + ad_group chain
-        assert!(result.contains(&"customer.id".to_string()), "missing customer.id");
-        assert!(result.contains(&"campaign.id".to_string()), "missing campaign.id");
-        assert!(result.contains(&"ad_group.id".to_string()), "missing ad_group.id");
-        assert!(result.contains(&"ad_group_ad.ad.id".to_string()), "missing ad_group_ad.ad.id");
-        assert!(result.contains(&"ad_group_ad.ad.type".to_string()), "missing ad_group_ad.ad.type");
+        assert!(
+            result.contains(&"customer.id".to_string()),
+            "missing customer.id"
+        );
+        assert!(
+            result.contains(&"campaign.id".to_string()),
+            "missing campaign.id"
+        );
+        assert!(
+            result.contains(&"ad_group.id".to_string()),
+            "missing ad_group.id"
+        );
+        assert!(
+            result.contains(&"ad_group_ad.ad.id".to_string()),
+            "missing ad_group_ad.ad.id"
+        );
+        assert!(
+            result.contains(&"ad_group_ad.ad.type".to_string()),
+            "missing ad_group_ad.ad.type"
+        );
     }
 
     #[test]
@@ -1852,11 +1903,26 @@ mod tests {
         ];
         let result = compute_identity_fields("keyword_view", &fields, &selectable_with);
         // Inherits customer + campaign + ad_group chain
-        assert!(result.contains(&"customer.id".to_string()), "missing customer.id");
-        assert!(result.contains(&"campaign.id".to_string()), "missing campaign.id");
-        assert!(result.contains(&"ad_group.id".to_string()), "missing ad_group.id");
+        assert!(
+            result.contains(&"customer.id".to_string()),
+            "missing customer.id"
+        );
+        assert!(
+            result.contains(&"campaign.id".to_string()),
+            "missing campaign.id"
+        );
+        assert!(
+            result.contains(&"ad_group.id".to_string()),
+            "missing ad_group.id"
+        );
         // keyword_view overrides: ad_group_criterion fields (available via selectable_with)
-        assert!(result.contains(&"ad_group_criterion.criterion_id".to_string()), "missing ad_group_criterion.criterion_id");
-        assert!(result.contains(&"ad_group_criterion.keyword.text".to_string()), "missing ad_group_criterion.keyword.text");
+        assert!(
+            result.contains(&"ad_group_criterion.criterion_id".to_string()),
+            "missing ad_group_criterion.criterion_id"
+        );
+        assert!(
+            result.contains(&"ad_group_criterion.keyword.text".to_string()),
+            "missing ad_group_criterion.keyword.text"
+        );
     }
 }

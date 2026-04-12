@@ -148,7 +148,6 @@ impl ScrapedDocs {
             15,
         )?;
 
-
         let mut docs: HashMap<String, ScrapedFieldDoc> = HashMap::new();
         let mut resources_scraped = 0usize;
         let mut resources_skipped = 0usize;

@@ -395,13 +395,25 @@ pub fn display_config(profile_name: Option<&str>) -> anyhow::Result<()> {
 
     // Config directory files
     show_path_status("Config directory", &mcc_gaql_common::paths::config_dir());
-    show_path_status("Query cookbook", &mcc_gaql_common::paths::query_cookbook_path());
-    show_path_status("Domain knowledge", &mcc_gaql_common::paths::domain_knowledge_path());
+    show_path_status(
+        "Query cookbook",
+        &mcc_gaql_common::paths::query_cookbook_path(),
+    );
+    show_path_status(
+        "Domain knowledge",
+        &mcc_gaql_common::paths::domain_knowledge_path(),
+    );
 
     // Cache directory files
     show_path_status("Cache directory", &mcc_gaql_common::paths::cache_dir());
-    show_path_status("Field metadata", &mcc_gaql_common::paths::field_metadata_cache_path());
-    show_path_status("Field metadata (enriched)", &mcc_gaql_common::paths::field_metadata_enriched_path());
+    show_path_status(
+        "Field metadata",
+        &mcc_gaql_common::paths::field_metadata_cache_path(),
+    );
+    show_path_status(
+        "Field metadata (enriched)",
+        &mcc_gaql_common::paths::field_metadata_enriched_path(),
+    );
     show_path_status("Proto docs", &mcc_gaql_common::paths::proto_docs_path());
     show_path_status("LanceDB", &mcc_gaql_common::paths::lancedb_path());
 
