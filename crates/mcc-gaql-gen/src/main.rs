@@ -684,10 +684,21 @@ async fn cmd_enrich(
         .or_else(|| mcc_gaql_common::paths::field_metadata_enriched_path().ok())
         .context("Could not determine enriched metadata output path")?;
 
-    // If enriching a single resource, merge with existing enriched cache
-    if target_resource.is_some() && enriched_path.exists() {
+    // Backup existing enriched cache before modifying
+    if enriched_path.exists() {
+        let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
+        let backup_path = enriched_path.with_file_name(format!(
+            "field_metadata_enriched_{}.json",
+            timestamp
+        ));
+        println!("\nBacking up existing enriched cache to {:?}...", backup_path);
+        std::fs::copy(&enriched_path, &backup_path)?;
+    }
+
+    // Merge with existing enriched cache to preserve previously enriched fields
+    if enriched_path.exists() {
         println!(
-            "\nMerging with existing enriched cache at {:?}...",
+            "Merging with existing enriched cache at {:?}...",
             enriched_path
         );
         let existing_cache = FieldMetadataCache::load_from_disk(&enriched_path).await?;
@@ -811,10 +822,21 @@ async fn cmd_enrich_proto(
         .or_else(|| mcc_gaql_common::paths::field_metadata_enriched_path().ok())
         .context("Could not determine enriched metadata output path")?;
 
-    // If enriching a single resource, merge with existing enriched cache
-    if target_resource.is_some() && enriched_path.exists() {
+    // Backup existing enriched cache before modifying
+    if enriched_path.exists() {
+        let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
+        let backup_path = enriched_path.with_file_name(format!(
+            "field_metadata_enriched_{}.json",
+            timestamp
+        ));
+        println!("\nBacking up existing enriched cache to {:?}...", backup_path);
+        std::fs::copy(&enriched_path, &backup_path)?;
+    }
+
+    // Merge with existing enriched cache to preserve previously enriched fields
+    if enriched_path.exists() {
         println!(
-            "\nMerging with existing enriched cache at {:?}...",
+            "Merging with existing enriched cache at {:?}...",
             enriched_path
         );
         let existing_cache = FieldMetadataCache::load_from_disk(&enriched_path).await?;
