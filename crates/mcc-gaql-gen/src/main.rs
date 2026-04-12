@@ -95,7 +95,7 @@ enum Commands {
 
     /// Enrich field metadata with LLM-generated descriptions
     Enrich {
-        /// Resource name to enrich (e.g., "campaign"). If not specified, enriches all resources.
+        /// Resource name to enrich (e.g., "campaign"). If not specified, enriches only resources missing enrichment.
         resource: Option<String>,
 
         /// Path to the field metadata cache (JSON). Defaults to the standard cache path.
@@ -133,6 +133,10 @@ enum Commands {
         /// Total concurrent LLM requests across all models (default: number of models)
         #[arg(long)]
         concurrency: Option<usize>,
+
+        /// Process all resources, even those already enriched (default: only process resources missing enrichment)
+        #[arg(long)]
+        all: bool,
     },
 
     /// Generate a GAQL query from a natural language prompt
@@ -304,6 +308,7 @@ async fn main() -> Result<()> {
             test_run,
             use_proto,
             concurrency,
+            all,
         } => {
             cmd_enrich(
                 resource,
@@ -316,6 +321,7 @@ async fn main() -> Result<()> {
                 test_run,
                 use_proto,
                 concurrency,
+                all,
             )
             .await?;
         }
@@ -465,6 +471,41 @@ async fn cmd_scrape(
     Ok(())
 }
 
+/// Check if a resource is missing enrichment in the enriched cache.
+/// A resource is considered missing enrichment if none of its fields have descriptions,
+/// or if the resource metadata lacks key_attributes/key_metrics.
+fn resource_missing_enrichment(
+    _cache: &FieldMetadataCache,
+    enriched_cache: &FieldMetadataCache,
+    resource: &str,
+) -> bool {
+    // Get fields for this resource from the enriched cache
+    let resource_fields = enriched_cache.get_resource_fields(resource);
+
+    // If no fields at all in enriched cache, definitely missing enrichment
+    if resource_fields.is_empty() {
+        return true;
+    }
+
+    // Check if any field has a description
+    let has_field_descriptions = resource_fields.iter().any(|f| {
+        f.description.as_ref().is_some_and(|d| !d.is_empty())
+    });
+
+    // Check if resource metadata has key_attributes/key_metrics
+    let has_resource_metadata = enriched_cache
+        .resource_metadata
+        .as_ref()
+        .and_then(|rm| rm.get(resource))
+        .map(|meta| {
+            !meta.key_attributes.is_empty() || !meta.key_metrics.is_empty()
+        })
+        .unwrap_or(false);
+
+    // Missing enrichment if neither field descriptions nor resource metadata exist
+    !has_field_descriptions && !has_resource_metadata
+}
+
 /// Enrich field metadata with LLM descriptions
 #[allow(clippy::too_many_arguments)]
 async fn cmd_enrich(
@@ -478,6 +519,7 @@ async fn cmd_enrich(
     test_run: bool,
     use_proto: bool,
     concurrency: Option<usize>,
+    all: bool,
 ) -> Result<()> {
     // Load metadata cache first (needed for both proto and LLM modes)
     let cache_path = metadata_cache
@@ -503,6 +545,47 @@ async fn cmd_enrich(
             cache.get_resources().len(),
             cache.fields.len()
         );
+    }
+
+    // Filter to only resources missing enrichment (unless --all flag or optional resource arg specified)
+    if !all && target_resource.is_none() && !test_run {
+        let enriched_path = output
+            .clone()
+            .or_else(|| mcc_gaql_common::paths::field_metadata_enriched_path().ok());
+
+        if let Some(ref path) = enriched_path {
+            if path.exists() {
+                println!("Loading existing enriched cache to identify resources missing enrichment...");
+                match FieldMetadataCache::load_from_disk(path).await {
+                    Ok(enriched_cache) => {
+                        let all_resources = cache.get_resources();
+                        let missing_resources: Vec<String> = all_resources
+                            .into_iter()
+                            .filter(|r| {
+                                resource_missing_enrichment(&cache, &enriched_cache, r)
+                            })
+                            .collect();
+
+                        if missing_resources.is_empty() {
+                            println!("All resources are already enriched. Use --all to re-enrich everything.");
+                            return Ok(());
+                        }
+
+                        println!(
+                            "Processing {} resources missing enrichment out of {} total resources",
+                            missing_resources.len(),
+                            cache.get_resources().len()
+                        );
+                        cache.retain_resources(&missing_resources);
+                    }
+                    Err(e) => {
+                        println!("Could not load existing enriched cache ({}). Processing all resources.", e);
+                    }
+                }
+            } else {
+                println!("No existing enriched cache found. Processing all resources.");
+            }
+        }
     }
 
     // Filter to single resource if specified
@@ -531,7 +614,7 @@ async fn cmd_enrich(
 
     // Proto-based enrichment (no LLM needed)
     if use_proto {
-        return cmd_enrich_proto(&mut cache, output, target_resource.clone()).await;
+        return cmd_enrich_proto(&mut cache, output, target_resource.clone(), all).await;
     }
 
     // LLM-based enrichment (original path)
@@ -631,7 +714,49 @@ async fn cmd_enrich_proto(
     cache: &mut FieldMetadataCache,
     output: Option<PathBuf>,
     target_resource: Option<String>,
+    all: bool,
 ) -> Result<()> {
+    // Filter to only resources missing enrichment (unless --all flag or optional resource arg specified)
+    if !all && target_resource.is_none() {
+        let enriched_path = output
+            .clone()
+            .or_else(|| mcc_gaql_common::paths::field_metadata_enriched_path().ok());
+
+        if let Some(ref path) = enriched_path {
+            if path.exists() {
+                println!("Loading existing enriched cache to identify resources missing enrichment...");
+                match FieldMetadataCache::load_from_disk(path).await {
+                    Ok(enriched_cache) => {
+                        let all_resources = cache.get_resources();
+                        let missing_resources: Vec<String> = all_resources
+                            .into_iter()
+                            .filter(|r| {
+                                resource_missing_enrichment(cache, &enriched_cache, r)
+                            })
+                            .collect();
+
+                        if missing_resources.is_empty() {
+                            println!("All resources are already enriched. Use --all to re-enrich everything.");
+                            return Ok(());
+                        }
+
+                        println!(
+                            "Processing {} resources missing enrichment out of {} total resources",
+                            missing_resources.len(),
+                            cache.get_resources().len()
+                        );
+                        cache.retain_resources(&missing_resources);
+                    }
+                    Err(e) => {
+                        println!("Could not load existing enriched cache ({}). Processing all resources.", e);
+                    }
+                }
+            } else {
+                println!("No existing enriched cache found. Processing all resources.");
+            }
+        }
+    }
+
     // Stage 1: Load or build proto docs cache
     println!("\nStage 1/2: Loading proto documentation...");
 
