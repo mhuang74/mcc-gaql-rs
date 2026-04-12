@@ -148,20 +148,20 @@ pub async fn create_bundle(output_path: &Path, query_cookbook_path: &Path) -> Re
     });
 
     // 3. Copy domain_knowledge.md (optional, may not exist yet)
-    if let Some(dk_src) = mcc_gaql_common::paths::config_file_path("domain_knowledge.md") {
-        if dk_src.exists() {
-            let dk_dest = temp_path.join("domain_knowledge.md");
-            fs::copy(&dk_src, &dk_dest)
-                .await
-                .context("Failed to copy domain_knowledge.md")?;
-            let dk_sha256 = compute_sha256(&dk_dest)?;
-            let dk_size = fs::metadata(&dk_dest).await?.len();
-            files.push(ManifestFile {
-                path: "domain_knowledge.md".to_string(),
-                size: dk_size,
-                sha256: dk_sha256,
-            });
-        }
+    if let Some(dk_src) = mcc_gaql_common::paths::config_file_path("domain_knowledge.md")
+        && dk_src.exists()
+    {
+        let dk_dest = temp_path.join("domain_knowledge.md");
+        fs::copy(&dk_src, &dk_dest)
+            .await
+            .context("Failed to copy domain_knowledge.md")?;
+        let dk_sha256 = compute_sha256(&dk_dest)?;
+        let dk_size = fs::metadata(&dk_dest).await?.len();
+        files.push(ManifestFile {
+            path: "domain_knowledge.md".to_string(),
+            size: dk_size,
+            sha256: dk_sha256,
+        });
     }
 
     // 5. Copy LanceDB directory
@@ -306,10 +306,7 @@ pub async fn extract_bundle(bundle_path: &Path, skip_validation: bool) -> Result
         );
     }
 
-    Ok(ExtractedBundle {
-        manifest,
-        temp_dir,
-    })
+    Ok(ExtractedBundle { manifest, temp_dir })
 }
 
 /// Download bundle from URL to temp file
@@ -322,11 +319,7 @@ pub async fn download_bundle(url: &str) -> Result<PathBuf> {
         return Ok(PathBuf::from(path));
     }
 
-    let client = http_client::create_http_client(
-        "mcc-gaql-gen (bundle downloader)",
-        300,
-    )?;
-
+    let client = http_client::create_http_client("mcc-gaql-gen (bundle downloader)", 300)?;
 
     let response = client
         .get(url)
@@ -363,7 +356,10 @@ pub async fn install_bundle(bundle: &ExtractedBundle, force: bool) -> Result<()>
 
     log::debug!("install_bundle: cache_dir={:?}", cache_dir);
     log::debug!("install_bundle: config_dir={:?}", config_dir);
-    log::debug!("install_bundle: bundle temp_dir={:?}", bundle.temp_dir.path());
+    log::debug!(
+        "install_bundle: bundle temp_dir={:?}",
+        bundle.temp_dir.path()
+    );
 
     // Ensure directories exist
     fs::create_dir_all(&cache_dir)
@@ -394,8 +390,15 @@ pub async fn install_bundle(bundle: &ExtractedBundle, force: bool) -> Result<()>
     // Copy field_metadata_enriched.json to cache
     let enriched_src = bundle.file_path("field_metadata_enriched.json");
     let enriched_dest = cache_dir.join("field_metadata_enriched.json");
-    log::debug!("install_bundle: copying {:?} -> {:?}", enriched_src, enriched_dest);
-    log::debug!("install_bundle: enriched_src exists={}", enriched_src.exists());
+    log::debug!(
+        "install_bundle: copying {:?} -> {:?}",
+        enriched_src,
+        enriched_dest
+    );
+    log::debug!(
+        "install_bundle: enriched_src exists={}",
+        enriched_src.exists()
+    );
     fs::copy(&enriched_src, &enriched_dest)
         .await
         .with_context(|| {
@@ -409,14 +412,21 @@ pub async fn install_bundle(bundle: &ExtractedBundle, force: bool) -> Result<()>
     // Copy query_cookbook.toml to config
     let cookbook_src = bundle.file_path("query_cookbook.toml");
     let cookbook_dest = config_dir.join("query_cookbook.toml");
-    log::debug!("install_bundle: copying {:?} -> {:?}", cookbook_src, cookbook_dest);
-    log::debug!("install_bundle: cookbook_src exists={}", cookbook_src.exists());
+    log::debug!(
+        "install_bundle: copying {:?} -> {:?}",
+        cookbook_src,
+        cookbook_dest
+    );
+    log::debug!(
+        "install_bundle: cookbook_src exists={}",
+        cookbook_src.exists()
+    );
     if cookbook_src.exists() {
         // Remove existing file/symlink at destination to avoid broken-symlink errors
         if cookbook_dest.exists() || cookbook_dest.symlink_metadata().is_ok() {
-            fs::remove_file(&cookbook_dest).await.with_context(|| {
-                format!("Failed to remove existing {:?}", cookbook_dest)
-            })?;
+            fs::remove_file(&cookbook_dest)
+                .await
+                .with_context(|| format!("Failed to remove existing {:?}", cookbook_dest))?;
             log::debug!("install_bundle: removed existing {:?}", cookbook_dest);
         }
         fs::copy(&cookbook_src, &cookbook_dest)
@@ -437,18 +447,16 @@ pub async fn install_bundle(bundle: &ExtractedBundle, force: bool) -> Result<()>
     let dk_dest = config_dir.join("domain_knowledge.md");
     if dk_src.exists() {
         if dk_dest.exists() || dk_dest.symlink_metadata().is_ok() {
-            fs::remove_file(&dk_dest).await.with_context(|| {
-                format!("Failed to remove existing {:?}", dk_dest)
-            })?;
+            fs::remove_file(&dk_dest)
+                .await
+                .with_context(|| format!("Failed to remove existing {:?}", dk_dest))?;
         }
-        fs::copy(&dk_src, &dk_dest)
-            .await
-            .with_context(|| {
-                format!(
-                    "Failed to copy domain knowledge: {:?} -> {:?}",
-                    dk_src, dk_dest
-                )
-            })?;
+        fs::copy(&dk_src, &dk_dest).await.with_context(|| {
+            format!(
+                "Failed to copy domain knowledge: {:?} -> {:?}",
+                dk_src, dk_dest
+            )
+        })?;
         log::info!("Installed domain_knowledge.md");
     } else {
         log::warn!("domain_knowledge.md not found in bundle, skipping");
@@ -457,8 +465,15 @@ pub async fn install_bundle(bundle: &ExtractedBundle, force: bool) -> Result<()>
     // Copy LanceDB directory
     let lancedb_src = bundle.file_path("lancedb");
     let lancedb_dest = cache_dir.join("lancedb");
-    log::debug!("install_bundle: copying lancedb {:?} -> {:?}", lancedb_src, lancedb_dest);
-    log::debug!("install_bundle: lancedb_src exists={}", lancedb_src.exists());
+    log::debug!(
+        "install_bundle: copying lancedb {:?} -> {:?}",
+        lancedb_src,
+        lancedb_dest
+    );
+    log::debug!(
+        "install_bundle: lancedb_src exists={}",
+        lancedb_src.exists()
+    );
 
     // Remove existing LanceDB if it exists
     if lancedb_dest.exists() {
@@ -484,7 +499,10 @@ pub async fn install_bundle(bundle: &ExtractedBundle, force: bool) -> Result<()>
     if field_hash_src.exists() {
         let dest = cache_dir.join("field_metadata.hash");
         fs::copy(&field_hash_src, &dest).await.with_context(|| {
-            format!("Failed to copy field_metadata.hash: {:?} -> {:?}", field_hash_src, dest)
+            format!(
+                "Failed to copy field_metadata.hash: {:?} -> {:?}",
+                field_hash_src, dest
+            )
         })?;
         log::info!("Installed field_metadata.hash");
     }
@@ -497,7 +515,10 @@ pub async fn install_bundle(bundle: &ExtractedBundle, force: bool) -> Result<()>
     if query_hash_src.exists() {
         let dest = cache_dir.join("query_cookbook.hash");
         fs::copy(&query_hash_src, &dest).await.with_context(|| {
-            format!("Failed to copy query_cookbook.hash: {:?} -> {:?}", query_hash_src, dest)
+            format!(
+                "Failed to copy query_cookbook.hash: {:?} -> {:?}",
+                query_hash_src, dest
+            )
         })?;
         log::info!("Installed query_cookbook.hash");
     }

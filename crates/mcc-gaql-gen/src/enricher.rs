@@ -17,9 +17,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::time::{Duration, sleep};
 
-use mcc_gaql_common::field_metadata::{
-    FieldMetadata, FieldMetadataCache, ResourceMetadata,
-};
+use mcc_gaql_common::field_metadata::{FieldMetadata, FieldMetadataCache, ResourceMetadata};
 
 use crate::rag::{format_llm_request_debug, format_llm_response_debug};
 
@@ -332,9 +330,9 @@ impl MetadataEnricher {
                     .resource_metadata
                     .as_mut()
                     .and_then(|m| m.get_mut(&resource))
-                {
-                    rm.description = Some(desc);
-                }
+            {
+                rm.description = Some(desc);
+            }
         }
 
         let enriched = cache.enriched_field_count();

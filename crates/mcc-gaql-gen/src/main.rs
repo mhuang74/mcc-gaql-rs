@@ -47,6 +47,19 @@ use mcc_gaql_common::paths::{config_file_path, field_metadata_enriched_path};
 /// Core resources for test-run mode
 const TEST_RUN_RESOURCES: &[&str] = &["campaign", "ad_group", "ad_group_ad", "keyword_view"];
 
+/// Parameters for generate command
+struct GenerateParams {
+    prompt: String,
+    queries: Option<String>,
+    metadata: Option<PathBuf>,
+    no_defaults: bool,
+    use_query_cookbook: bool,
+    explain: bool,
+    verbose: bool,
+    validate: bool,
+    profile: Option<String>,
+}
+
 /// Filter resources for test-run mode
 fn filter_test_resources(resources: Vec<String>) -> Vec<String> {
     let test_set: std::collections::HashSet<_> = TEST_RUN_RESOURCES.iter().cloned().collect();
@@ -336,17 +349,17 @@ async fn main() -> Result<()> {
             validate,
             profile,
         } => {
-            cmd_generate(
+            cmd_generate(GenerateParams {
                 prompt,
                 queries,
                 metadata,
                 no_defaults,
                 use_query_cookbook,
                 explain,
-                cli.verbose,
+                verbose: cli.verbose,
                 validate,
                 profile,
-            )
+            })
             .await?;
         }
 
@@ -413,8 +426,12 @@ async fn cmd_scrape(
     test_run: bool,
 ) -> Result<()> {
     // Print deprecation warning
-    eprintln!("⚠️  WARNING: The 'scrape' command is deprecated and may be removed in a future version.");
-    eprintln!("   Use 'mcc-gaql-gen parse-protos' instead for reliable, authoritative field documentation.");
+    eprintln!(
+        "⚠️  WARNING: The 'scrape' command is deprecated and may be removed in a future version."
+    );
+    eprintln!(
+        "   Use 'mcc-gaql-gen parse-protos' instead for reliable, authoritative field documentation."
+    );
     eprintln!();
 
     // Load metadata cache to get the list of resources
@@ -488,18 +505,16 @@ fn resource_missing_enrichment(
     }
 
     // Check if any field has a description
-    let has_field_descriptions = resource_fields.iter().any(|f| {
-        f.description.as_ref().is_some_and(|d| !d.is_empty())
-    });
+    let has_field_descriptions = resource_fields
+        .iter()
+        .any(|f| f.description.as_ref().is_some_and(|d| !d.is_empty()));
 
     // Check if resource metadata has key_attributes/key_metrics
     let has_resource_metadata = enriched_cache
         .resource_metadata
         .as_ref()
         .and_then(|rm| rm.get(resource))
-        .map(|meta| {
-            !meta.key_attributes.is_empty() || !meta.key_metrics.is_empty()
-        })
+        .map(|meta| !meta.key_attributes.is_empty() || !meta.key_metrics.is_empty())
         .unwrap_or(false);
 
     // Missing enrichment if neither field descriptions nor resource metadata exist
@@ -555,19 +570,21 @@ async fn cmd_enrich(
 
         if let Some(ref path) = enriched_path {
             if path.exists() {
-                println!("Loading existing enriched cache to identify resources missing enrichment...");
+                println!(
+                    "Loading existing enriched cache to identify resources missing enrichment..."
+                );
                 match FieldMetadataCache::load_from_disk(path).await {
                     Ok(enriched_cache) => {
                         let all_resources = cache.get_resources();
                         let missing_resources: Vec<String> = all_resources
                             .into_iter()
-                            .filter(|r| {
-                                resource_missing_enrichment(&cache, &enriched_cache, r)
-                            })
+                            .filter(|r| resource_missing_enrichment(&cache, &enriched_cache, r))
                             .collect();
 
                         if missing_resources.is_empty() {
-                            println!("All resources are already enriched. Use --all to re-enrich everything.");
+                            println!(
+                                "All resources are already enriched. Use --all to re-enrich everything."
+                            );
                             return Ok(());
                         }
 
@@ -580,7 +597,10 @@ async fn cmd_enrich(
                         cache.retain_resources(&missing_resources);
                     }
                     Err(e) => {
-                        println!("Could not load existing enriched cache ({}). Processing all resources.", e);
+                        println!(
+                            "Could not load existing enriched cache ({}). Processing all resources.",
+                            e
+                        );
                     }
                 }
             } else {
@@ -687,11 +707,12 @@ async fn cmd_enrich(
     // Backup existing enriched cache before modifying
     if enriched_path.exists() {
         let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
-        let backup_path = enriched_path.with_file_name(format!(
-            "field_metadata_enriched_{}.json",
-            timestamp
-        ));
-        println!("\nBacking up existing enriched cache to {:?}...", backup_path);
+        let backup_path =
+            enriched_path.with_file_name(format!("field_metadata_enriched_{}.json", timestamp));
+        println!(
+            "\nBacking up existing enriched cache to {:?}...",
+            backup_path
+        );
         std::fs::copy(&enriched_path, &backup_path)?;
     }
 
@@ -736,19 +757,21 @@ async fn cmd_enrich_proto(
 
         if let Some(ref path) = enriched_path {
             if path.exists() {
-                println!("Loading existing enriched cache to identify resources missing enrichment...");
+                println!(
+                    "Loading existing enriched cache to identify resources missing enrichment..."
+                );
                 match FieldMetadataCache::load_from_disk(path).await {
                     Ok(enriched_cache) => {
                         let all_resources = cache.get_resources();
                         let missing_resources: Vec<String> = all_resources
                             .into_iter()
-                            .filter(|r| {
-                                resource_missing_enrichment(cache, &enriched_cache, r)
-                            })
+                            .filter(|r| resource_missing_enrichment(cache, &enriched_cache, r))
                             .collect();
 
                         if missing_resources.is_empty() {
-                            println!("All resources are already enriched. Use --all to re-enrich everything.");
+                            println!(
+                                "All resources are already enriched. Use --all to re-enrich everything."
+                            );
                             return Ok(());
                         }
 
@@ -761,7 +784,10 @@ async fn cmd_enrich_proto(
                         cache.retain_resources(&missing_resources);
                     }
                     Err(e) => {
-                        println!("Could not load existing enriched cache ({}). Processing all resources.", e);
+                        println!(
+                            "Could not load existing enriched cache ({}). Processing all resources.",
+                            e
+                        );
                     }
                 }
             } else {
@@ -825,11 +851,12 @@ async fn cmd_enrich_proto(
     // Backup existing enriched cache before modifying
     if enriched_path.exists() {
         let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
-        let backup_path = enriched_path.with_file_name(format!(
-            "field_metadata_enriched_{}.json",
-            timestamp
-        ));
-        println!("\nBacking up existing enriched cache to {:?}...", backup_path);
+        let backup_path =
+            enriched_path.with_file_name(format!("field_metadata_enriched_{}.json", timestamp));
+        println!(
+            "\nBacking up existing enriched cache to {:?}...",
+            backup_path
+        );
         std::fs::copy(&enriched_path, &backup_path)?;
     }
 
@@ -859,23 +886,13 @@ async fn cmd_enrich_proto(
 }
 
 /// Generate a GAQL query from a natural language prompt
-async fn cmd_generate(
-    prompt: String,
-    queries: Option<String>,
-    metadata: Option<PathBuf>,
-    no_defaults: bool,
-    use_query_cookbook: bool,
-    explain: bool,
-    verbose: bool,
-    validate: bool,
-    profile: Option<String>,
-) -> Result<()> {
+async fn cmd_generate(params: GenerateParams) -> Result<()> {
     validate_llm_env()?;
 
     let llm_config = rag::LlmConfig::from_env();
 
     // Load query cookbook
-    let example_queries: Vec<QueryEntry> = if let Some(queries_file) = queries {
+    let example_queries: Vec<QueryEntry> = if let Some(queries_file) = params.queries {
         // Explicit --queries flag provided
         let queries_path = config_file_path(&queries_file)
             .with_context(|| format!("Could not find queries file: {}", queries_file))?;
@@ -903,7 +920,8 @@ async fn cmd_generate(
     };
 
     // Load field metadata
-    let metadata_path = metadata
+    let metadata_path = params
+        .metadata
         .or_else(|| mcc_gaql_common::paths::field_metadata_enriched_path().ok())
         .context("Could not determine enriched metadata path. Use --metadata to specify it.")?;
     log::info!("Loading field metadata from {:?}...", metadata_path);
@@ -940,20 +958,20 @@ async fn cmd_generate(
     }
 
     // Cache is valid - proceed with generation
-    log::info!("Cache valid. Generating GAQL for: \"{}\"", prompt);
+    log::info!("Cache valid. Generating GAQL for: \"{}\"", params.prompt);
 
     // Build pipeline config
     let pipeline_config = rag::PipelineConfig {
-        add_defaults: !no_defaults,
-        use_query_cookbook,
-        explain,
+        add_defaults: !params.no_defaults,
+        use_query_cookbook: params.use_query_cookbook,
+        explain: params.explain,
     };
 
     // Generate GAQL using MultiStepRAGAgent
     let result = rag::convert_to_gaql(
         example_queries,
         field_cache,
-        &prompt,
+        &params.prompt,
         &llm_config,
         pipeline_config,
     )
@@ -962,16 +980,16 @@ async fn cmd_generate(
     println!("{}", result.query);
 
     // Validate generated query against Google Ads API if requested
-    if validate {
-        let exit_code = match run_validation(&result.query, profile).await {
+    if params.validate {
+        let exit_code = match run_validation(&result.query, params.profile).await {
             Ok(()) => {
                 eprintln!("Validation: PASSED");
                 0
             }
             Err(e) => {
                 let msg = e.to_string();
-                if msg.starts_with("__config_error__:") {
-                    eprintln!("Validation error: {}", &msg["__config_error__:".len()..]);
+                if let Some(stripped) = msg.strip_prefix("__config_error__:") {
+                    eprintln!("Validation error: {}", stripped);
                     2
                 } else {
                     eprintln!("Validation: FAILED – {}", msg);
@@ -985,8 +1003,8 @@ async fn cmd_generate(
     }
 
     // Print explanation if flag is set
-    if explain {
-        rag::print_selection_explanation(&result.pipeline_trace, &prompt);
+    if params.explain {
+        rag::print_selection_explanation(&result.pipeline_trace, &params.prompt);
     }
 
     // Log validation errors/warnings if any
@@ -1004,7 +1022,7 @@ async fn cmd_generate(
     }
 
     // Log pipeline trace if verbose
-    if verbose {
+    if params.verbose {
         log::debug!("--- Pipeline Trace ---");
         log::debug!(
             "Phase 1 - Primary resource: {}",
@@ -1063,16 +1081,17 @@ async fn cmd_generate(
 /// Returns Err with API error message for invalid queries (exit 1).
 async fn run_validation(query: &str, profile: Option<String>) -> Result<()> {
     use mcc_gaql::config as mcc_config;
-    use mcc_gaql::googleads::{ApiAccessConfig, generate_token_cache_filename, get_api_access, validate_gaql_query};
+    use mcc_gaql::googleads::{
+        ApiAccessConfig, generate_token_cache_filename, get_api_access, validate_gaql_query,
+    };
     use mcc_gaql_common::paths::config_file_path;
 
     // Resolve profile name
     let profile_name = match profile {
         Some(p) => p,
         None => {
-            let profiles = mcc_config::list_profiles().map_err(|e| {
-                anyhow::anyhow!("__config_error__:Failed to list profiles: {}", e)
-            })?;
+            let profiles = mcc_config::list_profiles()
+                .map_err(|e| anyhow::anyhow!("__config_error__:Failed to list profiles: {}", e))?;
             match profiles.len() {
                 0 => {
                     return Err(anyhow::anyhow!(
@@ -1091,7 +1110,11 @@ async fn run_validation(query: &str, profile: Option<String>) -> Result<()> {
 
     // Load config for the profile
     let config = mcc_config::load(&profile_name).map_err(|e| {
-        anyhow::anyhow!("__config_error__:Failed to load profile '{}': {}", profile_name, e)
+        anyhow::anyhow!(
+            "__config_error__:Failed to load profile '{}': {}",
+            profile_name,
+            e
+        )
     })?;
 
     // Resolve token cache filename
@@ -1139,9 +1162,9 @@ async fn run_validation(query: &str, profile: Option<String>) -> Result<()> {
         use_remote_auth: false,
     };
 
-    let access = get_api_access(&api_config).await.map_err(|e| {
-        anyhow::anyhow!("__config_error__:Authentication failed: {}", e)
-    })?;
+    let access = get_api_access(&api_config)
+        .await
+        .map_err(|e| anyhow::anyhow!("__config_error__:Authentication failed: {}", e))?;
 
     validate_gaql_query(access, &mcc_customer_id, query).await
 }
@@ -1659,7 +1682,10 @@ async fn cmd_backfill_identity(metadata: Option<PathBuf>, force: bool) -> Result
         println!("All resources already have identity fields. Nothing to do.");
     } else {
         let verb = if force { "Recomputed" } else { "Backfilled" };
-        println!("{} identity fields for {} resource(s). Saving...", verb, count);
+        println!(
+            "{} identity fields for {} resource(s). Saving...",
+            verb, count
+        );
         cache
             .save_to_disk(&metadata_path)
             .await

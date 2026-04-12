@@ -267,8 +267,11 @@ fn build_resource_metadata_from_fields(
 
         key_metrics.sort();
 
-        let identity_fields =
-            mcc_gaql_common::field_metadata::compute_identity_fields(resource_name, fields, &selectable_with);
+        let identity_fields = mcc_gaql_common::field_metadata::compute_identity_fields(
+            resource_name,
+            fields,
+            &selectable_with,
+        );
 
         resource_metadata.insert(
             resource_name.clone(),

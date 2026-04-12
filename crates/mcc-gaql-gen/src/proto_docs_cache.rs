@@ -416,10 +416,11 @@ pub fn merge_into_field_metadata_cache(
 
         // Look up proto field doc
         if let Some(proto_field) = proto_cache.get_field_doc(&message_name, &field_name_proto)
-            && !proto_field.description.is_empty() {
-                field_meta.description = Some(proto_field.description.clone());
-                enriched_count += 1;
-            }
+            && !proto_field.description.is_empty()
+        {
+            field_meta.description = Some(proto_field.description.clone());
+            enriched_count += 1;
+        }
     }
 
     // Also enrich resource-level metadata
@@ -431,9 +432,9 @@ pub fn merge_into_field_metadata_cache(
             if let Some(proto_desc) = proto_cache.get_resource_description(&message_name)
                 && (res_meta.description.is_none()
                     || res_meta.description.as_ref().is_none_or(|d| d.is_empty()))
-                {
-                    res_meta.description = Some(proto_desc.to_string());
-                }
+            {
+                res_meta.description = Some(proto_desc.to_string());
+            }
         }
     }
 
@@ -449,19 +450,21 @@ fn extract_commit_from_path(path: &Path) -> Result<String> {
 
     for (i, component) in components.iter().enumerate() {
         if let Component::Normal(name) = component
-            && name.to_str() == Some("checkouts") && i + 2 < components.len() {
-                // The component after googleads-rs-* should be the commit hash
-                if let Component::Normal(commit) = &components[i + 2] {
-                    let commit_str = commit.to_string_lossy();
-                    // Verify it looks like a commit hash (hex, at least 7 chars, no dots)
-                    if commit_str.len() >= 7
-                        && !commit_str.contains('.')
-                        && commit_str.chars().all(|c| c.is_ascii_hexdigit())
-                    {
-                        return Ok(commit_str.to_string());
-                    }
+            && name.to_str() == Some("checkouts")
+            && i + 2 < components.len()
+        {
+            // The component after googleads-rs-* should be the commit hash
+            if let Component::Normal(commit) = &components[i + 2] {
+                let commit_str = commit.to_string_lossy();
+                // Verify it looks like a commit hash (hex, at least 7 chars, no dots)
+                if commit_str.len() >= 7
+                    && !commit_str.contains('.')
+                    && commit_str.chars().all(|c| c.is_ascii_hexdigit())
+                {
+                    return Ok(commit_str.to_string());
                 }
             }
+        }
     }
 
     // Fallback: use "unknown" - cache will still work but won't invalidate on updates

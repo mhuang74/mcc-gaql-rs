@@ -946,7 +946,9 @@ pub async fn build_or_load_resource_vector_store(
                         SearchParams::default().distance_type(DistanceType::Cosine),
                     )
                     .await
-                    .map_err(|e| anyhow::anyhow!("Failed to create resource vector index: {}", e))?;
+                    .map_err(|e| {
+                        anyhow::anyhow!("Failed to create resource vector index: {}", e)
+                    })?;
 
                     log::info!(
                         "Successfully loaded resource entries from cache ({:.2}s)",
@@ -1023,12 +1025,8 @@ pub async fn build_or_load_resource_vector_store(
         })
         .collect();
 
-    let resource_embeddings = generate_embeddings_parallel(
-        resource_docs.clone(),
-        embedding_model.clone(),
-        50,
-    )
-    .await?;
+    let resource_embeddings =
+        generate_embeddings_parallel(resource_docs.clone(), embedding_model.clone(), 50).await?;
 
     log::info!(
         "Resource embeddings generated in {:.2}s",
@@ -1475,16 +1473,19 @@ impl DomainKnowledge {
     /// 1. User file at ~/.config/mcc-gaql/domain_knowledge.md (if exists)
     /// 2. Embedded default compiled into binary
     fn load() -> Self {
-        if let Some(path) = mcc_gaql_common::paths::config_file_path("domain_knowledge.md") {
-            if path.exists() {
-                match std::fs::read_to_string(&path) {
-                    Ok(content) => {
-                        log::info!("Loaded user domain_knowledge.md from {:?}", path);
-                        return Self::parse(&content);
-                    }
-                    Err(e) => {
-                        log::warn!("Failed to read user domain_knowledge.md: {}, using embedded default", e);
-                    }
+        if let Some(path) = mcc_gaql_common::paths::config_file_path("domain_knowledge.md")
+            && path.exists()
+        {
+            match std::fs::read_to_string(&path) {
+                Ok(content) => {
+                    log::info!("Loaded user domain_knowledge.md from {:?}", path);
+                    return Self::parse(&content);
+                }
+                Err(e) => {
+                    log::warn!(
+                        "Failed to read user domain_knowledge.md: {}, using embedded default",
+                        e
+                    );
                 }
             }
         }
@@ -1740,34 +1741,35 @@ impl MultiStepRAGAgent {
         // Add categorized resources in order
         for (_, category_name) in &categories {
             if let Some(items) = categorized.get(*category_name)
-                && !items.is_empty() {
-                    output.push_str(&format!("\n--- {} ---\n", category_name));
-                    for (name, desc) in items {
-                        if desc.is_empty() {
-                            output.push_str(&format!("  - {}\n", name));
-                        } else {
-                            // Smart truncation: preserve segment annotation if present
-                            let short_desc = if desc.len() > 200 {
-                                // Check if there's a segment annotation
-                                if let Some(segment_start) = desc.find(" [Segments: ") {
-                                    // Truncate description but keep full segment annotation
-                                    let base_desc = &desc[..segment_start];
-                                    let segment_part = &desc[segment_start..];
-                                    if base_desc.len() > 120 {
-                                        format!("{}... {}", &base_desc[..117], segment_part)
-                                    } else {
-                                        desc.clone()
-                                    }
+                && !items.is_empty()
+            {
+                output.push_str(&format!("\n--- {} ---\n", category_name));
+                for (name, desc) in items {
+                    if desc.is_empty() {
+                        output.push_str(&format!("  - {}\n", name));
+                    } else {
+                        // Smart truncation: preserve segment annotation if present
+                        let short_desc = if desc.len() > 200 {
+                            // Check if there's a segment annotation
+                            if let Some(segment_start) = desc.find(" [Segments: ") {
+                                // Truncate description but keep full segment annotation
+                                let base_desc = &desc[..segment_start];
+                                let segment_part = &desc[segment_start..];
+                                if base_desc.len() > 120 {
+                                    format!("{}... {}", &base_desc[..117], segment_part)
                                 } else {
-                                    format!("{}...", &desc[..197])
+                                    desc.clone()
                                 }
                             } else {
-                                desc.clone()
-                            };
-                            output.push_str(&format!("  - {}: {}\n", name, short_desc));
-                        }
+                                format!("{}...", &desc[..197])
+                            }
+                        } else {
+                            desc.clone()
+                        };
+                        output.push_str(&format!("  - {}: {}\n", name, short_desc));
                     }
                 }
+            }
         }
 
         // Add uncategorized resources
@@ -2022,9 +2024,7 @@ impl MultiStepRAGAgent {
                 continue;
             }
             let category = categorize_resource(name);
-            if existing_categories.contains(category)
-                || seen_new_categories.contains(category)
-            {
+            if existing_categories.contains(category) || seen_new_categories.contains(category) {
                 continue;
             }
             let rm = &resource_metadata[name];
@@ -2053,34 +2053,31 @@ impl MultiStepRAGAgent {
         anyhow::Error,
     > {
         // --- RAG pre-filter ---
-        let (resources, used_rag) =
-            match self.retrieve_relevant_resources(user_query, 20).await {
-                Ok(candidates) if !candidates.is_empty() => {
-                    let top_score = candidates[0].score;
-                    if top_score >= Self::SIMILARITY_THRESHOLD {
-                        log::info!(
-                            "Phase 1: RAG pre-filter selected {} resources (top score={:.3})",
-                            candidates.len(),
-                            top_score
-                        );
-                        let names: Vec<String> =
-                            candidates.into_iter().map(|c| c.resource_name).collect();
-                        (names, true)
-                    } else {
-                        log::warn!(
-                            "Phase 1: Low RAG confidence ({:.3}), falling back to full resource list",
-                            top_score
-                        );
-                        (self.field_cache.get_resources(), false)
-                    }
-                }
-                Ok(_) | Err(_) => {
+        let (resources, used_rag) = match self.retrieve_relevant_resources(user_query, 20).await {
+            Ok(candidates) if !candidates.is_empty() => {
+                let top_score = candidates[0].score;
+                if top_score >= Self::SIMILARITY_THRESHOLD {
+                    log::info!(
+                        "Phase 1: RAG pre-filter selected {} resources (top score={:.3})",
+                        candidates.len(),
+                        top_score
+                    );
+                    let names: Vec<String> =
+                        candidates.into_iter().map(|c| c.resource_name).collect();
+                    (names, true)
+                } else {
                     log::warn!(
-                        "Phase 1: RAG resource search unavailable, using full resource list"
+                        "Phase 1: Low RAG confidence ({:.3}), falling back to full resource list",
+                        top_score
                     );
                     (self.field_cache.get_resources(), false)
                 }
-            };
+            }
+            Ok(_) | Err(_) => {
+                log::warn!("Phase 1: RAG resource search unavailable, using full resource list");
+                (self.field_cache.get_resources(), false)
+            }
+        };
 
         // Build resource information for sampling (with segment summaries)
         let resource_info: Vec<(String, String)> = resources
@@ -2145,6 +2142,7 @@ impl MultiStepRAGAgent {
         };
 
         let resource_guidance = self.domain_knowledge.section("Resource Selection Guidance");
+        let combined_resources = format!("{}{}", categorized_resources, cookbook_examples);
         let system_prompt = format!(
             r#"You are a Google Ads Query Language (GAQL) expert. Given a user query, determine:
 1. The primary resource to query FROM (e.g., campaign, ad_group, keyword_view)
@@ -2163,8 +2161,7 @@ Resource selection guidance:
 
 {}
 {}"#,
-            resource_list_header,
-            format!("{}{}", categorized_resources, cookbook_examples)
+            resource_list_header, combined_resources
         );
 
         let user_prompt = format!("User query: {}", user_query);
@@ -2254,8 +2251,7 @@ Resource selection guidance:
         let (primary, validated_related) = if !dropped.is_empty() {
             let mut promoted: Option<String> = None;
             for candidate in &dropped {
-                let candidate_selectable =
-                    self.field_cache.get_resource_selectable_with(candidate);
+                let candidate_selectable = self.field_cache.get_resource_selectable_with(candidate);
                 if candidate_selectable.contains(&primary) {
                     promoted = Some(candidate.clone());
                     break; // First qualifying candidate (preserves LLM priority order)
@@ -2320,13 +2316,12 @@ Resource selection guidance:
 
                 if !has_asset_access {
                     // Determine correct resource based on context
-                    let new_primary = if query_lower.contains("ad group")
-                        || query_lower.contains("ad_group")
-                    {
-                        "ad_group_asset"
-                    } else {
-                        "campaign_asset"
-                    };
+                    let new_primary =
+                        if query_lower.contains("ad group") || query_lower.contains("ad_group") {
+                            "ad_group_asset"
+                        } else {
+                            "campaign_asset"
+                        };
 
                     log::warn!(
                         "Phase 1: Overriding primary '{}' to '{}' - query requests asset details \
@@ -2338,8 +2333,7 @@ Resource selection guidance:
                     );
 
                     // Rebuild related resources for new primary
-                    let new_selectable =
-                        self.field_cache.get_resource_selectable_with(new_primary);
+                    let new_selectable = self.field_cache.get_resource_selectable_with(new_primary);
                     let new_related: Vec<String> = validated_related
                         .into_iter()
                         .filter(|r| new_selectable.contains(r))
@@ -2479,10 +2473,10 @@ Resource selection guidance:
                         // Only add if compatible with primary resource
                         if let Some(resource) = field.get_resource()
                             && (resource == primary || selectable_with.contains(&resource))
-                                && seen.insert(field.name.clone())
-                            {
-                                candidates.push(field.clone());
-                            }
+                            && seen.insert(field.name.clone())
+                        {
+                            candidates.push(field.clone());
+                        }
                     }
                 }
             }
@@ -2652,23 +2646,47 @@ Resource selection guidance:
         // The segment vector search (15 samples) frequently misses segments.date when the user
         // query doesn't literally say "date". We detect temporal intent and force-include it.
         let temporal_keywords = [
-            "last week", "last 7 days", "last 14 days", "last 30 days", "last 60 days",
-            "last 90 days", "yesterday", "today", "this week", "this month", "last month",
-            "last business week", "this year", "last year", "ytd", "year to date",
-            "daily", "weekly", "monthly", "quarterly", "annual", "recent", "past week",
-            "past month", "past year", "last quarter", "this quarter",
+            "last week",
+            "last 7 days",
+            "last 14 days",
+            "last 30 days",
+            "last 60 days",
+            "last 90 days",
+            "yesterday",
+            "today",
+            "this week",
+            "this month",
+            "last month",
+            "last business week",
+            "this year",
+            "last year",
+            "ytd",
+            "year to date",
+            "daily",
+            "weekly",
+            "monthly",
+            "quarterly",
+            "annual",
+            "recent",
+            "past week",
+            "past month",
+            "past year",
+            "last quarter",
+            "this quarter",
         ];
         let query_lower = user_query.to_lowercase();
         let has_temporal = temporal_keywords.iter().any(|kw| query_lower.contains(kw));
         if has_temporal {
             let date_field_name = "segments.date";
-            if selectable_with.contains(&date_field_name.to_string()) {
-                if let Some(date_field) = self.field_cache.fields.get(date_field_name) {
-                    if seen.insert(date_field_name.to_string()) {
-                        candidates.push(date_field.clone());
-                        log::debug!("Phase 2: Force-injected {} for temporal query", date_field_name);
-                    }
-                }
+            if selectable_with.contains(&date_field_name.to_string())
+                && let Some(date_field) = self.field_cache.fields.get(date_field_name)
+                && seen.insert(date_field_name.to_string())
+            {
+                candidates.push(date_field.clone());
+                log::debug!(
+                    "Phase 2: Force-injected {} for temporal query",
+                    date_field_name
+                );
             }
         }
 
@@ -2677,13 +2695,12 @@ Resource selection guidance:
         // In an MCC environment, account identifiers are universally useful context for any query.
         // They are added as candidates only; the LLM decides whether to include them in SELECT.
         for field_name in &["customer.id", "customer.descriptive_name"] {
-            if selectable_with.contains(&field_name.to_string()) || primary == "customer" {
-                if let Some(field) = self.field_cache.fields.get(*field_name) {
-                    if seen.insert(field_name.to_string()) {
-                        candidates.push(field.clone());
-                        log::debug!("Phase 2: Force-injected {} (always-on for MCC)", field_name);
-                    }
-                }
+            if (selectable_with.contains(&field_name.to_string()) || primary == "customer")
+                && let Some(field) = self.field_cache.fields.get(*field_name)
+                && seen.insert(field_name.to_string())
+            {
+                candidates.push(field.clone());
+                log::debug!("Phase 2: Force-injected {} (always-on for MCC)", field_name);
             }
         }
 
@@ -2702,13 +2719,15 @@ Resource selection guidance:
                 "metrics.search_top_impression_share",
             ];
             for field_name in &impression_share_metrics {
-                if selectable_with.contains(&field_name.to_string()) {
-                    if let Some(field) = self.field_cache.fields.get(*field_name) {
-                        if seen.insert(field_name.to_string()) {
-                            candidates.push(field.clone());
-                            log::debug!("Phase 2: Force-injected {} for impression share query", field_name);
-                        }
-                    }
+                if selectable_with.contains(&field_name.to_string())
+                    && let Some(field) = self.field_cache.fields.get(*field_name)
+                    && seen.insert(field_name.to_string())
+                {
+                    candidates.push(field.clone());
+                    log::debug!(
+                        "Phase 2: Force-injected {} for impression share query",
+                        field_name
+                    );
                 }
             }
         }
@@ -2723,23 +2742,24 @@ Resource selection guidance:
             .and_then(|m| m.get(primary))
             .map(|rm| {
                 if rm.identity_fields.is_empty() {
-                    log::debug!("Phase 2: identity_fields empty for {primary} — cache may need backfill");
+                    log::debug!(
+                        "Phase 2: identity_fields empty for {primary} — cache may need backfill"
+                    );
                 }
                 rm.identity_fields.clone()
             })
             .unwrap_or_default();
         for field_name in &identity_fields {
-            if selectable_with.contains(field_name) || field_name.starts_with("customer.") {
-                if let Some(field) = self.field_cache.fields.get(field_name.as_str()) {
-                    if seen.insert(field_name.clone()) {
-                        candidates.push(field.clone());
-                        log::debug!(
-                            "Phase 2: Force-injected {} (identity field for {})",
-                            field_name,
-                            primary
-                        );
-                    }
-                }
+            if (selectable_with.contains(field_name) || field_name.starts_with("customer."))
+                && let Some(field) = self.field_cache.fields.get(field_name.as_str())
+                && seen.insert(field_name.clone())
+            {
+                candidates.push(field.clone());
+                log::debug!(
+                    "Phase 2: Force-injected {} (identity field for {})",
+                    field_name,
+                    primary
+                );
             }
         }
 
@@ -2845,16 +2865,15 @@ Resource selection guidance:
                 let match_score = term_matches.len() + if has_name_match { 2 } else { 0 };
 
                 // Only add fields with reasonable match scores
-                if (match_score >= 2 || has_name_match)
-                    && seen.insert(field_name.clone()) {
-                        log::trace!(
-                            "Phase 2: Keyword match '{}' (score={}, terms={:?})",
-                            field_name,
-                            match_score,
-                            term_matches
-                        );
-                        matches.push(field.clone());
-                    }
+                if (match_score >= 2 || has_name_match) && seen.insert(field_name.clone()) {
+                    log::trace!(
+                        "Phase 2: Keyword match '{}' (score={}, terms={:?})",
+                        field_name,
+                        match_score,
+                        term_matches
+                    );
+                    matches.push(field.clone());
+                }
             }
         }
 
@@ -3042,7 +3061,9 @@ Resource selection guidance:
         let (this_christmas_start, this_christmas_end) = dates.this_christmas;
 
         let metric_terminology = self.domain_knowledge.section("Metric Terminology");
-        let numeric_monetary = self.domain_knowledge.section("Numeric and Monetary Conversion");
+        let numeric_monetary = self
+            .domain_knowledge
+            .section("Numeric and Monetary Conversion");
         let monetary_extraction = self.domain_knowledge.section("Monetary Value Extraction");
         let date_range_handling = self.domain_knowledge.section("Date Range Handling");
         let query_best_practices = self.domain_knowledge.section("Query Best Practices");
@@ -3309,21 +3330,19 @@ Respond ONLY with valid JSON:
             let needs_micros = ff.field_name.ends_with("_micros")
                 || ff.field_name.contains("cost_per_")
                 || ff.field_name.contains("amount_micros");
-            if needs_micros {
-                if let Some(converted) = try_convert_to_micros(&ff.value) {
-                    log::debug!(
-                        "Phase 3: Micros conversion for '{}': '{}' → '{}'",
-                        ff.field_name,
-                        ff.value,
-                        converted
-                    );
-                    ff.value = converted;
-                }
+            if needs_micros && let Some(converted) = try_convert_to_micros(&ff.value) {
+                log::debug!(
+                    "Phase 3: Micros conversion for '{}': '{}' → '{}'",
+                    ff.field_name,
+                    ff.value,
+                    converted
+                );
+                ff.value = converted;
             }
         }
 
         // Validation: detect zero thresholds when query contains monetary patterns
-        validate_monetary_thresholds(&mut filter_fields, &user_query);
+        validate_monetary_thresholds(&mut filter_fields, user_query);
 
         let order_by_fields: Vec<(String, String)> = parsed["order_by_fields"]
             .as_array()
@@ -3361,7 +3380,10 @@ Respond ONLY with valid JSON:
             .map(|s| s.to_string())
             .unwrap_or_default();
 
-        let limit = parsed.get("limit").and_then(|v| v.as_u64()).map(|n| n as u32);
+        let limit = parsed
+            .get("limit")
+            .and_then(|v| v.as_u64())
+            .map(|n| n as u32);
 
         Ok(FieldSelectionResult {
             select_fields: final_select_fields,
@@ -3587,7 +3609,9 @@ Respond ONLY with valid JSON:
         }
 
         // Limit detection: LLM-provided limit takes priority, detect_limit as fallback
-        let limit = field_selection.limit.or_else(|| self.detect_limit(user_query));
+        let limit = field_selection
+            .limit
+            .or_else(|| self.detect_limit(user_query));
 
         // Implicit defaults (if enabled)
         if self.pipeline_config.add_defaults {
@@ -3940,7 +3964,7 @@ fn try_convert_to_micros(value: &str) -> Option<String> {
 }
 
 /// Validation: Detect zero thresholds when query contains monetary patterns
-fn validate_monetary_thresholds(filter_fields: &mut Vec<FilterField>, user_query: &str) {
+fn validate_monetary_thresholds(filter_fields: &mut [FilterField], user_query: &str) {
     lazy_static::lazy_static! {
         static ref MONETARY_PATTERN: regex::Regex = regex::Regex::new(
             r"(?i)(?:cost|cpa|spend|budget|amount|value|revenue).*?\$?\d+(?:\.\d+)?(?:\s*[KkMmBb])?|\$\d+(?:\.\d+)?(?:\s*[KkMmBb])?"
@@ -3963,7 +3987,8 @@ fn validate_monetary_thresholds(filter_fields: &mut Vec<FilterField>, user_query
             if let Some(extracted) = extract_threshold_from_query(user_query, &ff.field_name) {
                 log::info!(
                     "Phase 3: Correcting zero threshold for '{}' to '{}'",
-                    ff.field_name, extracted
+                    ff.field_name,
+                    extracted
                 );
                 ff.value = extracted;
             }
@@ -4246,7 +4271,10 @@ mod tests {
 
     #[test]
     fn test_try_convert_to_micros_with_comma() {
-        assert_eq!(try_convert_to_micros("1,000"), Some("1000000000".to_string()));
+        assert_eq!(
+            try_convert_to_micros("1,000"),
+            Some("1000000000".to_string())
+        );
     }
 
     #[test]
@@ -4551,7 +4579,10 @@ mod tests {
             .map(|s| s.to_string())
             .unwrap_or_default();
 
-        let limit = parsed.get("limit").and_then(|v| v.as_u64()).map(|n| n as u32);
+        let limit = parsed
+            .get("limit")
+            .and_then(|v| v.as_u64())
+            .map(|n| n as u32);
 
         Some(FieldSelectionResult {
             select_fields,
@@ -4742,7 +4773,10 @@ mod tests {
             Some("200000000".to_string())
         );
         assert_eq!(
-            extract_threshold_from_query("cost per conversion over $150", "metrics.cost_per_conversion"),
+            extract_threshold_from_query(
+                "cost per conversion over $150",
+                "metrics.cost_per_conversion"
+            ),
             Some("150000000".to_string())
         );
         assert_eq!(
@@ -4794,13 +4828,11 @@ mod tests {
 
         let user_query = "campaigns with no conversions";
 
-        let mut filter_fields = vec![
-            FilterField {
-                field_name: "metrics.conversions".to_string(),
-                operator: "=".to_string(),
-                value: "0".to_string(),
-            },
-        ];
+        let mut filter_fields = vec![FilterField {
+            field_name: "metrics.conversions".to_string(),
+            operator: "=".to_string(),
+            value: "0".to_string(),
+        }];
 
         validate_monetary_thresholds(&mut filter_fields, user_query);
 
@@ -4851,10 +4883,7 @@ mod tests {
 
     #[test]
     fn test_normalize_in_value_empty_list() {
-        assert_eq!(
-            MultiStepRAGAgent::normalize_in_value("[]"),
-            "()"
-        );
+        assert_eq!(MultiStepRAGAgent::normalize_in_value("[]"), "()");
     }
 
     #[test]
@@ -4908,10 +4937,7 @@ mod tests {
 
     #[test]
     fn test_normalize_string_value_empty_quotes() {
-        assert_eq!(
-            MultiStepRAGAgent::normalize_string_value("''"),
-            ""
-        );
+        assert_eq!(MultiStepRAGAgent::normalize_string_value("''"), "");
     }
 
     // Helper: Check if a resource requires non-empty selectable_with

@@ -59,10 +59,7 @@ pub async fn download(public_base_url: &str, object_key: &str, dest_path: &Path)
     let url = format!("{}/{}", public_base_url.trim_end_matches('/'), object_key);
     log::info!("Downloading {} to {:?}", url, dest_path);
 
-        let client = http_client::create_http_client(
-        "mcc-gaql-gen (metadata downloader)",
-        120,
-    )?;
+    let client = http_client::create_http_client("mcc-gaql-gen (metadata downloader)", 120)?;
 
     let response = client
         .get(&url)
@@ -119,10 +116,7 @@ pub async fn download_bundle(url: &str, dest_path: &Path) -> Result<()> {
         return Ok(());
     }
 
-        let client = http_client::create_http_client(
-        "mcc-gaql-gen (bundle downloader)",
-        300,
-    )?;
+    let client = http_client::create_http_client("mcc-gaql-gen (bundle downloader)", 300)?;
 
     let response = client
         .get(url)
@@ -191,10 +185,7 @@ pub async fn upload(object_key: &str, source_path: &Path) -> Result<()> {
         &config.secret_key,
     )?;
 
-    let client = http_client::create_http_client(
-        "mcc-gaql-gen (metadata uploader)",
-        300,
-    )?;
+    let client = http_client::create_http_client("mcc-gaql-gen (metadata uploader)", 300)?;
 
     let response = client
         .put(&url)

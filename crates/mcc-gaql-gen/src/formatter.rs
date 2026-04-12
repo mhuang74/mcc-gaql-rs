@@ -21,6 +21,29 @@ const LLM_ENRICHED: &str = "[llm-enriched]";
 /// LLM category limit (matches Phase 3 field selection behavior)
 const LLM_CATEGORY_LIMIT: usize = 15;
 
+/// Categorize selectable_with fields into segments, metrics, and other
+fn categorize_selectable_with(selectable_with: &[String]) -> (Vec<&str>, Vec<&str>, Vec<&str>) {
+    let mut segments = Vec::new();
+    let mut metrics = Vec::new();
+    let mut other = Vec::new();
+
+    for field in selectable_with {
+        if field.starts_with("segments.") {
+            segments.push(field.as_str());
+        } else if field.starts_with("metrics.") {
+            metrics.push(field.as_str());
+        } else {
+            other.push(field.as_str());
+        }
+    }
+
+    segments.sort();
+    metrics.sort();
+    other.sort();
+
+    (segments, metrics, other)
+}
+
 /// Result of a query match
 #[derive(Debug)]
 pub enum QueryResult {
@@ -56,45 +79,45 @@ pub fn match_query(cache: &FieldMetadataCache, query: &str) -> Result<QueryResul
             .as_ref()
             .map(|rm| rm.contains_key(query))
             .unwrap_or(false)
-        {
-            // Get all fields for this resource
-            let resource_fields = cache.get_resource_fields(query);
-            let mut attributes = Vec::new();
-            let mut metrics = Vec::new();
-            let mut segments = Vec::new();
+    {
+        // Get all fields for this resource
+        let resource_fields = cache.get_resource_fields(query);
+        let mut attributes = Vec::new();
+        let mut metrics = Vec::new();
+        let mut segments = Vec::new();
 
-            for field in resource_fields {
-                match field.category.as_str() {
-                    "ATTRIBUTE" | "Attribute" | "attribute" => attributes.push(field.clone()),
-                    "METRIC" | "Metric" | "metric" => metrics.push(field.clone()),
-                    "SEGMENT" | "Segment" | "segment" => segments.push(field.clone()),
-                    _ => {}
-                }
+        for field in resource_fields {
+            match field.category.as_str() {
+                "ATTRIBUTE" | "Attribute" | "attribute" => attributes.push(field.clone()),
+                "METRIC" | "Metric" | "metric" => metrics.push(field.clone()),
+                "SEGMENT" | "Segment" | "segment" => segments.push(field.clone()),
+                _ => {}
             }
-
-            let metadata = cache
-                .resource_metadata
-                .as_ref()
-                .and_then(|rm| rm.get(query))
-                .cloned()
-                .unwrap_or_else(|| ResourceMetadata {
-                    name: query.to_string(),
-                    selectable_with: vec![],
-                    key_attributes: vec![],
-                    key_metrics: vec![],
-                    field_count: attributes.len() + metrics.len() + segments.len(),
-                    description: None,
-                    uses_fallback: false,
-                    identity_fields: vec![],
-                });
-
-            return Ok(QueryResult::Resource {
-                metadata,
-                attributes,
-                metrics,
-                segments,
-            });
         }
+
+        let metadata = cache
+            .resource_metadata
+            .as_ref()
+            .and_then(|rm| rm.get(query))
+            .cloned()
+            .unwrap_or_else(|| ResourceMetadata {
+                name: query.to_string(),
+                selectable_with: vec![],
+                key_attributes: vec![],
+                key_metrics: vec![],
+                field_count: attributes.len() + metrics.len() + segments.len(),
+                description: None,
+                uses_fallback: false,
+                identity_fields: vec![],
+            });
+
+        return Ok(QueryResult::Resource {
+            metadata,
+            attributes,
+            metrics,
+            segments,
+        });
+    }
 
     // If full field name OR no resource match, try field match
     if let Some(field) = cache.get_field(query) {
@@ -535,6 +558,64 @@ pub fn format_llm(query_result: &QueryResult, show_all: bool) -> String {
                 ));
             }
 
+            // Show selectable_with counts
+            let (selectable_segments, selectable_metrics, selectable_other) =
+                categorize_selectable_with(&metadata.selectable_with);
+
+            if !selectable_segments.is_empty() {
+                output.push_str(&format!(
+                    "Selectable segments ({}): {}\n",
+                    selectable_segments.len(),
+                    selectable_segments
+                        .iter()
+                        .take(10)
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+                if selectable_segments.len() > 10 {
+                    output.push_str(&format!(
+                        "  ... and {} more\n",
+                        selectable_segments.len() - 10
+                    ));
+                }
+            }
+
+            if !selectable_metrics.is_empty() {
+                output.push_str(&format!(
+                    "Selectable metrics ({}): {}\n",
+                    selectable_metrics.len(),
+                    selectable_metrics
+                        .iter()
+                        .take(10)
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+                if selectable_metrics.len() > 10 {
+                    output.push_str(&format!(
+                        "  ... and {} more\n",
+                        selectable_metrics.len() - 10
+                    ));
+                }
+            }
+
+            if !selectable_other.is_empty() {
+                output.push_str(&format!(
+                    "Selectable other ({}): {}\n",
+                    selectable_other.len(),
+                    selectable_other
+                        .iter()
+                        .take(10)
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+                if selectable_other.len() > 10 {
+                    output.push_str(&format!("  ... and {} more\n", selectable_other.len() - 10));
+                }
+            }
+
             output.push('\n');
 
             // Apply category limit
@@ -717,6 +798,49 @@ pub fn format_full(query_result: &QueryResult) -> String {
                     output.push_str(&format_field_full(field));
                 }
             }
+
+            // Show selectable_with fields categorized
+            let (selectable_segments, selectable_metrics, selectable_other) =
+                categorize_selectable_with(&metadata.selectable_with);
+
+            if !selectable_segments.is_empty()
+                || !selectable_metrics.is_empty()
+                || !selectable_other.is_empty()
+            {
+                output.push_str("\n--- SELECTABLE WITH (auto-joined fields) ---\n\n");
+
+                if !selectable_segments.is_empty() {
+                    output.push_str(&format!(
+                        "### SELECTABLE SEGMENTS ({})\n",
+                        selectable_segments.len()
+                    ));
+                    for seg in &selectable_segments {
+                        output.push_str(&format!("  - {}\n", seg));
+                    }
+                    output.push('\n');
+                }
+
+                if !selectable_metrics.is_empty() {
+                    output.push_str(&format!(
+                        "### SELECTABLE METRICS ({})\n",
+                        selectable_metrics.len()
+                    ));
+                    for metric in &selectable_metrics {
+                        output.push_str(&format!("  - {}\n", metric));
+                    }
+                    output.push('\n');
+                }
+
+                if !selectable_other.is_empty() {
+                    output.push_str(&format!(
+                        "### SELECTABLE OTHER ({})\n",
+                        selectable_other.len()
+                    ));
+                    for field in &selectable_other {
+                        output.push_str(&format!("  - {}\n", field));
+                    }
+                }
+            }
         }
         QueryResult::Pattern { fields } => {
             let total: usize = fields.values().map(|v| v.len()).sum();
@@ -740,21 +864,19 @@ pub fn format_full(query_result: &QueryResult) -> String {
 
 /// Format a single field with all metadata
 fn format_field_full(field: &FieldMetadata) -> String {
-    let desc_indicator = if field.description.is_none()
-        || field.description.as_ref().is_none_or(|d| d.is_empty())
-    {
-        format!(" {}", NO_DESCRIPTION)
-    } else {
-        String::new()
-    };
+    let desc_indicator =
+        if field.description.is_none() || field.description.as_ref().is_none_or(|d| d.is_empty()) {
+            format!(" {}", NO_DESCRIPTION)
+        } else {
+            String::new()
+        };
 
-    let notes_indicator = if field.usage_notes.is_none()
-        || field.usage_notes.as_ref().is_none_or(|n| n.is_empty())
-    {
-        format!(" {}", NO_USAGE_NOTES)
-    } else {
-        String::new()
-    };
+    let notes_indicator =
+        if field.usage_notes.is_none() || field.usage_notes.as_ref().is_none_or(|n| n.is_empty()) {
+            format!(" {}", NO_USAGE_NOTES)
+        } else {
+            String::new()
+        };
 
     let mut output = format!("- {}{}{}\n", field.name, desc_indicator, notes_indicator);
 
@@ -802,14 +924,16 @@ fn format_field_full(field: &FieldMetadata) -> String {
     }
 
     if let Some(desc) = &field.description
-        && !desc.is_empty() {
-            output.push_str(&format!("  Description: {}\n", desc));
-        }
+        && !desc.is_empty()
+    {
+        output.push_str(&format!("  Description: {}\n", desc));
+    }
 
     if let Some(notes) = &field.usage_notes
-        && !notes.is_empty() {
-            output.push_str(&format!("  Usage notes: {}\n", notes));
-        }
+        && !notes.is_empty()
+    {
+        output.push_str(&format!("  Usage notes: {}\n", notes));
+    }
 
     output
 }
@@ -1039,14 +1163,13 @@ fn format_field_with_llm_marker(
     );
 
     // Add before/after if enriched
-    if was_enriched
-        && let Some(ne_field) = non_enriched_field {
-            output.push_str(&format!(
-                "  Before: {}\n",
-                ne_field.description.as_deref().unwrap_or("")
-            ));
-            output.push_str(&format!("  After: {}\n", desc));
-        }
+    if was_enriched && let Some(ne_field) = non_enriched_field {
+        output.push_str(&format!(
+            "  Before: {}\n",
+            ne_field.description.as_deref().unwrap_or("")
+        ));
+        output.push_str(&format!("  After: {}\n", desc));
+    }
 
     output
 }
