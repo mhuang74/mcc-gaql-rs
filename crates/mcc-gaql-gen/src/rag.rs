@@ -1606,6 +1606,68 @@ impl MultiStepRAGAgent {
         })
     }
 
+    /// Summarize segment support for a resource in compact category format
+    /// Returns a string like "geo_target_*, date/time, device" or empty if no segments
+    fn summarize_resource_segments(&self, resource: &str) -> String {
+        let empty_vec = vec![];
+        let selectable_with = self
+            .field_cache
+            .resource_metadata
+            .as_ref()
+            .and_then(|m| m.get(resource))
+            .map(|rm| &rm.selectable_with)
+            .unwrap_or(&empty_vec);
+
+        let segments: Vec<&str> = selectable_with
+            .iter()
+            .filter(|f| f.starts_with("segments."))
+            .map(|f| f.strip_prefix("segments.").unwrap())
+            .collect();
+
+        if segments.is_empty() {
+            return String::new();
+        }
+
+        // Categorize and deduplicate
+        let mut categories: Vec<&str> = Vec::new();
+
+        if segments.iter().any(|s| s.starts_with("geo_target_")) {
+            categories.push("geo_target_* (city/state/region)");
+        }
+        if segments.iter().any(|s| s.starts_with("hotel_")) {
+            categories.push("hotel_*");
+        }
+        if segments.iter().any(|s| s.starts_with("product_")) {
+            categories.push("product_*");
+        }
+        if segments.iter().any(|s| {
+            [
+                "date",
+                "day_of_week",
+                "hour",
+                "month",
+                "week",
+                "year",
+                "quarter",
+                "month_of_year",
+            ]
+            .contains(s)
+        }) {
+            categories.push("date/time");
+        }
+        if segments.contains(&"device") {
+            categories.push("device");
+        }
+        if segments.iter().any(|s| s.starts_with("conversion")) {
+            categories.push("conversion");
+        }
+        if segments.iter().any(|s| s.starts_with("ad_network")) {
+            categories.push("ad_network");
+        }
+
+        categories.join(", ")
+    }
+
     /// Build a categorized, formatted list of resources for the LLM prompt
     fn build_categorized_resource_list(&self, resources: &[String]) -> String {
         // Define category patterns and their display names
@@ -1648,19 +1710,27 @@ impl MultiStepRAGAgent {
                 .and_then(|m| m.description.clone())
                 .unwrap_or_default();
 
+            // Add segment category summary to description
+            let segment_summary = self.summarize_resource_segments(resource);
+            let full_desc = if segment_summary.is_empty() {
+                description
+            } else {
+                format!("{} [Segments: {}]", description, segment_summary)
+            };
+
             let mut found = false;
             for (patterns, category) in &categories {
                 if patterns.iter().any(|p| resource.contains(p)) {
                     categorized
                         .entry(category.to_string())
                         .or_default()
-                        .push((resource.clone(), description.clone()));
+                        .push((resource.clone(), full_desc.clone()));
                     found = true;
                     break;
                 }
             }
             if !found {
-                uncategorized.push((resource.clone(), description));
+                uncategorized.push((resource.clone(), full_desc));
             }
         }
 
@@ -1676,9 +1746,21 @@ impl MultiStepRAGAgent {
                         if desc.is_empty() {
                             output.push_str(&format!("  - {}\n", name));
                         } else {
-                            // Truncate very long descriptions for readability
-                            let short_desc = if desc.len() > 120 {
-                                format!("{}...", &desc[..117])
+                            // Smart truncation: preserve segment annotation if present
+                            let short_desc = if desc.len() > 200 {
+                                // Check if there's a segment annotation
+                                if let Some(segment_start) = desc.find(" [Segments: ") {
+                                    // Truncate description but keep full segment annotation
+                                    let base_desc = &desc[..segment_start];
+                                    let segment_part = &desc[segment_start..];
+                                    if base_desc.len() > 120 {
+                                        format!("{}... {}", &base_desc[..117], segment_part)
+                                    } else {
+                                        desc.clone()
+                                    }
+                                } else {
+                                    format!("{}...", &desc[..197])
+                                }
                             } else {
                                 desc.clone()
                             };
@@ -1695,8 +1777,21 @@ impl MultiStepRAGAgent {
                 if desc.is_empty() {
                     output.push_str(&format!("  - {}\n", name));
                 } else {
-                    let short_desc = if desc.len() > 120 {
-                        format!("{}...", &desc[..117])
+                    // Smart truncation: preserve segment annotation if present
+                    let short_desc = if desc.len() > 200 {
+                        // Check if there's a segment annotation
+                        if let Some(segment_start) = desc.find(" [Segments: ") {
+                            // Truncate description but keep full segment annotation
+                            let base_desc = &desc[..segment_start];
+                            let segment_part = &desc[segment_start..];
+                            if base_desc.len() > 120 {
+                                format!("{}... {}", &base_desc[..117], segment_part)
+                            } else {
+                                desc
+                            }
+                        } else {
+                            format!("{}...", &desc[..197])
+                        }
                     } else {
                         desc
                     };
@@ -1987,7 +2082,7 @@ impl MultiStepRAGAgent {
                 }
             };
 
-        // Build resource information for sampling
+        // Build resource information for sampling (with segment summaries)
         let resource_info: Vec<(String, String)> = resources
             .iter()
             .map(|r| {
@@ -1997,7 +2092,16 @@ impl MultiStepRAGAgent {
                     .as_ref()
                     .and_then(|m| m.get(r));
                 let desc = rm.and_then(|m| m.description.as_deref()).unwrap_or("");
-                (r.clone(), desc.to_string())
+
+                // Add segment category summary
+                let segment_summary = self.summarize_resource_segments(r);
+                let full_desc = if segment_summary.is_empty() {
+                    desc.to_string()
+                } else {
+                    format!("{} [Segments: {}]", desc, segment_summary)
+                };
+
+                (r.clone(), full_desc)
             })
             .collect();
 
