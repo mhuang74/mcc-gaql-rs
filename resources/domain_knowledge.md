@@ -57,10 +57,20 @@
   - User explicitly asks for portfolio-level bidding strategy performance
   - User wants to compare different bidding strategies to each other (not campaigns)
   - User asks "how is my target CPA strategy performing overall"
-- For location-level performance data ("top locations", "best performing regions", "geo performance"):
-  Use `location_view` with `campaign_criterion` fields. Each row represents a UNIQUE COMBINATION of campaign + geo target, so it naturally supports "top locations per campaign" analysis.
+- For geographic performance with city/state/region SEGMENTATION (segments.geo_target_city, segments.geo_target_state, etc.):
+  **TRIGGER PATTERNS requiring geographic_view or user_location_view:**
+  - User mentions "city segmentation", "breakdown by city", "by state", "by region", "by metro"
+  - User asks for "cities with highest X", "top cities", "performance by city"
+  - User asks "where are users located", "geographic distribution", "geo breakdown"
+  
+  Use `geographic_view` or `user_location_view`. These resources support geo_target_* segments for granular geographic breakdowns.
+  
+  **CRITICAL: Do NOT use `location_view` for city/state segmentation queries** - `location_view` does NOT support geo_target_* segments. Check the [Segments: ...] annotation - only resources showing "geo_target_*" can do city/state breakdowns.
+  
+- For targeted location performance data ("top targeted locations", "performance of geo targets"):
+  Use `location_view` with `campaign_criterion` fields. Each row represents a UNIQUE COMBINATION of campaign + geo target criterion.
   The `campaign_criterion.location.geo_target_constant` field provides the geo target ID.
-  Do NOT use `campaign` with geo segments - that gives campaign-level data only, not individual location performance.
+  Do NOT use `campaign` alone - that gives campaign-level data only, not individual location target performance.
 - For impression share metrics (search impression share, budget lost impression share, etc.),
   use the `campaign` resource. Specialized views like `performance_max_placement_view` are for
   placement-level data and do NOT expose impression share metrics.
