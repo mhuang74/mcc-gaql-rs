@@ -576,6 +576,7 @@ async fn cmd_enrich(
                             missing_resources.len(),
                             cache.get_resources().len()
                         );
+                        println!("Missing resources: {}", missing_resources.join(", "));
                         cache.retain_resources(&missing_resources);
                     }
                     Err(e) => {
@@ -745,6 +746,7 @@ async fn cmd_enrich_proto(
                             missing_resources.len(),
                             cache.get_resources().len()
                         );
+                        println!("Missing resources: {}", missing_resources.join(", "));
                         cache.retain_resources(&missing_resources);
                     }
                     Err(e) => {
