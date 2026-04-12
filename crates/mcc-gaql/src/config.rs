@@ -358,6 +358,19 @@ fn display_profile_config(profile: &str) -> anyhow::Result<()> {
 }
 
 /// Display configuration in a human-readable format
+/// Helper function to display path with existence status
+fn show_path_status(label: &str, path_result: &anyhow::Result<std::path::PathBuf>) {
+    match path_result {
+        Ok(path) => {
+            let status = if path.exists() { "exists" } else { "not found" };
+            println!("  {}: {} ({})", label, path.display(), status);
+        }
+        Err(_) => {
+            println!("  {}: <unable to determine>", label);
+        }
+    }
+}
+
 pub fn display_config(profile_name: Option<&str>) -> anyhow::Result<()> {
     println!("Configuration Details");
     println!("====================");
@@ -376,15 +389,85 @@ pub fn display_config(profile_name: Option<&str>) -> anyhow::Result<()> {
     }
     println!();
 
+    // Show file locations
+    println!("File Locations:");
+    println!("---------------");
+
+    // Config directory files
+    show_path_status("Config directory", &mcc_gaql_common::paths::config_dir());
+    show_path_status("Query cookbook", &mcc_gaql_common::paths::query_cookbook_path());
+    show_path_status("Domain knowledge", &mcc_gaql_common::paths::domain_knowledge_path());
+
+    // Cache directory files
+    show_path_status("Cache directory", &mcc_gaql_common::paths::cache_dir());
+    show_path_status("Field metadata", &mcc_gaql_common::paths::field_metadata_cache_path());
+    show_path_status("Field metadata (enriched)", &mcc_gaql_common::paths::field_metadata_enriched_path());
+    show_path_status("Proto docs", &mcc_gaql_common::paths::proto_docs_path());
+    show_path_status("LanceDB", &mcc_gaql_common::paths::lancedb_path());
+
+    println!();
+
+    // Show environment variable overrides
+    println!("Environment Variable Overrides:");
+    println!("  Prefix: {}", ENV_VAR_PREFIX);
+
+    let env_vars = [
+        // Configuration fields
+        "MCC_ID",
+        "USER_EMAIL",
+        "CUSTOMER_ID",
+        "FORMAT",
+        "KEEP_GOING",
+        "TOKEN_CACHE_FILENAME",
+        "CUSTOMERIDS_FILENAME",
+        "QUERIES_FILENAME",
+        "DEV_TOKEN",
+        "FIELD_METADATA_CACHE",
+        "FIELD_METADATA_TTL_DAYS",
+        "EMBED_CLIENT_SECRET",
+        // LLM configuration
+        "LLM_API_KEY",
+        "LLM_BASE_URL",
+        "LLM_MODEL",
+        "LLM_TEMPERATURE",
+        // R2 storage configuration
+        "R2_ACCESS_KEY_ID",
+        "R2_SECRET_ACCESS_KEY",
+        "R2_BUCKET",
+        "R2_ENDPOINT_URL",
+        "R2_PUBLIC_ID",
+        // Logging
+        "LOG_LEVEL",
+    ];
+
+    let mut found_any = false;
+    for var in &env_vars {
+        let full_var = format!("{}{}", ENV_VAR_PREFIX, var);
+        if let Ok(value) = std::env::var(&full_var) {
+            println!("  {}: {}", full_var, value);
+            found_any = true;
+        }
+    }
+
+    if !found_any {
+        println!("  (none set)");
+    }
+
+    println!();
+
     // Show profile information
     if let Some(profile) = profile_name {
-        println!("Profile: {}", profile);
+        println!("Profile:");
+        println!("========");
+        println!("{}", profile);
         println!();
         display_profile_config(profile)?;
     } else {
         match list_profiles() {
             Ok(profiles) if !profiles.is_empty() => {
-                println!("Profiles: {} found", profiles.len());
+                println!("Profiles:");
+                println!("=========");
+                println!("{} found", profiles.len());
                 println!();
 
                 for (idx, profile) in profiles.iter().enumerate() {
@@ -399,40 +482,20 @@ pub fn display_config(profile_name: Option<&str>) -> anyhow::Result<()> {
                 }
             }
             Ok(_) => {
-                println!("Profiles: (none found)");
+                println!("Profiles:");
+                println!("=========");
+                println!("(none found)");
                 println!();
                 println!("No profiles configured in config file.");
                 println!("Run 'mcc-gaql --setup' to create a new profile.");
             }
             Err(e) => {
-                println!("Profiles: Error reading config file");
+                println!("Profiles:");
+                println!("=========");
+                println!("Error reading config file");
                 println!("  Error: {}", e);
             }
         }
-    }
-
-    println!();
-    println!("Environment Variable Overrides:");
-    println!("  Prefix: {}", ENV_VAR_PREFIX);
-
-    let env_vars = [
-        "EMBED_CLIENT_SECRET",
-        "DEV_TOKEN",
-        "LOG_LEVEL",
-        "QUERIES_FILENAME",
-    ];
-
-    let mut found_any = false;
-    for var in &env_vars {
-        let full_var = format!("{}{}", ENV_VAR_PREFIX, var);
-        if let Ok(value) = std::env::var(&full_var) {
-            println!("  {}: {}", full_var, value);
-            found_any = true;
-        }
-    }
-
-    if !found_any {
-        println!("  (none set)");
     }
 
     Ok(())

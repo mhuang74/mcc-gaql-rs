@@ -160,22 +160,17 @@ pub fn run_wizard() -> Result<()> {
     println!();
     println!("Next steps:");
 
-    #[cfg(not(feature = "external_client_secret"))]
-    let has_embedded_secret = option_env!("MCC_GAQL_EMBED_CLIENT_SECRET").is_some();
+    // Check if client secret is available via runtime env var
+    let has_runtime_secret = std::env::var("MCC_GAQL_EMBED_CLIENT_SECRET").is_ok();
 
-    #[cfg(feature = "external_client_secret")]
-    let has_embedded_secret = false;
-
-    if has_embedded_secret {
-        println!(
-            "  1. OAuth2 credentials are embedded in this binary (no clientsecret.json needed)"
-        );
+    if has_runtime_secret {
+        println!("  1. OAuth2 credentials found in MCC_GAQL_EMBED_CLIENT_SECRET environment variable");
     } else {
         println!(
             "  1. Place your OAuth2 credentials in: {:?}",
             config_file_path("clientsecret.json")
         );
-        println!("     (Or rebuild with credentials embedded - see README for details)");
+        println!("     (Or set MCC_GAQL_EMBED_CLIENT_SECRET environment variable)");
     }
 
     if config.customerids_filename.is_some() {

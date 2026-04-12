@@ -59,15 +59,13 @@ const ENDPOINT: &str = "https://googleads.googleapis.com:443";
 // Developer Token configuration with priority order:
 // 1. Config: Pass via dev_token parameter (from config file)
 // 2. Runtime: Check MCC_GAQL_DEV_TOKEN env var at runtime
-// 3. Compile-time: Set MCC_GAQL_DEV_TOKEN env var during build
-const EMBEDDED_DEV_TOKEN: Option<&str> = option_env!("MCC_GAQL_DEV_TOKEN");
 
 const FILENAME_CLIENT_SECRET: &str = "clientsecret.json";
 static GOOGLE_ADS_API_SCOPE: &str = "https://www.googleapis.com/auth/adwords";
 
-// Embed the client secret at compile time if the file exists
-#[cfg(not(feature = "external_client_secret"))]
-const EMBEDDED_CLIENT_SECRET: Option<&str> = option_env!("MCC_GAQL_EMBED_CLIENT_SECRET");
+// Client secret configuration with priority order:
+// 1. Runtime: Check MCC_GAQL_EMBED_CLIENT_SECRET env var at runtime
+// 2. File: Load from clientsecret.json in config directory
 
 // incomplete. Only what I need for the moment.
 const GOOGLE_ADS_METRICS_INTEGER_FIELDS: &[&str] = &[
@@ -155,7 +153,6 @@ pub fn generate_token_cache_filename(user_email: &str) -> String {
 /// Get developer token with priority order:
 /// 1. Provided parameter (from config file)
 /// 2. Runtime environment variable MCC_GAQL_DEV_TOKEN
-/// 3. Compile-time embedded token
 fn get_dev_token(config_token: Option<&str>) -> Result<String> {
     if let Some(token) = config_token {
         log::debug!("Using developer token from config");
@@ -167,35 +164,31 @@ fn get_dev_token(config_token: Option<&str>) -> Result<String> {
         return Ok(token);
     }
 
-    if let Some(token) = EMBEDDED_DEV_TOKEN {
-        log::debug!("Using developer token embedded at compile time");
-        return Ok(token.to_string());
-    }
-
     bail!(
         "Google Ads Developer Token required but not found. Provide via:\n  \
          1. Config file: Add 'dev_token = \"YOUR_TOKEN\"' to your profile\n  \
-         2. Runtime env: export MCC_GAQL_DEV_TOKEN=\"YOUR_TOKEN\"\n  \
-         3. Build time: MCC_GAQL_DEV_TOKEN=\"YOUR_TOKEN\" cargo build\n\n  \
+         2. Runtime env: export MCC_GAQL_DEV_TOKEN=\"YOUR_TOKEN\"\n\n  \
          Get your developer token at:\n  \
          https://developers.google.com/google-ads/api/docs/get-started/dev-token"
     )
 }
 
-/// Get client secret from embedded or file
+/// Get client secret from runtime env var or file
 async fn get_client_secret() -> Result<ApplicationSecret> {
     #[cfg(not(feature = "external_client_secret"))]
-    let app_secret: ApplicationSecret = if let Some(embedded_json) = EMBEDDED_CLIENT_SECRET {
-        log::debug!("Using embedded client secret");
-        yup_oauth2::parse_application_secret(embedded_json)
-            .context("Failed to parse embedded client secret")?
+    let app_secret: ApplicationSecret = if let Ok(runtime_json) =
+        std::env::var("MCC_GAQL_EMBED_CLIENT_SECRET")
+    {
+        log::debug!("Using client secret from runtime environment variable");
+        yup_oauth2::parse_application_secret(&runtime_json)
+            .context("Failed to parse client secret from MCC_GAQL_EMBED_CLIENT_SECRET env var")?
     } else {
-        log::debug!("No embedded client secret found, loading from file");
+        log::debug!("Loading client secret from file");
         let client_secret_path = config_file_path(FILENAME_CLIENT_SECRET)
             .context("Failed to determine client secret path")?;
         yup_oauth2::read_application_secret(client_secret_path.as_path())
             .await
-            .context("clientsecret.json file not found and no embedded secret available")?
+            .context("clientsecret.json file not found. Provide via MCC_GAQL_EMBED_CLIENT_SECRET env var or place clientsecret.json in config directory")?
     };
 
     #[cfg(feature = "external_client_secret")]

@@ -1,5 +1,13 @@
 # Embedding OAuth2 Credentials in the Binary
 
+> **⚠️ DEPRECATED**: As of the latest version, credentials are **NO LONGER** embedded at build time for security reasons. This document is kept for historical reference only.
+>
+> **Current approach:** Credentials must be provided at runtime via:
+> - Environment variable `MCC_GAQL_EMBED_CLIENT_SECRET`
+> - File `clientsecret.json` in config directory
+>
+> See [DEV_TOKEN_CONFIGURATION.md](DEV_TOKEN_CONFIGURATION.md) for current documentation.
+
 ## Overview
 
 Your `clientsecret.json` file can now be safely embedded into the binary at compile time, eliminating the need to distribute it separately. This makes tool distribution much more convenient.
