@@ -32,7 +32,7 @@ Pre-built binaries are available for the following platforms:
 | Linux | x86_64 | `mcc-gaql-*-linux-x86_64.tar.gz` |
 | Linux | ARM64 (Graviton) | `mcc-gaql-*-linux-aarch64.tar.gz` |
 
-Download the latest release from [GitHub Releases](https://github.com/mhuang74/mcc-gaql-rs/releases/tag/v0.17.0):
+Download the latest release from [GitHub Releases](https://github.com/mhuang74/mcc-gaql-rs/releases/latest):
 
 **macOS Apple Silicon:**
 ```bash
@@ -386,7 +386,7 @@ mcc-gaql-gen generate "campaign changes from last 14 days" | xargs mcc-gaql --pr
 
 The natural language feature uses a **Retrieval-Augmented Generation (RAG)** approach:
 
-1. **Field Metadata Retrieval**: The tool retrieves relevant Google Ads field definitions from your local field cache (see [Field Metadata Management](#field-metadata-management)). This ensures the LLM knows about valid fields, their types, and which resources they belong to.
+1. **Field Metadata Retrieval**: The tool retrieves relevant Google Ads field definitions from your local field cache (see [Google Ads Field Metadata Caching](#google-ads-field-metadata-caching)). This ensures the LLM knows about valid fields, their types, and which resources they belong to.
 
 2. **Example Retrieval**: If you have a [query cookbook](#stored-queries-file) configured, semantically similar example queries are retrieved to provide additional context for the LLM.
 
