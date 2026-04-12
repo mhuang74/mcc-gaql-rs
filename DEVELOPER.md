@@ -151,11 +151,8 @@ cargo build --workspace
 cargo build -p mcc-gaql --release
 
 # Build GAQL generation tool (slow, ~400 MB)
-cargo build -p mcc-gaql-gen --release
-
-# Build release with embedded credentials
-MCC_GAQL_DEV_TOKEN="token" MCC_GAQL_EMBED_CLIENT_SECRET="$(cat clientsecret.json)" \
-  cargo build -p mcc-gaql --release
+# Note: MCC_GAQL_R2_PUBLIC_ID required at build time
+MCC_GAQL_R2_PUBLIC_ID="your_public_id" cargo build -p mcc-gaql-gen --release
 ```
 
 ### Running Tests
@@ -210,23 +207,16 @@ cargo clippy --workspace
 
 ## Build-Time Environment Variables
 
-The following variables are embedded in the binary at build time:
+The following variable is required at build time for `mcc-gaql-gen`:
 
 | Variable | Purpose |
 |----------|---------|
-| `MCC_GAQL_DEV_TOKEN` | Google Ads developer token (optional) |
-| `MCC_GAQL_EMBED_CLIENT_SECRET` | OAuth2 client secret JSON (optional) |
-| `MCC_GAQL_R2_PUBLIC_ID` | Hashed Cloudflare R2 public bucket ID for bootstrap downloads |
+| `MCC_GAQL_R2_PUBLIC_ID` | Hashed Cloudflare R2 public bucket ID for bootstrap downloads (required for mcc-gaql-gen) |
 
-### Embedding Credentials in Release Builds
-
-For distribution within an organization, you can embed credentials directly in the binary:
-
-```bash
-export MCC_GAQL_DEV_TOKEN="your_dev_token"
-export MCC_GAQL_EMBED_CLIENT_SECRET="$(cat clientsecret.json)"
-cargo build -p mcc-gaql --release
-```
+**Note:** `MCC_GAQL_DEV_TOKEN` and `MCC_GAQL_EMBED_CLIENT_SECRET` are NOT embedded at build time for security reasons. These must be provided at runtime via:
+- Environment variables
+- Config file (`dev_token` field)
+- `clientsecret.json` file in config directory
 
 ### Embedding R2 Public ID for Bootstrap
 

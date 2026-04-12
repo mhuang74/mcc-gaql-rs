@@ -61,3 +61,14 @@ pub fn domain_knowledge_path() -> Result<PathBuf> {
     config_file_path("domain_knowledge.md")
         .ok_or_else(|| anyhow!("Could not determine domain knowledge path"))
 }
+
+/// Get the path to the query cookbook file
+pub fn query_cookbook_path() -> Result<PathBuf> {
+    config_file_path("query_cookbook.toml")
+        .ok_or_else(|| anyhow!("Could not determine query cookbook path"))
+}
+
+/// Get the path to proto docs cache
+pub fn proto_docs_path() -> Result<PathBuf> {
+    Ok(cache_dir()?.join("proto_docs_v23.json"))
+}

@@ -787,8 +787,8 @@ All configuration values can be overridden via environment variables with prefix
 | `MCC_GAQL_R2_SECRET_ACCESS_KEY` | Cloudflare R2 secret key (runtime, for publish) |
 | `MCC_GAQL_R2_BUCKET` | Cloudflare R2 bucket name (runtime, for publish) |
 | `MCC_GAQL_R2_ENDPOINT_URL` | Cloudflare R2 endpoint URL (runtime, for publish) |
-| `MCC_GAQL_R2_PUBLIC_ID` | Hashed Cloudflare R2 public bucket ID (build time, for bootstrap) |
-| `MCC_GAQL_EMBED_CLIENT_SECRET` | OAuth2 client secret for embeddings (JSON format) |
+| `MCC_GAQL_R2_PUBLIC_ID` | Hashed Cloudflare R2 public bucket ID (required at build time for mcc-gaql-gen) |
+| `MCC_GAQL_EMBED_CLIENT_SECRET` | OAuth2 client secret (JSON format, runtime alternative to clientsecret.json file) |
 | `OPENROUTER_API_KEY` | Alternative to MCC_GAQL_LLM_API_KEY |
 
 ### Example Configuration Override

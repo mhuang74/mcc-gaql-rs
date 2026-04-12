@@ -1,5 +1,7 @@
 # Developer Token Configuration - Implementation Summary
 
+> **⚠️ OUTDATED**: This document describes an older implementation. As of the latest version, `MCC_GAQL_DEV_TOKEN` and `MCC_GAQL_EMBED_CLIENT_SECRET` are **NOT** embedded at build time for security reasons. See [DEV_TOKEN_CONFIGURATION.md](DEV_TOKEN_CONFIGURATION.md) for current documentation.
+
 ## Overview
 
 Implemented flexible configuration for Google Ads Developer Token with multiple sources and priority-based resolution.

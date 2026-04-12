@@ -1,5 +1,7 @@
 # Developer Token Configuration - Implementation Changes
 
+> **⚠️ OUTDATED**: This document describes an older implementation. As of the latest version, `MCC_GAQL_DEV_TOKEN` and `MCC_GAQL_EMBED_CLIENT_SECRET` are **NOT** embedded at build time for security reasons. See [DEV_TOKEN_CONFIGURATION.md](DEV_TOKEN_CONFIGURATION.md) for current documentation.
+
 ## Summary
 
 Implemented flexible, required configuration for Google Ads Developer Token. **No fallback token** - users must provide their own token via one of three methods.
