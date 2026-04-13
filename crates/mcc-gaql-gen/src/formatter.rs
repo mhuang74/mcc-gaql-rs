@@ -493,7 +493,11 @@ pub fn filter_fallback_resources(query_result: QueryResult) -> QueryResult {
 /// Format metadata in LLM style (matches Phase 3 RAG formatting)
 ///
 /// Shows 15 fields per category by default (can be overridden with show_all)
-pub fn format_llm(query_result: &QueryResult, show_all: bool) -> String {
+pub fn format_llm(
+    query_result: &QueryResult,
+    show_all: bool,
+    cache: &FieldMetadataCache,
+) -> String {
     let mut output = String::new();
 
     match query_result {
@@ -632,7 +636,7 @@ pub fn format_llm(query_result: &QueryResult, show_all: bool) -> String {
                     attributes.len()
                 ));
                 for (i, field) in attributes.iter().take(limit).enumerate() {
-                    output.push_str(&format_field_llm(field, i));
+                    output.push_str(&format_field_llm(field, i, None));
                 }
                 output.push('\n');
             }
@@ -644,7 +648,7 @@ pub fn format_llm(query_result: &QueryResult, show_all: bool) -> String {
                     metrics.len()
                 ));
                 for (i, field) in metrics.iter().take(limit).enumerate() {
-                    output.push_str(&format_field_llm(field, i));
+                    output.push_str(&format_field_llm(field, i, None));
                 }
                 output.push('\n');
             }
@@ -656,7 +660,7 @@ pub fn format_llm(query_result: &QueryResult, show_all: bool) -> String {
                     segments.len()
                 ));
                 for (i, field) in segments.iter().take(limit).enumerate() {
-                    output.push_str(&format_field_llm(field, i));
+                    output.push_str(&format_field_llm(field, i, None));
                 }
             }
         }
@@ -678,7 +682,17 @@ pub fn format_llm(query_result: &QueryResult, show_all: bool) -> String {
                     field_list.len()
                 ));
                 for (i, field) in field_list.iter().take(limit).enumerate() {
-                    output.push_str(&format_field_llm(field, i));
+                    // For RESOURCE-category fields, look up description from resource_metadata
+                    let resource_desc = if category == "RESOURCE" {
+                        cache
+                            .resource_metadata
+                            .as_ref()
+                            .and_then(|rm| rm.get(&field.name))
+                            .and_then(|rm| rm.description.as_deref())
+                    } else {
+                        None
+                    };
+                    output.push_str(&format_field_llm(field, i, resource_desc));
                 }
                 output.push('\n');
             }
@@ -689,7 +703,12 @@ pub fn format_llm(query_result: &QueryResult, show_all: bool) -> String {
 }
 
 /// Format a single field in LLM style
-fn format_field_llm(field: &FieldMetadata, _index: usize) -> String {
+/// If `resource_desc` is provided, use it instead of `field.description` (for RESOURCE-category fields)
+fn format_field_llm(
+    field: &FieldMetadata,
+    _index: usize,
+    resource_desc: Option<&str>,
+) -> String {
     let filterable_tag = if field.filterable {
         " [filterable]"
     } else {
@@ -703,7 +722,10 @@ fn format_field_llm(field: &FieldMetadata, _index: usize) -> String {
         sortable_tag.to_string(),
     ];
 
-    let desc = field.description.as_deref().unwrap_or(NO_DESCRIPTION);
+    // Use resource description if provided, otherwise fall back to field description
+    let desc = resource_desc
+        .or(field.description.as_deref())
+        .unwrap_or(NO_DESCRIPTION);
 
     // Split description into sentences for better line wrapping
     let desc_lines: Vec<&str> = desc.split(". ").collect();
