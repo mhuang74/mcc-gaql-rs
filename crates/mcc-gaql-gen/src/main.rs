@@ -1552,7 +1552,7 @@ async fn cmd_metadata(
 
     // Format based on format type
     match format.as_str() {
-        "llm" => print!("{}", formatter::format_llm(&query_result, show_all)),
+        "llm" => print!("{}", formatter::format_llm(&query_result, show_all, &cache)),
         "full" => print!("{}", formatter::format_full(&query_result)),
         "json" => {
             let json = formatter::format_json(&query_result)?;
