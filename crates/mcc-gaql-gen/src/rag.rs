@@ -1283,6 +1283,7 @@ pub struct ResourceDocumentFlat {
 #[derive(Debug, Clone)]
 pub struct ResourceSearchResult {
     pub resource_name: String,
+    /// Similarity score (1.0 - cosine_distance), where higher = more similar (0.0-1.0)
     pub score: f64,
     pub has_metrics: bool,
     pub category: String,
@@ -1935,11 +1936,13 @@ impl MultiStepRAGAgent {
     // Phase 1: Resource Selection
     // =========================================================================
 
-    /// Minimum similarity score (from top_n) required to trust RAG candidates.
+    /// Minimum similarity score required to trust RAG candidates.
+    /// Similarity = 1.0 - cosine_distance, where higher = more similar (0.0-1.0).
     /// Below this threshold the full resource list is used as fallback.
     const SIMILARITY_THRESHOLD: f64 = 0.3;
 
     /// Search the resource_entries vector index and return scored results.
+    /// Returns similarity scores (1.0 - cosine_distance), where higher = more similar.
     async fn search_resource_embeddings(
         &self,
         query: &str,
@@ -1959,9 +1962,9 @@ impl MultiStepRAGAgent {
 
         Ok(raw_results
             .into_iter()
-            .map(|(score, _id, doc)| ResourceSearchResult {
+            .map(|(distance, _id, doc)| ResourceSearchResult {
                 resource_name: doc.resource_name,
-                score,
+                score: 1.0 - distance, // Convert cosine distance to similarity
                 has_metrics: doc.has_metrics,
                 category: doc.category,
                 description: doc.description,
@@ -1970,7 +1973,7 @@ impl MultiStepRAGAgent {
     }
 
     /// Retrieve relevant resources using semantic search + intent filtering.
-    /// Returns up to `top_n` results, ordered by similarity score.
+    /// Returns up to `top_n` results, ordered by similarity score (higher = more similar).
     pub async fn retrieve_relevant_resources(
         &self,
         query: &str,
@@ -2055,20 +2058,20 @@ impl MultiStepRAGAgent {
         // --- RAG pre-filter ---
         let (resources, used_rag) = match self.retrieve_relevant_resources(user_query, 20).await {
             Ok(candidates) if !candidates.is_empty() => {
-                let top_score = candidates[0].score;
-                if top_score >= Self::SIMILARITY_THRESHOLD {
+                let top_similarity = candidates[0].score;
+                if top_similarity >= Self::SIMILARITY_THRESHOLD {
                     log::info!(
-                        "Phase 1: RAG pre-filter selected {} resources (top score={:.3})",
+                        "Phase 1: RAG pre-filter selected {} resources (top similarity={:.3})",
                         candidates.len(),
-                        top_score
+                        top_similarity
                     );
                     let names: Vec<String> =
                         candidates.into_iter().map(|c| c.resource_name).collect();
                     (names, true)
                 } else {
                     log::warn!(
-                        "Phase 1: Low RAG confidence ({:.3}), falling back to full resource list",
-                        top_score
+                        "Phase 1: Low RAG confidence (similarity={:.3}), falling back to full resource list",
+                        top_similarity
                     );
                     (self.field_cache.get_resources(), false)
                 }
