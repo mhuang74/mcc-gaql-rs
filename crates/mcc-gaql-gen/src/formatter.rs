@@ -8,6 +8,7 @@ use mcc_gaql_common::field_metadata::{FieldMetadata, FieldMetadataCache, Resourc
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use crate::rag::SIMILARITY_THRESHOLD;
 use crate::vector_store;
 use lancedb::DistanceType;
 use rig::vector_store::{VectorSearchRequest, VectorStoreIndex};
@@ -72,6 +73,31 @@ pub enum QueryResult {
     Semantic {
         fields: HashMap<String, Vec<(FieldMetadata, f64)>>, // category -> (field, score)
     },
+}
+
+/// Filter semantic search results by similarity threshold.
+/// Returns (filtered_result, hidden_count) where hidden_count is total fields dropped.
+pub fn filter_by_similarity(query_result: QueryResult) -> (QueryResult, usize) {
+    match query_result {
+        QueryResult::Semantic { fields } => {
+            let mut hidden = 0;
+            let filtered: HashMap<String, Vec<(FieldMetadata, f64)>> = fields
+                .into_iter()
+                .map(|(category, field_list)| {
+                    let (passing, dropped): (Vec<_>, Vec<_>) = field_list
+                        .into_iter()
+                        .partition(|(_, distance)| {
+                            let similarity = 1.0 - distance;
+                            similarity >= SIMILARITY_THRESHOLD
+                        });
+                    hidden += dropped.len();
+                    (category, passing)
+                })
+                .collect();
+            (QueryResult::Semantic { fields: filtered }, hidden)
+        }
+        other => (other, 0), // Non-semantic results pass through unchanged
+    }
 }
 
 /// Match a query string against the field metadata cache
@@ -810,6 +836,7 @@ pub fn format_llm(
     query_result: &QueryResult,
     show_all: bool,
     cache: &FieldMetadataCache,
+    hidden_count: usize,
 ) -> String {
     let mut output = String::new();
 
@@ -1040,6 +1067,12 @@ pub fn format_llm(
                     output.push_str(&format_field_llm(field, i, resource_desc, Some(*score)));
                 }
                 output.push('\n');
+            }
+            if hidden_count > 0 {
+                output.push_str(&format!(
+                    "({} results below {} threshold hidden, use --show-all to see all)\n",
+                    hidden_count, SIMILARITY_THRESHOLD
+                ));
             }
         }
     }

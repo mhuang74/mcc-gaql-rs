@@ -1571,9 +1571,16 @@ async fn cmd_metadata(
         None => query_result,
     };
 
+    // Apply similarity threshold filtering (unless --show-all)
+    let (query_result, hidden_count) = if show_all {
+        (query_result, 0)
+    } else {
+        formatter::filter_by_similarity(query_result)
+    };
+
     // Format based on format type
     match format.as_str() {
-        "llm" => print!("{}", formatter::format_llm(&query_result, show_all, &cache)),
+        "llm" => print!("{}", formatter::format_llm(&query_result, show_all, &cache, hidden_count)),
         "full" => print!("{}", formatter::format_full(&query_result)),
         "json" => {
             let json = formatter::format_json(&query_result)?;

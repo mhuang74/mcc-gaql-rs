@@ -30,6 +30,10 @@ use mcc_gaql_common::paths;
 
 use crate::vector_store as lancedb_utils;
 
+/// Minimum similarity score required to trust semantic search results.
+/// Similarity = 1.0 - cosine_distance (0.0-1.0, higher = more similar).
+pub const SIMILARITY_THRESHOLD: f64 = 0.65;
+
 /// Configuration for LLM provider
 #[derive(Debug, Clone)]
 pub struct LlmConfig {
@@ -1936,11 +1940,6 @@ impl MultiStepRAGAgent {
     // Phase 1: Resource Selection
     // =========================================================================
 
-    /// Minimum similarity score required to trust RAG candidates.
-    /// Similarity = 1.0 - cosine_distance, where higher = more similar (0.0-1.0).
-    /// Below this threshold the full resource list is used as fallback.
-    const SIMILARITY_THRESHOLD: f64 = 0.65;
-
     /// Search the resource_entries vector index and return scored results.
     /// Returns similarity scores (1.0 - cosine_distance), where higher = more similar.
     async fn search_resource_embeddings(
@@ -2059,7 +2058,7 @@ impl MultiStepRAGAgent {
         let (resources, used_rag) = match self.retrieve_relevant_resources(user_query, 20).await {
             Ok(candidates) if !candidates.is_empty() => {
                 let top_similarity = candidates[0].score;
-                if top_similarity >= Self::SIMILARITY_THRESHOLD {
+                if top_similarity >= SIMILARITY_THRESHOLD {
                     log::info!(
                         "Phase 1: RAG pre-filter selected {} resources (top similarity={:.3})",
                         candidates.len(),
