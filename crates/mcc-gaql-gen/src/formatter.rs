@@ -61,6 +61,8 @@ pub enum QueryResult {
         attributes: Vec<FieldMetadata>,
         metrics: Vec<FieldMetadata>,
         segments: Vec<FieldMetadata>,
+        selectable_segments: Vec<FieldMetadata>,
+        selectable_metrics: Vec<FieldMetadata>,
     },
     /// Pattern-matched fields grouped by category
     Pattern {
@@ -121,11 +123,27 @@ pub fn match_query(cache: &FieldMetadataCache, query: &str) -> Result<QueryResul
                 identity_fields: vec![],
             });
 
+        // Look up selectable segments and metrics
+        let (selectable_segment_names, selectable_metric_names, _) =
+            categorize_selectable_with(&metadata.selectable_with);
+
+        let selectable_segments: Vec<FieldMetadata> = selectable_segment_names
+            .iter()
+            .filter_map(|name| cache.get_field(name).cloned())
+            .collect();
+
+        let selectable_metrics: Vec<FieldMetadata> = selectable_metric_names
+            .iter()
+            .filter_map(|name| cache.get_field(name).cloned())
+            .collect();
+
         return Ok(QueryResult::Resource {
             metadata,
             attributes,
             metrics,
             segments,
+            selectable_segments,
+            selectable_metrics,
         });
     }
 
@@ -172,11 +190,27 @@ pub fn match_query(cache: &FieldMetadataCache, query: &str) -> Result<QueryResul
                 identity_fields: vec![],
             });
 
+        // Look up selectable segments and metrics
+        let (selectable_segment_names, selectable_metric_names, _) =
+            categorize_selectable_with(&metadata.selectable_with);
+
+        let selectable_segments: Vec<FieldMetadata> = selectable_segment_names
+            .iter()
+            .filter_map(|name| cache.get_field(name).cloned())
+            .collect();
+
+        let selectable_metrics: Vec<FieldMetadata> = selectable_metric_names
+            .iter()
+            .filter_map(|name| cache.get_field(name).cloned())
+            .collect();
+
         return Ok(QueryResult::Resource {
             metadata,
             attributes,
             metrics,
             segments,
+            selectable_segments,
+            selectable_metrics,
         });
     }
 
@@ -293,11 +327,27 @@ pub async fn match_query_semantic(
                 identity_fields: vec![],
             });
 
+        // Look up selectable segments and metrics
+        let (selectable_segment_names, selectable_metric_names, _) =
+            categorize_selectable_with(&metadata.selectable_with);
+
+        let selectable_segments: Vec<FieldMetadata> = selectable_segment_names
+            .iter()
+            .filter_map(|name| cache.get_field(name).cloned())
+            .collect();
+
+        let selectable_metrics: Vec<FieldMetadata> = selectable_metric_names
+            .iter()
+            .filter_map(|name| cache.get_field(name).cloned())
+            .collect();
+
         return Ok(QueryResult::Resource {
             metadata,
             attributes,
             metrics,
             segments,
+            selectable_segments,
+            selectable_metrics,
         });
     }
 
@@ -318,9 +368,9 @@ pub async fn match_query_semantic(
             .push((field, score));
     }
 
-    // Sort each category by score DESC (highest similarity first)
+    // Sort each category by distance ASC (lowest distance = highest similarity first)
     for field_list in fields_by_category.values_mut() {
-        field_list.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        field_list.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
     }
 
     Ok(QueryResult::Semantic {
@@ -329,10 +379,7 @@ pub async fn match_query_semantic(
 }
 
 /// Search field metadata using vector similarity
-async fn search_fields_semantic(
-    query: &str,
-    show_all: bool,
-) -> Result<Vec<(FieldMetadata, f64)>> {
+async fn search_fields_semantic(query: &str, show_all: bool) -> Result<Vec<(FieldMetadata, f64)>> {
     // Create embedding client
     let cache_dir = dirs::cache_dir()
         .ok_or_else(|| anyhow::anyhow!("Failed to get cache directory"))?
@@ -416,8 +463,8 @@ async fn search_fields_semantic(
                 sortable: doc.sortable,
                 metrics_compatible: doc.metrics_compatible,
                 resource_name: doc.resource_name,
-                selectable_with: vec![], // Not stored in vector index
-                enum_values: vec![],     // Not stored in vector index
+                selectable_with: vec![],     // Not stored in vector index
+                enum_values: vec![],         // Not stored in vector index
                 attribute_resources: vec![], // Not stored in vector index
                 description: Some(doc.description),
                 usage_notes: None, // Not stored in vector index
@@ -450,6 +497,8 @@ pub fn filter_by_category(query_result: QueryResult, category: &str) -> QueryRes
             attributes,
             metrics,
             segments,
+            selectable_segments,
+            selectable_metrics,
         } => {
             let cat = category.to_uppercase();
             match cat.as_str() {
@@ -458,24 +507,32 @@ pub fn filter_by_category(query_result: QueryResult, category: &str) -> QueryRes
                     attributes,
                     metrics: vec![],
                     segments: vec![],
+                    selectable_segments,
+                    selectable_metrics,
                 },
                 "METRIC" | "Metric" | "metric" => QueryResult::Resource {
                     metadata,
                     attributes: vec![],
                     metrics,
                     segments: vec![],
+                    selectable_segments,
+                    selectable_metrics,
                 },
                 "SEGMENT" | "Segment" | "segment" => QueryResult::Resource {
                     metadata,
                     attributes: vec![],
                     metrics: vec![],
                     segments,
+                    selectable_segments,
+                    selectable_metrics,
                 },
                 _ => QueryResult::Resource {
                     metadata,
                     attributes,
                     metrics,
                     segments,
+                    selectable_segments,
+                    selectable_metrics,
                 },
             }
         }
@@ -522,6 +579,8 @@ pub fn filter_subset(query_result: QueryResult) -> QueryResult {
             attributes,
             metrics,
             segments,
+            selectable_segments,
+            selectable_metrics,
         } => {
             if SUBSET_RESOURCES.contains(&metadata.name.as_str()) {
                 QueryResult::Resource {
@@ -529,6 +588,8 @@ pub fn filter_subset(query_result: QueryResult) -> QueryResult {
                     attributes,
                     metrics,
                     segments,
+                    selectable_segments,
+                    selectable_metrics,
                 }
             } else {
                 QueryResult::Pattern {
@@ -598,6 +659,8 @@ pub fn filter_no_description(query_result: QueryResult) -> QueryResult {
             attributes,
             metrics,
             segments,
+            selectable_segments,
+            selectable_metrics,
         } => {
             let filter_desc = |fields: Vec<FieldMetadata>| -> Vec<FieldMetadata> {
                 fields
@@ -614,6 +677,8 @@ pub fn filter_no_description(query_result: QueryResult) -> QueryResult {
                 attributes: filter_desc(attributes),
                 metrics: filter_desc(metrics),
                 segments: filter_desc(segments),
+                selectable_segments: filter_desc(selectable_segments),
+                selectable_metrics: filter_desc(selectable_metrics),
             }
         }
         QueryResult::Pattern { mut fields } => {
@@ -654,6 +719,8 @@ pub fn filter_no_usage_notes(query_result: QueryResult) -> QueryResult {
             attributes,
             metrics,
             segments,
+            selectable_segments,
+            selectable_metrics,
         } => {
             let filter_notes = |fields: Vec<FieldMetadata>| -> Vec<FieldMetadata> {
                 fields
@@ -670,6 +737,8 @@ pub fn filter_no_usage_notes(query_result: QueryResult) -> QueryResult {
                 attributes: filter_notes(attributes),
                 metrics: filter_notes(metrics),
                 segments: filter_notes(segments),
+                selectable_segments: filter_notes(selectable_segments),
+                selectable_metrics: filter_notes(selectable_metrics),
             }
         }
         QueryResult::Pattern { mut fields } => {
@@ -703,6 +772,8 @@ pub fn filter_fallback_resources(query_result: QueryResult) -> QueryResult {
             attributes,
             metrics,
             segments,
+            selectable_segments,
+            selectable_metrics,
         } => {
             if metadata.uses_fallback {
                 QueryResult::Resource {
@@ -710,6 +781,8 @@ pub fn filter_fallback_resources(query_result: QueryResult) -> QueryResult {
                     attributes,
                     metrics,
                     segments,
+                    selectable_segments,
+                    selectable_metrics,
                 }
             } else {
                 QueryResult::Pattern {
@@ -753,6 +826,8 @@ pub fn format_llm(
             attributes,
             metrics,
             segments,
+            selectable_segments,
+            selectable_metrics,
         } => {
             let fallback_tag = if metadata.uses_fallback {
                 format!(" {}", FALLBACK_INDICATOR)
@@ -802,47 +877,8 @@ pub fn format_llm(
                 ));
             }
 
-            // Show selectable_with counts
-            let (selectable_segments, selectable_metrics, selectable_other) =
-                categorize_selectable_with(&metadata.selectable_with);
-
-            if !selectable_segments.is_empty() {
-                output.push_str(&format!(
-                    "Selectable segments ({}): {}\n",
-                    selectable_segments.len(),
-                    selectable_segments
-                        .iter()
-                        .take(10)
-                        .cloned()
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ));
-                if selectable_segments.len() > 10 {
-                    output.push_str(&format!(
-                        "  ... and {} more\n",
-                        selectable_segments.len() - 10
-                    ));
-                }
-            }
-
-            if !selectable_metrics.is_empty() {
-                output.push_str(&format!(
-                    "Selectable metrics ({}): {}\n",
-                    selectable_metrics.len(),
-                    selectable_metrics
-                        .iter()
-                        .take(10)
-                        .cloned()
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ));
-                if selectable_metrics.len() > 10 {
-                    output.push_str(&format!(
-                        "  ... and {} more\n",
-                        selectable_metrics.len() - 10
-                    ));
-                }
-            }
+            // Show selectable_with counts (only for 'other' fields like ad_group, campaign)
+            let (_, _, selectable_other) = categorize_selectable_with(&metadata.selectable_with);
 
             if !selectable_other.is_empty() {
                 output.push_str(&format!(
@@ -902,6 +938,32 @@ pub fn format_llm(
                 for (i, field) in segments.iter().take(limit).enumerate() {
                     output.push_str(&format_field_llm(field, i, None, None));
                 }
+                output.push('\n');
+            }
+
+            // Display selectable segments with full field details
+            if !selectable_segments.is_empty() {
+                output.push_str(&format!(
+                    "### SELECTABLE SEGMENTS ({}/{} showing)\n",
+                    limit.min(selectable_segments.len()),
+                    selectable_segments.len()
+                ));
+                for (i, field) in selectable_segments.iter().take(limit).enumerate() {
+                    output.push_str(&format_field_llm(field, i, None, None));
+                }
+                output.push('\n');
+            }
+
+            // Display selectable metrics with full field details
+            if !selectable_metrics.is_empty() {
+                output.push_str(&format!(
+                    "### SELECTABLE METRICS ({}/{} showing)\n",
+                    limit.min(selectable_metrics.len()),
+                    selectable_metrics.len()
+                ));
+                for (i, field) in selectable_metrics.iter().take(limit).enumerate() {
+                    output.push_str(&format_field_llm(field, i, None, None));
+                }
             }
         }
         QueryResult::Pattern { fields } => {
@@ -911,7 +973,12 @@ pub fn format_llm(
                 LLM_CATEGORY_LIMIT
             };
 
-            for (category, field_list) in fields {
+            // Fixed ordering: RESOURCE, ATTRIBUTE, METRIC, SEGMENT
+            let category_order = ["RESOURCE", "ATTRIBUTE", "METRIC", "SEGMENT"];
+            for category in &category_order {
+                let Some(field_list) = fields.get(*category) else {
+                    continue;
+                };
                 if field_list.is_empty() {
                     continue;
                 }
@@ -923,7 +990,7 @@ pub fn format_llm(
                 ));
                 for (i, field) in field_list.iter().take(limit).enumerate() {
                     // For RESOURCE-category fields, look up description from resource_metadata
-                    let resource_desc = if category == "RESOURCE" {
+                    let resource_desc = if *category == "RESOURCE" {
                         cache
                             .resource_metadata
                             .as_ref()
@@ -944,19 +1011,24 @@ pub fn format_llm(
                 LLM_CATEGORY_LIMIT
             };
 
-            for (category, field_list) in fields {
+            // Fixed ordering: RESOURCE, ATTRIBUTE, METRIC, SEGMENT
+            let category_order = ["RESOURCE", "ATTRIBUTE", "METRIC", "SEGMENT"];
+            for category in &category_order {
+                let Some(field_list) = fields.get(*category) else {
+                    continue;
+                };
                 if field_list.is_empty() {
                     continue;
                 }
                 output.push_str(&format!(
-                    "### {} ({}/{} showing)\n",
+                    "### {} ({}/{} showing, sorted by similarity score)\n",
                     category,
                     limit.min(field_list.len()),
                     field_list.len()
                 ));
                 for (i, (field, score)) in field_list.iter().take(limit).enumerate() {
                     // For RESOURCE-category fields, look up description from resource_metadata
-                    let resource_desc = if category == "RESOURCE" {
+                    let resource_desc = if *category == "RESOURCE" {
                         cache
                             .resource_metadata
                             .as_ref()
@@ -977,14 +1049,21 @@ pub fn format_llm(
 
 /// Format a single field in LLM style
 /// If `resource_desc` is provided, use it instead of `field.description` (for RESOURCE-category fields)
-/// If `score` is provided, display similarity score
+/// If `score` is provided, display similarity score (converted from cosine distance)
 fn format_field_llm(
     field: &FieldMetadata,
     _index: usize,
     resource_desc: Option<&str>,
     score: Option<f64>,
 ) -> String {
-    let score_tag = score.map(|s| format!(" [{:.3}]", s)).unwrap_or_default();
+    // Convert cosine distance to similarity: similarity = 1 - distance
+    // Higher similarity (closer to 1.0) = more relevant
+    let score_tag = score
+        .map(|distance| {
+            let similarity = 1.0 - distance;
+            format!(" [{:.3}]", similarity)
+        })
+        .unwrap_or_default();
     let filterable_tag = if field.filterable {
         " [filterable]"
     } else {
@@ -1034,6 +1113,8 @@ pub fn format_full(query_result: &QueryResult) -> String {
             attributes,
             metrics,
             segments,
+            selectable_segments: _,
+            selectable_metrics: _,
         } => {
             let fallback_tag = if metadata.uses_fallback {
                 format!(" {}", FALLBACK_INDICATOR)
@@ -1145,7 +1226,12 @@ pub fn format_full(query_result: &QueryResult) -> String {
             let total: usize = fields.values().map(|v| v.len()).sum();
             output.push_str(&format!("### PATTERN MATCH: {} fields total\n\n", total));
 
-            for (category, field_list) in fields {
+            // Fixed ordering: RESOURCE, ATTRIBUTE, METRIC, SEGMENT
+            let category_order = ["RESOURCE", "ATTRIBUTE", "METRIC", "SEGMENT"];
+            for category in &category_order {
+                let Some(field_list) = fields.get(*category) else {
+                    continue;
+                };
                 if field_list.is_empty() {
                     continue;
                 }
@@ -1160,7 +1246,12 @@ pub fn format_full(query_result: &QueryResult) -> String {
             let total: usize = fields.values().map(|v| v.len()).sum();
             output.push_str(&format!("### SEMANTIC SEARCH: {} fields total\n\n", total));
 
-            for (category, field_list) in fields {
+            // Fixed ordering: RESOURCE, ATTRIBUTE, METRIC, SEGMENT
+            let category_order = ["RESOURCE", "ATTRIBUTE", "METRIC", "SEGMENT"];
+            for category in &category_order {
+                let Some(field_list) = fields.get(*category) else {
+                    continue;
+                };
                 if field_list.is_empty() {
                     continue;
                 }
@@ -1315,6 +1406,8 @@ pub fn format_diff_llm(
             attributes,
             metrics,
             segments,
+            selectable_segments: _,
+            selectable_metrics: _,
         } => {
             let fallback_tag = if metadata.uses_fallback {
                 format!(" {}", FALLBACK_INDICATOR)
@@ -1417,7 +1510,12 @@ pub fn format_diff_llm(
                 LLM_CATEGORY_LIMIT
             };
 
-            for (category, field_list) in fields {
+            // Fixed ordering: RESOURCE, ATTRIBUTE, METRIC, SEGMENT
+            let category_order = ["RESOURCE", "ATTRIBUTE", "METRIC", "SEGMENT"];
+            for category in &category_order {
+                let Some(field_list) = fields.get(*category) else {
+                    continue;
+                };
                 if field_list.is_empty() {
                     continue;
                 }
@@ -1441,7 +1539,12 @@ pub fn format_diff_llm(
                 LLM_CATEGORY_LIMIT
             };
 
-            for (category, field_list) in fields {
+            // Fixed ordering: RESOURCE, ATTRIBUTE, METRIC, SEGMENT
+            let category_order = ["RESOURCE", "ATTRIBUTE", "METRIC", "SEGMENT"];
+            for category in &category_order {
+                let Some(field_list) = fields.get(*category) else {
+                    continue;
+                };
                 if field_list.is_empty() {
                     continue;
                 }
@@ -1523,6 +1626,8 @@ pub enum QueryResultJson {
         attributes: Vec<FieldMetadata>,
         metrics: Vec<FieldMetadata>,
         segments: Vec<FieldMetadata>,
+        selectable_segments: Vec<FieldMetadata>,
+        selectable_metrics: Vec<FieldMetadata>,
     },
     Pattern {
         fields: HashMap<String, Vec<FieldMetadata>>,
@@ -1549,11 +1654,15 @@ impl From<&QueryResult> for QueryResultJson {
                 attributes,
                 metrics,
                 segments,
+                selectable_segments,
+                selectable_metrics,
             } => QueryResultJson::Resource {
                 metadata: metadata.clone(),
                 attributes: attributes.clone(),
                 metrics: metrics.clone(),
                 segments: segments.clone(),
+                selectable_segments: selectable_segments.clone(),
+                selectable_metrics: selectable_metrics.clone(),
             },
             QueryResult::Pattern { fields } => QueryResultJson::Pattern {
                 fields: fields.clone(),
@@ -1603,11 +1712,15 @@ impl<'de> serde::Deserialize<'de> for QueryResult {
                 attributes,
                 metrics,
                 segments,
+                selectable_segments,
+                selectable_metrics,
             } => QueryResult::Resource {
                 metadata,
                 attributes,
                 metrics,
                 segments,
+                selectable_segments,
+                selectable_metrics,
             },
             QueryResultJson::Pattern { fields } => QueryResult::Pattern { fields },
             QueryResultJson::Semantic { fields } => QueryResult::Semantic {
