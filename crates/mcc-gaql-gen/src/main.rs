@@ -259,7 +259,7 @@ enum Commands {
         #[arg(long)]
         category: Option<String>,
 
-        /// Use subset resources only (campaign, ad_group, ad_group_ad, keyword_view)
+        /// Use subset resources only (campaign, ad_group, ad_group_ad, keyword_view). Mainly useful for testing against a small subset of metadata
         #[arg(long)]
         subset: bool,
 
@@ -274,6 +274,10 @@ enum Commands {
         /// Filter fields: no-description, no-usage-notes, fallback (resources only)
         #[arg(long)]
         filter: Option<String>,
+
+        /// Use fast pattern matching instead of semantic search
+        #[arg(long, short = 'q')]
+        quick: bool,
     },
 
     /// Backfill identity fields into an enriched metadata cache (no LLM required)
@@ -397,9 +401,10 @@ async fn main() -> Result<()> {
             show_all,
             diff,
             filter,
+            quick,
         } => {
             cmd_metadata(
-                query, metadata, format, category, subset, show_all, diff, filter,
+                query, metadata, format, category, subset, show_all, diff, filter, quick,
             )
             .await?;
         }
@@ -1474,6 +1479,7 @@ async fn cmd_metadata(
     show_all: bool,
     diff: bool,
     filter: Option<String>,
+    quick: bool,
 ) -> Result<()> {
     // Determine metadata path
     let metadata_path = metadata
@@ -1519,8 +1525,23 @@ async fn cmd_metadata(
         }
     }
 
-    // Match query against cache
-    let query_result = formatter::match_query(&cache, &query)?;
+    // Match query against cache (semantic search by default, pattern matching with --quick)
+    let query_result = if quick {
+        // Fast pattern matching
+        formatter::match_query(&cache, &query)?
+    } else {
+        // Try semantic search, fall back to pattern matching if vector store unavailable
+        match formatter::match_query_semantic(&cache, &query, show_all).await {
+            Ok(result) => result,
+            Err(e) => {
+                log::warn!(
+                    "Semantic search unavailable ({}), falling back to pattern matching. Run 'mcc-gaql-gen enrich' to build vector index.",
+                    e
+                );
+                formatter::match_query(&cache, &query)?
+            }
+        }
+    };
 
     // Apply subset filter
     let query_result = if subset {
