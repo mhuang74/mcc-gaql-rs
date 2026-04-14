@@ -1939,7 +1939,7 @@ impl MultiStepRAGAgent {
     /// Minimum similarity score required to trust RAG candidates.
     /// Similarity = 1.0 - cosine_distance, where higher = more similar (0.0-1.0).
     /// Below this threshold the full resource list is used as fallback.
-    const SIMILARITY_THRESHOLD: f64 = 0.3;
+    const SIMILARITY_THRESHOLD: f64 = 0.65;
 
     /// Search the resource_entries vector index and return scored results.
     /// Returns similarity scores (1.0 - cosine_distance), where higher = more similar.
