@@ -1294,6 +1294,18 @@ pub struct ResourceSearchResult {
     pub description: String,
 }
 
+/// Result of a field vector search for Phase 1
+#[derive(Debug, Clone)]
+pub struct FieldSearchResult {
+    pub field_name: String,
+    pub score: f64,           // similarity = 1.0 - distance
+    pub category: String,     // ATTRIBUTE, METRIC, SEGMENT
+    pub resource_name: String,
+    pub description: String,
+    pub filterable: bool,
+    pub sortable: bool,
+}
+
 /// Keywords indicating a performance/metrics query
 const PERFORMANCE_KEYWORDS: &[&str] = &[
     "clicks",
@@ -1999,6 +2011,39 @@ impl MultiStepRAGAgent {
         Ok(results)
     }
 
+    /// Search the field vector index and return scored results.
+    /// Returns similarity scores (1.0 - cosine_distance), where higher = more similar.
+    async fn search_field_embeddings(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<FieldSearchResult>, anyhow::Error> {
+        let search_request = VectorSearchRequest::builder()
+            .query(query)
+            .samples(limit as u64)
+            .build()
+            .map_err(|e| anyhow::anyhow!("Failed to build field search request: {}", e))?;
+
+        let raw_results = self
+            .field_index
+            .top_n::<FieldDocumentFlat>(search_request)
+            .await
+            .map_err(|e| anyhow::anyhow!("Field vector search failed: {}", e))?;
+
+        Ok(raw_results
+            .into_iter()
+            .map(|(distance, _id, doc)| FieldSearchResult {
+                field_name: doc.id,
+                score: 1.0 - distance, // Convert cosine distance to similarity
+                category: doc.category,
+                resource_name: doc.resource_name.unwrap_or_else(|| "unknown".to_string()),
+                description: doc.description,
+                filterable: doc.filterable,
+                sortable: doc.sortable,
+            })
+            .collect())
+    }
+
     /// Promote resources from underrepresented categories until `target` is reached.
     fn ensure_category_diversity(&self, results: &mut Vec<ResourceSearchResult>, target: usize) {
         if results.len() >= target {
@@ -2041,6 +2086,71 @@ impl MultiStepRAGAgent {
         }
     }
 
+    /// Retrieve relevant fields using semantic search with threshold filtering.
+    /// Returns up to `limit` results with similarity score >= SIMILARITY_THRESHOLD.
+    pub async fn retrieve_relevant_fields(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<FieldSearchResult>, anyhow::Error> {
+        let mut results = self.search_field_embeddings(query, limit).await?;
+
+        // Filter to results above similarity threshold
+        results.retain(|r| r.score >= SIMILARITY_THRESHOLD);
+        Ok(results)
+    }
+
+    /// Format field search results for Phase 1 resource selection.
+    /// Groups results by category (ATTRIBUTE, METRIC, SEGMENT) for readability.
+    fn format_field_results_for_phase1(&self, results: &[FieldSearchResult]) -> String {
+        if results.is_empty() {
+            return String::new();
+        }
+
+        let mut output = String::new();
+
+        let category_order = vec!["ATTRIBUTE", "METRIC", "SEGMENT"];
+        let mut categorized: std::collections::HashMap<&str, Vec<&FieldSearchResult>> =
+            std::collections::HashMap::new();
+
+        for r in results {
+            categorized.entry(&r.category).or_default().push(r);
+        }
+
+        output.push_str("--- FIELDS (semantic matches) ---\n");
+
+        for category in &category_order {
+            let Some(fields) = categorized.get(*category) else {
+                continue;
+            };
+            if fields.is_empty() {
+                continue;
+            }
+
+            output.push_str(&format!("### {} ({})\n", category, fields.len()));
+            for field in fields {
+                let score_tag = format!("[{:.3}]", field.score);
+                let filterable_tag = if field.filterable { " [filterable]" } else { "" };
+                let sortable_tag = if field.sortable { " [sortable]" } else { "" };
+
+                let desc = if field.description.is_empty() {
+                    "No description"
+                } else {
+                    // Take first sentence only
+                    field.description.split('.').next().unwrap_or(&field.description)
+                };
+
+                output.push_str(&format!(
+                    "- {} {}{}{}\n  : {}\n",
+                    field.field_name, score_tag, filterable_tag, sortable_tag, desc
+                ));
+            }
+            output.push('\n');
+        }
+
+        output.trim_end().to_string()
+    }
+
     async fn select_resource(
         &self,
         user_query: &str,
@@ -2054,8 +2164,13 @@ impl MultiStepRAGAgent {
         ),
         anyhow::Error,
     > {
-        // --- RAG pre-filter ---
-        let (resources, used_rag) = match self.retrieve_relevant_resources(user_query, 20).await {
+        // --- RAG pre-filter: Parallel search for resources AND fields ---
+        let (resource_result, field_result) = tokio::join!(
+            self.retrieve_relevant_resources(user_query, 20),
+            self.retrieve_relevant_fields(user_query, 100)
+        );
+
+        let (resources, used_rag) = match resource_result {
             Ok(candidates) if !candidates.is_empty() => {
                 let top_similarity = candidates[0].score;
                 if top_similarity >= SIMILARITY_THRESHOLD {
@@ -2080,6 +2195,16 @@ impl MultiStepRAGAgent {
                 (self.field_cache.get_resources(), false)
             }
         };
+
+        let field_matches = field_result.unwrap_or_else(|e| {
+            log::warn!("Phase 1: Field search failed: {}", e);
+            vec![]
+        });
+
+        log::debug!(
+            "Phase 1: Field search found {} matches above threshold",
+            field_matches.len()
+        );
 
         // Build resource information for sampling (with segment summaries)
         let resource_info: Vec<(String, String)> = resources
@@ -2144,7 +2269,15 @@ impl MultiStepRAGAgent {
         };
 
         let resource_guidance = self.domain_knowledge.section("Resource Selection Guidance");
-        let combined_resources = format!("{}{}", categorized_resources, cookbook_examples);
+
+        // Add field section to provide "bottom-up" signals for resource selection
+        let field_section = if !field_matches.is_empty() {
+            format!("\n\n{}", self.format_field_results_for_phase1(&field_matches))
+        } else {
+            String::new()
+        };
+
+        let combined_resources = format!("{}{}{}", categorized_resources, field_section, cookbook_examples);
         let system_prompt = format!(
             r#"You are a Google Ads Query Language (GAQL) expert. Given a user query, determine:
 1. The primary resource to query FROM (e.g., campaign, ad_group, keyword_view)
@@ -2160,6 +2293,11 @@ Respond ONLY with valid JSON:
 
 Resource selection guidance:
 {resource_guidance}
+
+RESOURCES section shows available resources organized by category.
+FIELDS section shows individual fields that semantically match the query -
+use these as hints for resource selection (e.g., if metrics.cost_micros
+matches highly, campaign/ad_group resources are likely relevant).
 
 {}
 {}"#,
@@ -2505,10 +2643,10 @@ Resource selection guidance:
             .reduce(SearchFilter::or);
 
         // Search for attributes matching the primary resource and auto-joined resources
-        // Use 50 samples to ensure we capture semantically relevant fields that may rank
+        // Use 100 samples to ensure we capture semantically relevant fields that may rank
         // lower due to competing terms in the query (e.g., "budget" dominating "app id")
         let attr_search = async {
-            let mut builder = VectorSearchRequest::builder().query(user_query).samples(50);
+            let mut builder = VectorSearchRequest::builder().query(user_query).samples(100);
 
             if let Some(filter) = attr_filter {
                 builder = builder.filter(filter);
@@ -2529,7 +2667,7 @@ Resource selection guidance:
         let metric_search = async {
             let search_request = VectorSearchRequest::builder()
                 .query(user_query)
-                .samples(30)
+                .samples(50)
                 .filter(metric_filter)
                 .build()
                 .map_err(|e| anyhow::anyhow!("Failed to build metric search request: {}", e))?;
@@ -2545,7 +2683,7 @@ Resource selection guidance:
         let segment_search = async {
             let search_request = VectorSearchRequest::builder()
                 .query(user_query)
-                .samples(30)
+                .samples(50)
                 .filter(segment_filter)
                 .build()
                 .map_err(|e| anyhow::anyhow!("Failed to build segment search request: {}", e))?;
@@ -2557,7 +2695,7 @@ Resource selection guidance:
         };
 
         // Run all 3 searches in parallel
-        log::debug!("Phase 2: Running 3 parallel vector searches...");
+        log::debug!("Phase 2: Running 3 parallel vector searches (100 attr, 50 metric, 50 segment)...");
         let search_start = std::time::Instant::now();
         let (attr_results, metric_results, segment_results): (
             anyhow::Result<_>,
@@ -2625,24 +2763,6 @@ Resource selection guidance:
                 }
             }
         }
-
-        // =========================================================================
-        // Tier 3: Keyword-based supplementary search
-        // =========================================================================
-        // Vector search may miss fields when query has competing terms (e.g., "budget"
-        // dominating "app id"). Extract key terms and find fields that match them
-        // in their name or description.
-        let keyword_matches = self.find_keyword_matching_fields(
-            user_query,
-            &valid_attr_resources,
-            &selectable_with,
-            &mut seen,
-        );
-        log::debug!(
-            "Phase 2: Keyword search found {} additional fields",
-            keyword_matches.len()
-        );
-        candidates.extend(keyword_matches);
 
         // Fix 1: Always inject segments.date for temporal queries.
         // The segment vector search (15 samples) frequently misses segments.date when the user
@@ -2769,138 +2889,6 @@ Resource selection guidance:
         let rejected_count = 0; // All retrieved candidates are compatible by construction
 
         Ok((candidates, candidate_count, rejected_count))
-    }
-
-    // =========================================================================
-    // Keyword-based field matching (supplements vector search)
-    // =========================================================================
-
-    /// Find fields that match key terms from the user query.
-    /// This supplements vector search which may miss fields when the query has
-    /// competing semantic terms (e.g., "budget" dominating "app id").
-    fn find_keyword_matching_fields(
-        &self,
-        user_query: &str,
-        valid_attr_resources: &[String],
-        selectable_with: &[String],
-        seen: &mut HashSet<String>,
-    ) -> Vec<FieldMetadata> {
-        let mut matches = Vec::new();
-        let query_lower = user_query.to_lowercase();
-
-        // Extract meaningful terms (skip common words)
-        let stop_words: HashSet<&str> = [
-            "a", "an", "the", "is", "are", "was", "were", "be", "been", "being", "have", "has",
-            "had", "do", "does", "did", "will", "would", "could", "should", "may", "might", "must",
-            "shall", "can", "need", "dare", "ought", "used", "to", "of", "in", "for", "on", "with",
-            "at", "by", "from", "as", "into", "through", "during", "before", "after", "above",
-            "below", "between", "under", "again", "further", "then", "once", "here", "there",
-            "when", "where", "why", "how", "all", "each", "few", "more", "most", "other", "some",
-            "such", "no", "nor", "not", "only", "own", "same", "so", "than", "too", "very", "just",
-            "and", "but", "if", "or", "because", "until", "while", "although", "list", "show",
-            "get", "find", "include", "select", "query", "report",
-        ]
-        .into_iter()
-        .collect();
-
-        // Extract query terms (2+ chars, not stop words)
-        let query_terms: Vec<&str> = query_lower
-            .split(|c: char| !c.is_alphanumeric())
-            .filter(|w| w.len() >= 2 && !stop_words.contains(w))
-            .collect();
-
-        if query_terms.is_empty() {
-            return matches;
-        }
-
-        log::debug!("Phase 2: Keyword search terms: {:?}", query_terms);
-
-        // Search through valid attribute fields
-        for (field_name, field) in &self.field_cache.fields {
-            // Check if field belongs to a valid resource
-            let is_valid_resource = valid_attr_resources
-                .iter()
-                .any(|r| field_name.starts_with(&format!("{}.", r)));
-
-            if !is_valid_resource {
-                continue;
-            }
-
-            // Already seen?
-            if seen.contains(field_name) {
-                continue;
-            }
-
-            // Split field name into words (by dot, underscore, etc.)
-            let name_words: Vec<&str> = field_name
-                .split(|c: char| !c.is_alphanumeric())
-                .filter(|w| !w.is_empty())
-                .collect();
-
-            // Split description into words
-            let desc_lower = field
-                .description
-                .as_ref()
-                .map(|d| d.to_lowercase())
-                .unwrap_or_default();
-            let desc_words: Vec<&str> = desc_lower
-                .split(|c: char| !c.is_alphanumeric())
-                .filter(|w| !w.is_empty())
-                .collect();
-
-            // Check for FULL WORD matches only (not substrings like "id" in "valid")
-            let term_matches: Vec<&str> = query_terms
-                .iter()
-                .filter(|term| {
-                    name_words.iter().any(|w| w.eq_ignore_ascii_case(term))
-                        || desc_words.iter().any(|w| *w == **term)
-                })
-                .copied()
-                .collect();
-
-            // Require at least one term match
-            if !term_matches.is_empty() {
-                // Prioritize fields with multiple term matches or name matches
-                let has_name_match = query_terms
-                    .iter()
-                    .any(|term| name_words.iter().any(|w| w.eq_ignore_ascii_case(term)));
-                let match_score = term_matches.len() + if has_name_match { 2 } else { 0 };
-
-                // Only add fields with reasonable match scores
-                if (match_score >= 2 || has_name_match) && seen.insert(field_name.clone()) {
-                    log::trace!(
-                        "Phase 2: Keyword match '{}' (score={}, terms={:?})",
-                        field_name,
-                        match_score,
-                        term_matches
-                    );
-                    matches.push(field.clone());
-                }
-            }
-        }
-
-        // Also check metrics and segments with keyword matching (full word only)
-        for field_name in selectable_with {
-            if seen.contains(field_name) {
-                continue;
-            }
-
-            if let Some(field) = self.field_cache.fields.get(field_name) {
-                let name_words: Vec<&str> = field_name
-                    .split(|c: char| !c.is_alphanumeric())
-                    .filter(|w| !w.is_empty())
-                    .collect();
-
-                let has_name_match = query_terms
-                    .iter()
-                    .any(|term| name_words.iter().any(|w| w.eq_ignore_ascii_case(term)));
-                if has_name_match && seen.insert(field_name.clone()) {
-                    matches.push(field.clone());
-                }
-            }
-        }
-
-        matches
     }
 
     // =========================================================================
