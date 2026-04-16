@@ -1538,6 +1538,10 @@ pub struct PipelineConfig {
     pub use_query_cookbook: bool,
     /// Whether to print explanation of the LLM selection process
     pub explain: bool,
+    /// Override resource selection (skip Phase 1)
+    pub resource_override: Option<String>,
+    /// Stop after generating LLM prompt and print it
+    pub generate_prompt_only: bool,
 }
 
 impl Default for PipelineConfig {
@@ -1546,8 +1550,23 @@ impl Default for PipelineConfig {
             add_defaults: true,
             use_query_cookbook: false,
             explain: false,
+            resource_override: None,
+            generate_prompt_only: false,
         }
     }
+}
+
+/// Result of the generate operation
+#[derive(Debug)]
+pub enum GenerateResult {
+    /// Full GAQL generation result
+    Query(mcc_gaql_common::field_metadata::GAQLResult),
+    /// Prompt-only output (system_prompt, user_prompt, phase_number)
+    PromptOnly {
+        system_prompt: String,
+        user_prompt: String,
+        phase: u8,
+    },
 }
 
 /// Multi-step RAG Agent for high-accuracy GAQL generation
@@ -1811,23 +1830,46 @@ impl MultiStepRAGAgent {
     }
 
     /// Main entry point: generate GAQL query from user prompt
-    pub async fn generate(
-        &self,
-        user_query: &str,
-    ) -> Result<mcc_gaql_common::field_metadata::GAQLResult, anyhow::Error> {
+    pub async fn generate(&self, user_query: &str) -> Result<GenerateResult, anyhow::Error> {
+        // If generate_prompt_only WITHOUT resource_override: show Phase 1 prompt
+        if self.pipeline_config.generate_prompt_only
+            && self.pipeline_config.resource_override.is_none()
+        {
+            let (system_prompt, user_prompt) = self.build_phase1_prompt(user_query).await?;
+            return Ok(GenerateResult::PromptOnly {
+                system_prompt,
+                user_prompt,
+                phase: 1,
+            });
+        }
+
         let start = std::time::Instant::now();
 
-        // Phase 1: Resource selection
+        // Phase 1: Resource selection (or use override)
         let phase1_start = std::time::Instant::now();
-        log::info!("Phase 1: Resource selection...");
         let (primary_resource, related_resources, dropped_resources, reasoning, resource_sample) =
-            self.select_resource(user_query).await?;
+            if let Some(ref resource) = self.pipeline_config.resource_override {
+                // Validate resource exists
+                let all_resources = self.field_cache.get_resources();
+                if !all_resources.contains(resource) {
+                    return Err(anyhow::anyhow!("Unknown resource: '{}'", resource));
+                }
+                log::info!("Phase 1: Skipped (using override resource '{}')", resource);
+                (
+                    resource.clone(),
+                    Vec::new(),
+                    Vec::new(),
+                    String::new(),
+                    Vec::new(),
+                )
+            } else {
+                log::info!("Phase 1: Resource selection...");
+                let result = self.select_resource(user_query).await?;
+                let phase1_time_ms = phase1_start.elapsed().as_millis() as u64;
+                log::info!("Phase 1 complete: {} ({}ms)", result.0, phase1_time_ms);
+                result
+            };
         let phase1_time_ms = phase1_start.elapsed().as_millis() as u64;
-        log::info!(
-            "Phase 1 complete: {} ({}ms)",
-            primary_resource,
-            phase1_time_ms
-        );
 
         // Phase 2: Field candidate retrieval
         let phase2_start = std::time::Instant::now();
@@ -1849,6 +1891,18 @@ impl MultiStepRAGAgent {
             "Phase 2.5: Pre-scan filters ({}ms)",
             phase25_start.elapsed().as_millis()
         );
+
+        // If generate_prompt_only WITH resource_override: show Phase 3 prompt
+        if self.pipeline_config.generate_prompt_only {
+            let (system_prompt, user_prompt) = self
+                .build_phase3_prompt(user_query, &primary_resource, &candidates, &filter_enums)
+                .await?;
+            return Ok(GenerateResult::PromptOnly {
+                system_prompt,
+                user_prompt,
+                phase: 3,
+            });
+        }
 
         // Phase 3: Field selection via LLM
         let phase3_start = std::time::Instant::now();
@@ -1929,11 +1983,13 @@ impl MultiStepRAGAgent {
             .field_cache
             .validate_field_selection_for_resource(&all_fields, &primary_resource);
 
-        Ok(mcc_gaql_common::field_metadata::GAQLResult {
-            query: result,
-            validation,
-            pipeline_trace,
-        })
+        Ok(GenerateResult::Query(
+            mcc_gaql_common::field_metadata::GAQLResult {
+                query: result,
+                validation,
+                pipeline_trace,
+            },
+        ))
     }
 
     // =========================================================================
@@ -2041,19 +2097,11 @@ impl MultiStepRAGAgent {
         }
     }
 
-    async fn select_resource(
+    /// Build the Phase 1 prompt without calling LLM
+    async fn build_phase1_prompt(
         &self,
         user_query: &str,
-    ) -> Result<
-        (
-            String,
-            Vec<String>,
-            Vec<String>,
-            String,
-            Vec<(String, String)>,
-        ),
-        anyhow::Error,
-    > {
+    ) -> Result<(String, String), anyhow::Error> {
         // --- RAG pre-filter ---
         let (resources, used_rag) = match self.retrieve_relevant_resources(user_query, 20).await {
             Ok(candidates) if !candidates.is_empty() => {
@@ -2105,7 +2153,7 @@ impl MultiStepRAGAgent {
             .collect();
 
         // Generate sample of 5 resources (prioritizing keyword matches)
-        let resource_sample = create_resource_sample(user_query, &resource_info);
+        let _resource_sample = create_resource_sample(user_query, &resource_info);
 
         // Retrieve cookbook examples for resource selection (if enabled)
         let cookbook_examples = if self.pipeline_config.use_query_cookbook {
@@ -2167,6 +2215,63 @@ Resource selection guidance:
         );
 
         let user_prompt = format!("User query: {}", user_query);
+
+        Ok((system_prompt, user_prompt))
+    }
+
+    async fn select_resource(
+        &self,
+        user_query: &str,
+    ) -> Result<
+        (
+            String,
+            Vec<String>,
+            Vec<String>,
+            String,
+            Vec<(String, String)>,
+        ),
+        anyhow::Error,
+    > {
+        // Build the Phase 1 prompt
+        let (system_prompt, user_prompt) = self.build_phase1_prompt(user_query).await?;
+
+        // Also need to compute resource_sample for the return value
+        let (resources, _used_rag) = match self.retrieve_relevant_resources(user_query, 20).await {
+            Ok(candidates) if !candidates.is_empty() => {
+                let top_similarity = candidates[0].score;
+                if top_similarity >= SIMILARITY_THRESHOLD {
+                    let names: Vec<String> =
+                        candidates.into_iter().map(|c| c.resource_name).collect();
+                    (names, true)
+                } else {
+                    (self.field_cache.get_resources(), false)
+                }
+            }
+            Ok(_) | Err(_) => (self.field_cache.get_resources(), false),
+        };
+
+        let resource_info: Vec<(String, String)> = resources
+            .iter()
+            .map(|r| {
+                let rm = self
+                    .field_cache
+                    .resource_metadata
+                    .as_ref()
+                    .and_then(|m| m.get(r));
+                let desc = rm.and_then(|m| m.description.as_deref()).unwrap_or("");
+
+                let segment_summary = self.summarize_resource_segments(r);
+                let full_desc = if segment_summary.is_empty() {
+                    desc.to_string()
+                } else {
+                    format!("{} [Segments: {}]", desc, segment_summary)
+                };
+
+                (r.clone(), full_desc)
+            })
+            .collect();
+
+        let resource_sample = create_resource_sample(user_query, &resource_info);
 
         let agent = self
             .llm_config
@@ -2972,16 +3077,17 @@ Resource selection guidance:
     // Phase 3: Field Selection
     // =========================================================================
 
-    async fn select_fields(
+    /// Build the Phase 3 prompt without calling LLM
+    async fn build_phase3_prompt(
         &self,
         user_query: &str,
         primary: &str,
         candidates: &[FieldMetadata],
         filter_enums: &[(String, Vec<String>)],
-    ) -> Result<FieldSelectionResult, anyhow::Error> {
+    ) -> Result<(String, String), anyhow::Error> {
         // Retrieve top cookbook examples only if enabled
         let examples = if self.pipeline_config.use_query_cookbook {
-            log::debug!("Phase 3: Retrieving cookbook examples...");
+            log::debug!("Phase 3: Retrieving cookbook examples (for prompt building)...");
             let cookbook_start = std::time::Instant::now();
             let ex = self.retrieve_cookbook_examples(user_query, 3).await?;
             log::debug!(
@@ -2990,21 +3096,8 @@ Resource selection guidance:
             );
             ex
         } else {
-            log::debug!("Phase 3: Skipping cookbook examples (use_query_cookbook=false)");
             String::new()
         };
-
-        // Build candidate name set for validation (LLM may hallucinate fields not in candidates)
-        let candidate_names: HashSet<String> = candidates.iter().map(|f| f.name.clone()).collect();
-
-        // Build set of all valid fields for this resource (selectable_with).
-        // The candidate set guides the LLM, but we should accept any valid field it selects —
-        // the candidate set is a *subset* of valid fields, limited by vector search sample sizes.
-        let valid_fields: HashSet<String> = self
-            .field_cache
-            .get_resource_selectable_with(primary)
-            .into_iter()
-            .collect();
 
         // Build candidate list for LLM
         let mut candidate_text = String::new();
@@ -3195,6 +3288,33 @@ Respond ONLY with valid JSON:
             );
             (sys, user)
         };
+
+        Ok((system_prompt, user_prompt))
+    }
+
+    async fn select_fields(
+        &self,
+        user_query: &str,
+        primary: &str,
+        candidates: &[FieldMetadata],
+        filter_enums: &[(String, Vec<String>)],
+    ) -> Result<FieldSelectionResult, anyhow::Error> {
+        // Build the Phase 3 prompt
+        let (system_prompt, user_prompt) = self
+            .build_phase3_prompt(user_query, primary, candidates, filter_enums)
+            .await?;
+
+        // Build candidate name set for validation (LLM may hallucinate fields not in candidates)
+        let candidate_names: HashSet<String> = candidates.iter().map(|f| f.name.clone()).collect();
+
+        // Build set of all valid fields for this resource (selectable_with).
+        // The candidate set guides the LLM, but we should accept any valid field it selects —
+        // the candidate set is a *subset* of valid fields, limited by vector search sample sizes.
+        let valid_fields: HashSet<String> = self
+            .field_cache
+            .get_resource_selectable_with(primary)
+            .into_iter()
+            .collect();
 
         let agent = self
             .llm_config
@@ -3769,7 +3889,7 @@ pub async fn convert_to_gaql(
     prompt: &str,
     config: &LlmConfig,
     pipeline_config: PipelineConfig,
-) -> Result<mcc_gaql_common::field_metadata::GAQLResult, anyhow::Error> {
+) -> Result<GenerateResult, anyhow::Error> {
     let agent =
         MultiStepRAGAgent::init(example_queries, field_cache, config, pipeline_config).await?;
     agent.generate(prompt).await
