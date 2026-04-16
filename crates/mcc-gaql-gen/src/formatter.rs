@@ -84,9 +84,8 @@ pub fn filter_by_similarity(query_result: QueryResult) -> (QueryResult, usize) {
             let filtered: HashMap<String, Vec<(FieldMetadata, f64)>> = fields
                 .into_iter()
                 .map(|(category, field_list)| {
-                    let (passing, dropped): (Vec<_>, Vec<_>) = field_list
-                        .into_iter()
-                        .partition(|(_, distance)| {
+                    let (passing, dropped): (Vec<_>, Vec<_>) =
+                        field_list.into_iter().partition(|(_, distance)| {
                             let similarity = 1.0 - distance;
                             similarity >= SIMILARITY_THRESHOLD
                         });

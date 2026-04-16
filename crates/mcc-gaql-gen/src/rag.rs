@@ -25,7 +25,7 @@ use rig_lancedb::{LanceDBFilter, LanceDbVectorIndex, SearchParams};
 use serde::{Deserialize, Serialize};
 
 use mcc_gaql_common::config::QueryEntry;
-use mcc_gaql_common::field_metadata::{FieldMetadata, FieldMetadataCache, FilterField};
+use mcc_gaql_common::field_metadata::{FieldMetadata, FieldMetadataCache, FilterField, GAQLResult};
 use mcc_gaql_common::paths;
 
 use crate::vector_store as lancedb_utils;
@@ -1298,8 +1298,8 @@ pub struct ResourceSearchResult {
 #[derive(Debug, Clone)]
 pub struct FieldSearchResult {
     pub field_name: String,
-    pub score: f64,           // similarity = 1.0 - distance
-    pub category: String,     // ATTRIBUTE, METRIC, SEGMENT
+    pub score: f64,       // similarity = 1.0 - distance
+    pub category: String, // ATTRIBUTE, METRIC, SEGMENT
     pub resource_name: String,
     pub description: String,
     pub filterable: bool,
@@ -1541,6 +1541,18 @@ impl DomainKnowledge {
     }
 }
 
+/// Result of GAQL generation
+pub enum GenerateResult {
+    /// Full GAQL generation result
+    Query(GAQLResult),
+    /// Prompt-only output (system_prompt, user_prompt, phase_number)
+    PromptOnly {
+        system_prompt: String,
+        user_prompt: String,
+        phase: u8, // 1 or 3
+    },
+}
+
 /// Configuration for the multi-step RAG pipeline
 #[derive(Debug, Clone)]
 pub struct PipelineConfig {
@@ -1550,6 +1562,10 @@ pub struct PipelineConfig {
     pub use_query_cookbook: bool,
     /// Whether to print explanation of the LLM selection process
     pub explain: bool,
+    /// Override resource selection (skip Phase 1)
+    pub resource_override: Option<String>,
+    /// Stop after generating LLM prompt and print it
+    pub generate_prompt_only: bool,
 }
 
 impl Default for PipelineConfig {
@@ -1558,6 +1574,8 @@ impl Default for PipelineConfig {
             add_defaults: true,
             use_query_cookbook: false,
             explain: false,
+            resource_override: None,
+            generate_prompt_only: false,
         }
     }
 }
@@ -1823,10 +1841,50 @@ impl MultiStepRAGAgent {
     }
 
     /// Main entry point: generate GAQL query from user prompt
-    pub async fn generate(
-        &self,
-        user_query: &str,
-    ) -> Result<mcc_gaql_common::field_metadata::GAQLResult, anyhow::Error> {
+    pub async fn generate(&self, user_query: &str) -> Result<GenerateResult, anyhow::Error> {
+        // If generate_prompt_only WITHOUT resource_override: show Phase 1 prompt
+        if self.pipeline_config.generate_prompt_only
+            && self.pipeline_config.resource_override.is_none()
+        {
+            let (system_prompt, user_prompt) = self.build_phase1_prompt(user_query).await?;
+            return Ok(GenerateResult::PromptOnly {
+                system_prompt,
+                user_prompt,
+                phase: 1,
+            });
+        }
+
+        // Phase 1: Resource selection (or use override)
+        let primary_resource = if let Some(ref resource) = self.pipeline_config.resource_override {
+            // Validate resource exists
+            if !self.field_cache.get_resources().contains(resource) {
+                return Err(anyhow::anyhow!("Unknown resource: '{}'", resource));
+            }
+            resource.clone()
+        } else {
+            let (primary, _, _, _, _) = self.select_resource(user_query).await?;
+            primary
+        };
+
+        // Phase 2 + 2.5: Field candidate retrieval and pre-scan
+        let (candidates, ..) = self
+            .retrieve_field_candidates(user_query, &primary_resource, &[])
+            .await?;
+        let filter_enums = self.prescan_filters(user_query, &candidates);
+
+        // If generate_prompt_only WITH resource_override: show Phase 3 prompt
+        if self.pipeline_config.generate_prompt_only {
+            let (system_prompt, user_prompt) = self
+                .build_phase3_prompt(user_query, &primary_resource, &candidates, &filter_enums)
+                .await?;
+            return Ok(GenerateResult::PromptOnly {
+                system_prompt,
+                user_prompt,
+                phase: 3,
+            });
+        }
+
+        // Continue with normal pipeline...
         let start = std::time::Instant::now();
 
         // Phase 1: Resource selection
@@ -1941,16 +1999,174 @@ impl MultiStepRAGAgent {
             .field_cache
             .validate_field_selection_for_resource(&all_fields, &primary_resource);
 
-        Ok(mcc_gaql_common::field_metadata::GAQLResult {
-            query: result,
-            validation,
-            pipeline_trace,
-        })
+        Ok(GenerateResult::Query(
+            mcc_gaql_common::field_metadata::GAQLResult {
+                query: result,
+                validation,
+                pipeline_trace,
+            },
+        ))
     }
 
     // =========================================================================
     // Phase 1: Resource Selection
     // =========================================================================
+
+    /// Build the Phase 1 prompt without calling LLM
+    async fn build_phase1_prompt(
+        &self,
+        user_query: &str,
+    ) -> Result<(String, String), anyhow::Error> {
+        // --- RAG pre-filter: Parallel search for resources AND fields ---
+        let (resource_result, field_result) = tokio::join!(
+            self.retrieve_relevant_resources(user_query, 20),
+            self.retrieve_relevant_fields(user_query, 100)
+        );
+
+        let (resources, used_rag) = match resource_result {
+            Ok(candidates) if !candidates.is_empty() => {
+                let top_similarity = candidates[0].score;
+                if top_similarity >= SIMILARITY_THRESHOLD {
+                    log::info!(
+                        "Phase 1: RAG pre-filter selected {} resources (top similarity={:.3})",
+                        candidates.len(),
+                        top_similarity
+                    );
+                    let names: Vec<String> =
+                        candidates.into_iter().map(|c| c.resource_name).collect();
+                    (names, true)
+                } else {
+                    log::warn!(
+                        "Phase 1: Low RAG confidence (similarity={:.3}), falling back to full resource list",
+                        top_similarity
+                    );
+                    (self.field_cache.get_resources(), false)
+                }
+            }
+            Ok(_) | Err(_) => {
+                log::warn!("Phase 1: RAG resource search unavailable, using full resource list");
+                (self.field_cache.get_resources(), false)
+            }
+        };
+
+        let field_matches = field_result.unwrap_or_else(|e| {
+            log::warn!("Phase 1: Field search failed: {}", e);
+            vec![]
+        });
+
+        log::debug!(
+            "Phase 1: Field search found {} matches above threshold",
+            field_matches.len()
+        );
+
+        // Build resource information for sampling (with segment summaries)
+        let resource_info: Vec<(String, String)> = resources
+            .iter()
+            .map(|r| {
+                let rm = self
+                    .field_cache
+                    .resource_metadata
+                    .as_ref()
+                    .and_then(|m| m.get(r));
+                let desc = rm.and_then(|m| m.description.as_deref()).unwrap_or("");
+
+                // Add segment category summary
+                let segment_summary = self.summarize_resource_segments(r);
+                let full_desc = if segment_summary.is_empty() {
+                    desc.to_string()
+                } else {
+                    format!("{} [Segments: {}]", desc, segment_summary)
+                };
+
+                (r.clone(), full_desc)
+            })
+            .collect();
+
+        // Generate sample of 5 resources (prioritizing keyword matches)
+        let _resource_sample = create_resource_sample(user_query, &resource_info);
+
+        // Retrieve cookbook examples for resource selection (if enabled)
+        let cookbook_examples = if self.pipeline_config.use_query_cookbook {
+            log::debug!("Phase 1: Retrieving cookbook examples for resource selection...");
+            match self.retrieve_cookbook_examples(user_query, 2).await {
+                Ok(examples) => {
+                    if !examples.is_empty() {
+                        log::debug!("Phase 1: Retrieved cookbook examples for resource selection");
+                        format!("\n\nSimilar Query Examples from Cookbook:\n{}", examples)
+                    } else {
+                        String::new()
+                    }
+                }
+                Err(e) => {
+                    log::warn!("Phase 1: Failed to retrieve cookbook examples: {}", e);
+                    String::new()
+                }
+            }
+        } else {
+            String::new()
+        };
+
+        // Build categorized resource list for LLM
+        let categorized_resources = self.build_categorized_resource_list(&resources);
+
+        let resource_list_header = if used_rag {
+            "IMPORTANT: You MUST select resources ONLY from the list below. \
+             Do NOT invent or hallucinate resource names.\
+             If no resource matches perfectly, choose the closest available option \
+             and explain in reasoning.\
+             Resources (selected by semantic similarity to your query):\n"
+        } else {
+            "IMPORTANT: You MUST select resources ONLY from the list below. \
+             Do NOT invent or hallucinate resource names.\
+             Resources (organized by category):\n"
+        };
+
+        let resource_guidance = self.domain_knowledge.section("Resource Selection Guidance");
+
+        // Add field section to provide "bottom-up" signals for resource selection
+        let field_section = if !field_matches.is_empty() {
+            format!(
+                "\n\n{}",
+                self.format_field_results_for_phase1(&field_matches)
+            )
+        } else {
+            String::new()
+        };
+
+        let combined_resources = format!(
+            "{}{}{}",
+            categorized_resources, field_section, cookbook_examples
+        );
+        let system_prompt = format!(
+            r#"You are a Google Ads Query Language (GAQL) expert. Given a user query, determine:
+ 1. The primary resource to query FROM (e.g., campaign, ad_group, keyword_view)
+ 2. Any related resources that might be needed (for JOINs or attributes)
+
+Respond ONLY with valid JSON:
+{{
+  "primary_resource": "resource_name",
+  "related_resources": ["related_resource1", "related_resource2"],
+  "confidence": 0.95,
+  "reasoning": "brief explanation"
+}}
+
+Resource selection guidance:
+{resource_guidance}
+
+RESOURCES section shows available resources organized by category.
+FIELDS section shows individual fields that semantically match the query -
+use these as hints for resource selection (e.g., if metrics.cost_micros
+matches highly, campaign/ad_group resources are likely relevant).
+
+{}
+{}"#,
+            resource_list_header, combined_resources
+        );
+
+        let user_prompt = format!("User query: {}", user_query);
+
+        Ok((system_prompt, user_prompt))
+    }
 
     /// Search the resource_entries vector index and return scored results.
     /// Returns similarity scores (1.0 - cosine_distance), where higher = more similar.
@@ -2130,14 +2346,22 @@ impl MultiStepRAGAgent {
             output.push_str(&format!("### {} ({})\n", category, fields.len()));
             for field in fields {
                 let score_tag = format!("[{:.3}]", field.score);
-                let filterable_tag = if field.filterable { " [filterable]" } else { "" };
+                let filterable_tag = if field.filterable {
+                    " [filterable]"
+                } else {
+                    ""
+                };
                 let sortable_tag = if field.sortable { " [sortable]" } else { "" };
 
                 let desc = if field.description.is_empty() {
                     "No description"
                 } else {
                     // Take first sentence only
-                    field.description.split('.').next().unwrap_or(&field.description)
+                    field
+                        .description
+                        .split('.')
+                        .next()
+                        .unwrap_or(&field.description)
                 };
 
                 output.push_str(&format!(
@@ -2272,12 +2496,18 @@ impl MultiStepRAGAgent {
 
         // Add field section to provide "bottom-up" signals for resource selection
         let field_section = if !field_matches.is_empty() {
-            format!("\n\n{}", self.format_field_results_for_phase1(&field_matches))
+            format!(
+                "\n\n{}",
+                self.format_field_results_for_phase1(&field_matches)
+            )
         } else {
             String::new()
         };
 
-        let combined_resources = format!("{}{}{}", categorized_resources, field_section, cookbook_examples);
+        let combined_resources = format!(
+            "{}{}{}",
+            categorized_resources, field_section, cookbook_examples
+        );
         let system_prompt = format!(
             r#"You are a Google Ads Query Language (GAQL) expert. Given a user query, determine:
 1. The primary resource to query FROM (e.g., campaign, ad_group, keyword_view)
@@ -2646,7 +2876,9 @@ matches highly, campaign/ad_group resources are likely relevant).
         // Use 100 samples to ensure we capture semantically relevant fields that may rank
         // lower due to competing terms in the query (e.g., "budget" dominating "app id")
         let attr_search = async {
-            let mut builder = VectorSearchRequest::builder().query(user_query).samples(100);
+            let mut builder = VectorSearchRequest::builder()
+                .query(user_query)
+                .samples(100);
 
             if let Some(filter) = attr_filter {
                 builder = builder.filter(filter);
@@ -2695,7 +2927,9 @@ matches highly, campaign/ad_group resources are likely relevant).
         };
 
         // Run all 3 searches in parallel
-        log::debug!("Phase 2: Running 3 parallel vector searches (100 attr, 50 metric, 50 segment)...");
+        log::debug!(
+            "Phase 2: Running 3 parallel vector searches (100 attr, 50 metric, 50 segment)..."
+        );
         let search_start = std::time::Instant::now();
         let (attr_results, metric_results, segment_results): (
             anyhow::Result<_>,
@@ -2959,6 +3193,235 @@ matches highly, campaign/ad_group resources are likely relevant).
     // =========================================================================
     // Phase 3: Field Selection
     // =========================================================================
+
+    /// Build the Phase 3 prompt without calling LLM
+    async fn build_phase3_prompt(
+        &self,
+        user_query: &str,
+        primary: &str,
+        candidates: &[FieldMetadata],
+        filter_enums: &[(String, Vec<String>)],
+    ) -> Result<(String, String), anyhow::Error> {
+        // Retrieve top cookbook examples only if enabled
+        let examples = if self.pipeline_config.use_query_cookbook {
+            log::debug!("Phase 3: Retrieving cookbook examples...");
+            let cookbook_start = std::time::Instant::now();
+
+            // Fetch examples from query index
+            let ex = self.retrieve_cookbook_examples(user_query, 3).await?;
+
+            log::debug!(
+                "Phase 3: Cookbook examples retrieved in {}ms",
+                cookbook_start.elapsed().as_millis()
+            );
+            ex
+        } else {
+            log::debug!("Phase 3: Skipping cookbook examples (use_query_cookbook=false)");
+            String::new()
+        };
+
+        // Build candidate name set for validation (LLM may hallucinate fields not in candidates)
+        let _candidate_names: HashSet<String> = candidates.iter().map(|f| f.name.clone()).collect();
+
+        // Build set of all valid fields for this resource (selectable_with)
+        let _valid_fields: HashSet<String> = self
+            .field_cache
+            .get_resource_selectable_with(primary)
+            .into_iter()
+            .collect();
+
+        // Build candidate list for LLM
+        let mut candidate_text = String::new();
+        let mut categories = std::collections::HashMap::new();
+
+        for field in candidates {
+            let category = categories
+                .entry(field.category.clone())
+                .or_insert_with(Vec::new);
+            category.push(field);
+        }
+
+        for (cat, fields) in categories {
+            candidate_text.push_str(&format!("\n### {} ({})\n", cat, fields.len()));
+            for f in &fields {
+                let filterable_tag = if f.filterable { " [filterable]" } else { "" };
+                let sortable_tag = if f.sortable { " [sortable]" } else { "" };
+
+                // Check for pre-scanned enum values
+                let enum_note = filter_enums
+                    .iter()
+                    .find(|(name, _)| name == &f.name)
+                    .map(|(_, enums)| format!(" (valid: {})", enums.join(", ")))
+                    .unwrap_or_default();
+
+                candidate_text.push_str(&format!(
+                    "- {}{}{}: {}{}\n",
+                    f.name,
+                    filterable_tag,
+                    sortable_tag,
+                    f.description.as_deref().unwrap_or(""),
+                    enum_note
+                ));
+            }
+        }
+
+        // Pre-computed date ranges for prompt interpolation
+        let dates = DateContext::new();
+        let today = dates.today;
+        let this_year_start = dates.this_year_start;
+        let prev_year_start = dates.prev_year_start;
+        let prev_year_end = dates.prev_year_end;
+        let this_quarter_start = dates.this_quarter_start;
+        let prev_quarter_start = dates.prev_quarter_start;
+        let prev_quarter_end = dates.prev_quarter_end;
+        let last_60_start = dates.last_60_start;
+        let last_90_start = dates.last_90_start;
+        let (this_summer_start, this_summer_end) = dates.this_summer;
+        let (last_summer_start, last_summer_end) = dates.last_summer;
+        let (this_winter_start, this_winter_end) = dates.this_winter;
+        let (last_winter_start, last_winter_end) = dates.last_winter;
+        let (this_spring_start, this_spring_end) = dates.this_spring;
+        let (last_spring_start, last_spring_end) = dates.last_spring;
+        let (this_fall_start, this_fall_end) = dates.this_fall;
+        let (last_fall_start, last_fall_end) = dates.last_fall;
+        let (this_christmas_start, this_christmas_end) = dates.this_christmas;
+
+        let metric_terminology = self.domain_knowledge.section("Metric Terminology");
+        let numeric_monetary = self
+            .domain_knowledge
+            .section("Numeric and Monetary Conversion");
+        let monetary_extraction = self.domain_knowledge.section("Monetary Value Extraction");
+        let date_range_handling = self.domain_knowledge.section("Date Range Handling");
+        let query_best_practices = self.domain_knowledge.section("Query Best Practices");
+
+        // Build prompt conditionally based on whether cookbook is enabled
+        let (system_prompt, user_prompt) = if self.pipeline_config.use_query_cookbook {
+            let sys = format!(
+                r#"You are a Google Ads Query Language (GAQL) expert. Given:
+ 1. A user query
+ 2. Cookbook examples
+ 3. Available fields categorized by type
+
+Today's date: {today}
+
+Select the appropriate fields and build WHERE filters.
+
+Respond ONLY with valid JSON:
+{{
+  "select_fields": ["field1", "field2", ...],
+  "filter_fields": [{{"field": "field_name", "operator": "=", "value": "value"}}],
+  "order_by_fields": [{{"field": "field_name", "direction": "DESC"}}],
+  "limit": null,
+  "reasoning": "brief explanation"
+}}
+
+- Use ONLY fields from the provided list
+- Add filter_fields for any WHERE clauses
+- **IMPORTANT: For IN and NOT IN operators, wrap values in parentheses: IN ('VALUE1', 'VALUE2') not IN 'VALUE'**
+- Example: {{"field": "campaign.status", "operator": "IN", "value": "('ENABLED', 'PAUSED')"}}
+- Add order_by_fields for sorting (use DESC for "top", "best", "worst"; ASC for "first" if ascending)
+- If the query asks for "top N", "first N", "best N", or "worst N" results, set "limit" to that number N. If "top" or "best" is used without a specific number, default "limit" to 10. Otherwise set "limit" to null.
+- **MANDATORY: If the user query mentions ANY time period (last week, last 7 days, yesterday, this month, year to date, etc.), you MUST add a segments.date filter_field. Do NOT mention date ranges only in reasoning -- they MUST appear in filter_fields. A query missing a date filter when the user specified a time period is INCORRECT.**
+- In an MCC (multi-client) environment, always include customer.id and customer.descriptive_name in select_fields when they are available, so results can be identified by account.
+- **IMPORTANT: Always include identity fields** for the primary resource in select_fields. Identity fields are the ones that identify each row — such as the resource's ID, name, and parent resource identifiers. Include them even if the user didn't explicitly ask for them. Examples: a campaign query should include campaign.id and campaign.name; an ad_group query should include campaign.id, campaign.name, ad_group.id, and ad_group.name; a keyword_view query should include ad_group_criterion.criterion_id and ad_group_criterion.keyword.text.
+{metric_terminology}
+
+{numeric_monetary}
+
+{date_range_handling}
+
+  Example computed date ranges (today: {today}):
+  - "this year" → operator: "BETWEEN", value: '{this_year_start} AND {today}'
+  - "last year" → operator: "BETWEEN", value: '{prev_year_start} AND {prev_year_end}'
+  - "this quarter" → operator: "BETWEEN", value: '{this_quarter_start} AND {today}'
+  - "last quarter" → operator: "BETWEEN", value: '{prev_quarter_start} AND {prev_quarter_end}'
+  - "this summer" → operator: "BETWEEN", value: '{this_summer_start} AND {this_summer_end}'
+  - "last summer" → operator: "BETWEEN", value: '{last_summer_start} AND {last_summer_end}'
+  - "this winter" → operator: "BETWEEN", value: '{this_winter_start} AND {this_winter_end}'
+  - "last winter" → operator: "BETWEEN", value: '{last_winter_start} AND {last_winter_end}'
+  - "this spring" → operator: "BETWEEN", value: '{this_spring_start} AND {this_spring_end}'
+  - "last spring" → operator: "BETWEEN", value: '{last_spring_start} AND {last_spring_end}'
+  - "this fall" / "this autumn" → operator: "BETWEEN", value: '{this_fall_start} AND {this_fall_end}'
+  - "last fall" → operator: "BETWEEN", value: '{last_fall_start} AND {last_fall_end}'
+  - "christmas holiday" → operator: "BETWEEN", value: '{this_christmas_start} AND {this_christmas_end}'
+  - "last 60 days" → operator: "BETWEEN", value: '{last_60_start} AND {today}'
+  - "last 90 days" → operator: "BETWEEN", value: '{last_90_start} AND {today}'
+
+{monetary_extraction}
+
+{query_best_practices}
+"#
+            );
+            let user = format!(
+                "User query: {}\n\nCookbook examples:\n{}\n\nAvailable fields:{}",
+                user_query, examples, candidate_text
+            );
+            (sys, user)
+        } else {
+            let sys = format!(
+                r#"You are a Google Ads Query Language (GAQL) expert. Given:
+ 1. A user query
+ 2. Available fields categorized by type
+
+Today's date: {today}
+
+Select the appropriate fields and build WHERE filters.
+
+Respond ONLY with valid JSON:
+{{
+  "select_fields": ["field1", "field2", ...],
+  "filter_fields": [{{"field": "field_name", "operator": "=", "value": "value"}}],
+  "order_by_fields": [{{"field": "field_name", "direction": "DESC"}}],
+  "limit": null,
+  "reasoning": "brief explanation"
+}}
+
+- Use ONLY fields from the provided list
+- Add filter_fields for any WHERE clauses
+- **IMPORTANT: For IN and NOT IN operators, wrap values in parentheses: IN ('VALUE1', 'VALUE2') not IN 'VALUE'**
+- Example: {{"field": "campaign.status", "operator": "IN", "value": "('ENABLED', 'PAUSED')"}}
+- Add order_by_fields for sorting (use DESC for "top", "best", "worst"; ASC for "first" if ascending)
+- If the query asks for "top N", "first N", "best N", or "worst N" results, set "limit" to that number N. If "top" or "best" is used without a specific number, default "limit" to 10. Otherwise set "limit" to null.
+- **MANDATORY: If the user query mentions ANY time period (last week, last 7 days, yesterday, this month, year to date, etc.), you MUST add a segments.date filter_field. Do NOT mention date ranges only in reasoning -- they MUST appear in filter_fields. A query missing a date filter when the user specified a time period is INCORRECT.**
+- When querying account-level data (FROM customer) or when the user asks about accounts, always include customer.id and customer.descriptive_name in select_fields if available in the field list.
+- Always include identity fields for the primary resource in select_fields — fields that identify each row, such as {{resource}}.id, {{resource}}.name, and parent resource identifiers (e.g., campaign.id, campaign.name for ad_group queries). Include them even if not explicitly requested.
+{metric_terminology}
+
+{numeric_monetary}
+
+{date_range_handling}
+
+  Example computed date ranges (today: {today}):
+  - "this year" → operator: "BETWEEN", value: '{this_year_start} AND {today}'
+  - "last year" → operator: "BETWEEN", value: '{prev_year_start} AND {prev_year_end}'
+  - "this quarter" → operator: "BETWEEN", value: '{this_quarter_start} AND {today}'
+  - "last quarter" → operator: "BETWEEN", value: '{prev_quarter_start} AND {prev_quarter_end}'
+  - "this summer" → operator: "BETWEEN", value: '{this_summer_start} AND {this_summer_end}'
+  - "last summer" → operator: "BETWEEN", value: '{last_summer_start} AND {last_summer_end}'
+  - "this winter" → operator: "BETWEEN", value: '{this_winter_start} AND {this_winter_end}'
+  - "last winter" → operator: "BETWEEN", value: '{last_winter_start} AND {last_winter_end}'
+  - "this spring" → operator: "BETWEEN", value: '{this_spring_start} AND {this_spring_end}'
+  - "last spring" → operator: "BETWEEN", value: '{last_spring_start} AND {last_spring_end}'
+  - "this fall" / "this autumn" → operator: "BETWEEN", value: '{this_fall_start} AND {this_fall_end}'
+  - "last fall" → operator: "BETWEEN", value: '{last_fall_start} AND {last_fall_end}'
+  - "christmas holiday" → operator: "BETWEEN", value: '{this_christmas_start} AND {this_christmas_end}'
+  - "last 60 days" → operator: "BETWEEN", value: '{last_60_start} AND {today}'
+  - "last 90 days" → operator: "BETWEEN", value: '{last_90_start} AND {today}'
+
+{monetary_extraction}
+
+{query_best_practices}
+"#
+            );
+            let user = format!(
+                "User query: {}\n\nAvailable fields:{}",
+                user_query, candidate_text
+            );
+            (sys, user)
+        };
+
+        Ok((system_prompt, user_prompt))
+    }
 
     async fn select_fields(
         &self,
@@ -3757,7 +4220,7 @@ pub async fn convert_to_gaql(
     prompt: &str,
     config: &LlmConfig,
     pipeline_config: PipelineConfig,
-) -> Result<mcc_gaql_common::field_metadata::GAQLResult, anyhow::Error> {
+) -> Result<GenerateResult, anyhow::Error> {
     let agent =
         MultiStepRAGAgent::init(example_queries, field_cache, config, pipeline_config).await?;
     agent.generate(prompt).await
