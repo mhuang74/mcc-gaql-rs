@@ -58,8 +58,6 @@ struct GenerateParams {
     verbose: bool,
     validate: bool,
     profile: Option<String>,
-    resource: Option<String>,
-    generate_prompt_only: bool,
 }
 
 /// Filter resources for test-run mode
@@ -186,14 +184,6 @@ enum Commands {
         /// Profile to use for validation credentials (auto-detected if only one profile exists)
         #[arg(long)]
         profile: Option<String>,
-
-        /// Override resource selection (skip Phase 1)
-        #[arg(long)]
-        resource: Option<String>,
-
-        /// Stop after generating LLM prompt and print it (don't call LLM)
-        #[arg(long)]
-        generate_prompt_only: bool,
     },
 
     /// Download pre-built RAG resources for instant GAQL generation
@@ -362,8 +352,6 @@ async fn main() -> Result<()> {
             explain,
             validate,
             profile,
-            resource,
-            generate_prompt_only,
         } => {
             cmd_generate(GenerateParams {
                 prompt,
@@ -375,8 +363,6 @@ async fn main() -> Result<()> {
                 verbose: cli.verbose,
                 validate,
                 profile,
-                resource,
-                generate_prompt_only,
             })
             .await?;
         }
@@ -984,8 +970,6 @@ async fn cmd_generate(params: GenerateParams) -> Result<()> {
         add_defaults: !params.no_defaults,
         use_query_cookbook: params.use_query_cookbook,
         explain: params.explain,
-        resource_override: params.resource,
-        generate_prompt_only: params.generate_prompt_only,
     };
 
     // Generate GAQL using MultiStepRAGAgent
@@ -998,120 +982,99 @@ async fn cmd_generate(params: GenerateParams) -> Result<()> {
     )
     .await?;
 
-    // Handle result based on type
-    match result {
-        rag::GenerateResult::PromptOnly {
-            system_prompt,
-            user_prompt,
-            phase,
-        } => {
-            println!("═══════════════════════════════════════════════════════════════");
-            println!("               PHASE {} LLM PROMPT", phase);
-            println!("═══════════════════════════════════════════════════════════════\n");
-            println!("=== SYSTEM PROMPT ===\n{}\n", system_prompt);
-            println!("=== USER PROMPT ===\n{}\n", user_prompt);
-            return Ok(());
+    println!("{}", result.query);
+
+    // Validate generated query against Google Ads API if requested
+    if params.validate {
+        let exit_code = match run_validation(&result.query, params.profile).await {
+            Ok(()) => {
+                eprintln!("Validation: PASSED");
+                0
+            }
+            Err(e) => {
+                let msg = e.to_string();
+                if let Some(stripped) = msg.strip_prefix("__config_error__:") {
+                    eprintln!("Validation error: {}", stripped);
+                    2
+                } else {
+                    eprintln!("Validation: FAILED – {}", msg);
+                    1
+                }
+            }
+        };
+        if exit_code != 0 {
+            std::process::exit(exit_code);
         }
-        rag::GenerateResult::Query(gaql_result) => {
-            println!("{}", gaql_result.query);
+    }
 
-            // Validate generated query against Google Ads API if requested
-            if params.validate {
-                let exit_code = match run_validation(&gaql_result.query, params.profile).await {
-                    Ok(()) => {
-                        eprintln!("Validation: PASSED");
-                        0
-                    }
-                    Err(e) => {
-                        let msg = e.to_string();
-                        if let Some(stripped) = msg.strip_prefix("__config_error__:") {
-                            eprintln!("Validation error: {}", stripped);
-                            2
-                        } else {
-                            eprintln!("Validation: FAILED – {}", msg);
-                            1
-                        }
-                    }
-                };
-                if exit_code != 0 {
-                    std::process::exit(exit_code);
-                }
-            }
+    // Print explanation if flag is set
+    if params.explain {
+        rag::print_selection_explanation(&result.pipeline_trace, &params.prompt);
+    }
 
-            // Print explanation if flag is set
-            if params.explain {
-                rag::print_selection_explanation(&gaql_result.pipeline_trace, &params.prompt);
-            }
-
-            // Log validation errors/warnings if any
-            if !gaql_result.validation.errors.is_empty() {
-                log::error!("Validation errors:");
-                for err in &gaql_result.validation.errors {
-                    log::error!("  - {}", err);
-                }
-            }
-            if !gaql_result.validation.warnings.is_empty() {
-                log::warn!("Validation warnings:");
-                for warn in &gaql_result.validation.warnings {
-                    log::warn!("  - {}", warn);
-                }
-            }
-
-            // Log pipeline trace if verbose
-            if params.verbose {
-                log::debug!("--- Pipeline Trace ---");
-                log::debug!(
-                    "Phase 1 - Primary resource: {}",
-                    gaql_result.pipeline_trace.phase1_primary_resource
-                );
-                log::debug!(
-                    "Phase 1 - Related resources: {:?}",
-                    gaql_result.pipeline_trace.phase1_related_resources
-                );
-                log::debug!(
-                    "Phase 1 - Reasoning: {}",
-                    gaql_result.pipeline_trace.phase1_reasoning
-                );
-                log::debug!(
-                    "Phase 2 - Candidates: {} (rejected: {})",
-                    gaql_result.pipeline_trace.phase2_candidate_count,
-                    gaql_result.pipeline_trace.phase2_rejected_count
-                );
-                log::debug!(
-                    "Phase 3 - Selected fields: {:?}",
-                    gaql_result.pipeline_trace.phase3_selected_fields
-                );
-                log::debug!(
-                    "Phase 3 - Filter fields: {:?}",
-                    gaql_result.pipeline_trace.phase3_filter_fields
-                );
-                log::debug!(
-                    "Phase 3 - Order by: {:?}",
-                    gaql_result.pipeline_trace.phase3_order_by_fields
-                );
-                log::debug!(
-                    "Phase 4 - WHERE clauses: {:?}",
-                    gaql_result.pipeline_trace.phase4_where_clauses
-                );
-                if let Some(limit) = gaql_result.pipeline_trace.phase4_limit {
-                    log::debug!("Phase 4 - LIMIT: {}", limit);
-                }
-                if !gaql_result
-                    .pipeline_trace
-                    .phase4_implicit_filters
-                    .is_empty()
-                {
-                    log::debug!(
-                        "Phase 4 - Implicit filters: {:?}",
-                        gaql_result.pipeline_trace.phase4_implicit_filters
-                    );
-                }
-                log::debug!(
-                    "Generation time: {}ms",
-                    gaql_result.pipeline_trace.generation_time_ms
-                );
-            }
+    // Log validation errors/warnings if any
+    if !result.validation.errors.is_empty() {
+        log::error!("Validation errors:");
+        for err in &result.validation.errors {
+            log::error!("  - {}", err);
         }
+    }
+    if !result.validation.warnings.is_empty() {
+        log::warn!("Validation warnings:");
+        for warn in &result.validation.warnings {
+            log::warn!("  - {}", warn);
+        }
+    }
+
+    // Log pipeline trace if verbose
+    if params.verbose {
+        log::debug!("--- Pipeline Trace ---");
+        log::debug!(
+            "Phase 1 - Primary resource: {}",
+            result.pipeline_trace.phase1_primary_resource
+        );
+        log::debug!(
+            "Phase 1 - Related resources: {:?}",
+            result.pipeline_trace.phase1_related_resources
+        );
+        log::debug!(
+            "Phase 1 - Reasoning: {}",
+            result.pipeline_trace.phase1_reasoning
+        );
+        log::debug!(
+            "Phase 2 - Candidates: {} (rejected: {})",
+            result.pipeline_trace.phase2_candidate_count,
+            result.pipeline_trace.phase2_rejected_count
+        );
+        log::debug!(
+            "Phase 3 - Selected fields: {:?}",
+            result.pipeline_trace.phase3_selected_fields
+        );
+        log::debug!(
+            "Phase 3 - Filter fields: {:?}",
+            result.pipeline_trace.phase3_filter_fields
+        );
+        log::debug!(
+            "Phase 3 - Order by: {:?}",
+            result.pipeline_trace.phase3_order_by_fields
+        );
+        log::debug!(
+            "Phase 4 - WHERE clauses: {:?}",
+            result.pipeline_trace.phase4_where_clauses
+        );
+        if let Some(limit) = result.pipeline_trace.phase4_limit {
+            log::debug!("Phase 4 - LIMIT: {}", limit);
+        }
+        if !result.pipeline_trace.phase4_implicit_filters.is_empty() {
+            log::debug!(
+                "Phase 4 - Implicit filters: {:?}",
+                result.pipeline_trace.phase4_implicit_filters
+            );
+        }
+        log::debug!(
+            "Generation time: {}ms",
+            result.pipeline_trace.generation_time_ms
+        );
     }
 
     Ok(())
@@ -1617,10 +1580,7 @@ async fn cmd_metadata(
 
     // Format based on format type
     match format.as_str() {
-        "llm" => print!(
-            "{}",
-            formatter::format_llm(&query_result, show_all, &cache, hidden_count)
-        ),
+        "llm" => print!("{}", formatter::format_llm(&query_result, show_all, &cache, hidden_count)),
         "full" => print!("{}", formatter::format_full(&query_result)),
         "json" => {
             let json = formatter::format_json(&query_result)?;
