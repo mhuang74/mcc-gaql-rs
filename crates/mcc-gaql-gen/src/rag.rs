@@ -1842,7 +1842,7 @@ impl MultiStepRAGAgent {
 
     /// Main entry point: generate GAQL query from user prompt
     pub async fn generate(&self, user_query: &str) -> Result<GenerateResult, anyhow::Error> {
-        // If generate_prompt_only WITHOUT resource_override: show Phase 1 prompt
+        // If generate_prompt_only WITHOUT resource_override: show Phase 1 prompt (no RAG needed)
         if self.pipeline_config.generate_prompt_only
             && self.pipeline_config.resource_override.is_none()
         {
@@ -1854,44 +1854,31 @@ impl MultiStepRAGAgent {
             });
         }
 
-        // Phase 1: Resource selection (or use override)
-        let primary_resource = if let Some(ref resource) = self.pipeline_config.resource_override {
-            // Validate resource exists
-            if !self.field_cache.get_resources().contains(resource) {
-                return Err(anyhow::anyhow!("Unknown resource: '{}'", resource));
-            }
-            resource.clone()
-        } else {
-            let (primary, _, _, _, _) = self.select_resource(user_query).await?;
-            primary
-        };
-
-        // Phase 2 + 2.5: Field candidate retrieval and pre-scan
-        let (candidates, ..) = self
-            .retrieve_field_candidates(user_query, &primary_resource, &[])
-            .await?;
-        let filter_enums = self.prescan_filters(user_query, &candidates);
-
-        // If generate_prompt_only WITH resource_override: show Phase 3 prompt
-        if self.pipeline_config.generate_prompt_only {
-            let (system_prompt, user_prompt) = self
-                .build_phase3_prompt(user_query, &primary_resource, &candidates, &filter_enums)
-                .await?;
-            return Ok(GenerateResult::PromptOnly {
-                system_prompt,
-                user_prompt,
-                phase: 3,
-            });
-        }
-
-        // Continue with normal pipeline...
         let start = std::time::Instant::now();
 
-        // Phase 1: Resource selection
+        // Phase 1: Resource selection (or use override)
         let phase1_start = std::time::Instant::now();
         log::info!("Phase 1: Resource selection...");
+        
         let (primary_resource, related_resources, dropped_resources, reasoning, resource_sample) =
-            self.select_resource(user_query).await?;
+            if let Some(ref resource) = self.pipeline_config.resource_override {
+                // Validate resource exists
+                if !self.field_cache.get_resources().contains(resource) {
+                    return Err(anyhow::anyhow!("Unknown resource: '{}'", resource));
+                }
+                log::info!("Phase 1: Using resource override: {}", resource);
+                // Return empty values for skipped Phase 1 RAG search
+                (
+                    resource.clone(),
+                    vec![],
+                    vec![],
+                    String::new(),
+                    vec![],
+                )
+            } else {
+                self.select_resource(user_query).await?
+            };
+        
         let phase1_time_ms = phase1_start.elapsed().as_millis() as u64;
         log::info!(
             "Phase 1 complete: {} ({}ms)",
@@ -1900,6 +1887,8 @@ impl MultiStepRAGAgent {
         );
 
         // Phase 2: Field candidate retrieval
+        // Note: When using --resource override, related_resources is empty since Phase 1 RAG was skipped,
+        // so the Phase 3 prompt may differ slightly from normal --resource mode
         let phase2_start = std::time::Instant::now();
         log::info!("Phase 2: Retrieving field candidates...");
         let (candidates, candidate_count, rejected_count) = self
@@ -1919,6 +1908,18 @@ impl MultiStepRAGAgent {
             "Phase 2.5: Pre-scan filters ({}ms)",
             phase25_start.elapsed().as_millis()
         );
+
+        // If generate_prompt_only WITH resource_override: show Phase 3 prompt
+        if self.pipeline_config.generate_prompt_only {
+            let (system_prompt, user_prompt) = self
+                .build_phase3_prompt(user_query, &primary_resource, &candidates, &filter_enums)
+                .await?;
+            return Ok(GenerateResult::PromptOnly {
+                system_prompt,
+                user_prompt,
+                phase: 3,
+            });
+        }
 
         // Phase 3: Field selection via LLM
         let phase3_start = std::time::Instant::now();
