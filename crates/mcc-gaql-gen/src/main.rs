@@ -1146,7 +1146,7 @@ async fn run_validation(query: &str, profile: Option<String>) -> Result<()> {
     }
 
     // Resolve MCC customer ID
-    let mcc_customer_id = config
+    let mcc_customer_id_raw = config
         .mcc_id
         .as_ref()
         .or(config.customer_id.as_ref())
@@ -1157,6 +1157,17 @@ async fn run_validation(query: &str, profile: Option<String>) -> Result<()> {
             )
         })?
         .clone();
+
+    // Normalize: remove hyphens (Google Ads API requires 10-digit format without hyphens)
+    let mcc_customer_id = mcc_gaql_common::config::validate_and_normalize_customer_id(
+        &mcc_customer_id_raw,
+    )
+    .map_err(|e| {
+        anyhow::anyhow!(
+            "__config_error__:Invalid customer_id in config: {}",
+            e
+        )
+    })?;
 
     // Get API access
     let api_config = ApiAccessConfig {
