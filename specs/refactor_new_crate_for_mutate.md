@@ -9,7 +9,7 @@
 
 ## 1. Overview
 
-Extract all Google Ads API access code (OAuth2, gRPC client, auth resolution, query primitives, mutation primitives) from `mcc-gaql` into `mcc-gaql-common` behind an `api` feature flag. Create a new `mcc-gaql-mutate` binary crate for all mutation use cases. Upgrade `mcc-gaql` from clap 3.1 to clap 4.0. This eliminates the `cli_from_mutate_args()` shim, lets `mcc-gaql-gen` drop its `mcc-gaql` dependency, and provides a clean separation between read (query) and write (mutate) paths.
+Extract all Google Ads API access code (OAuth2, gRPC client, auth resolution, query primitives, mutation primitives) from `mcc-gaql` into `mcc-gaql-common`. Create a new `mcc-gaql-mutate` binary crate for all mutation use cases. Upgrade `mcc-gaql` from clap 3.1 to clap 4.0. This eliminates the `cli_from_mutate_args()` shim, lets `mcc-gaql-gen` drop its `mcc-gaql` dependency, and provides a clean separation between read (query) and write (mutate) paths.
 
 ### Motivation
 
@@ -53,35 +53,31 @@ Problems: `mcc-gaql-gen` depends on `mcc-gaql` (pulls in `polars`, `cacache`, `b
 ### After
 
 ```
-mcc-gaql-common (no features)  ← mcc-gaql-gen
-mcc-gaql-common (api feature)  ← mcc-gaql, mcc-gaql-mutate
-mcc-gaql-mutate ─────────────── ← mcc-gaql-common[api], googleads-rs (direct)
-mcc-gaql ────────────────────── ← mcc-gaql-common[api] (no googleads-rs direct dep)
+mcc-gaql-common                ← mcc-gaql, mcc-gaql-gen, mcc-gaql-mutate
+mcc-gaql-mutate ─────────────── ← mcc-gaql-common, googleads-rs (direct)
+mcc-gaql ────────────────────── ← mcc-gaql-common (no googleads-rs direct dep)
 ```
 
-`mcc-gaql-gen` drops `mcc-gaql` dependency entirely. Auth resolution, API access, and query primitives live in `mcc-gaql-common[api]`.
+`mcc-gaql-gen` drops `mcc-gaql` dependency entirely. Auth resolution, API access, and query primitives live in `mcc-gaql-common`.
 
 ---
 
 ## 3. Step-by-Step Implementation
 
-### Step 1: Add `api` feature flag to `mcc-gaql-common`
+### Step 1: Add API dependencies to `mcc-gaql-common`
 
 **File:** `crates/mcc-gaql-common/Cargo.toml`
 
-Add optional dependencies gated behind `api` feature:
+Add API dependencies as direct dependencies (no feature flag):
 
 ```toml
-[features]
-default = []
-api = ["googleads-rs", "tonic", "yup-oauth2", "tokio-stream"]
-
 [dependencies]
 # ... existing deps unchanged ...
-googleads-rs = { git = "https://github.com/mhuang74/googleads-rs", branch = "main", optional = true }
-tonic = { version = "0.14", features = ["transport", "tls-ring", "tls-native-roots"], optional = true }
-yup-oauth2 = { version = "6.7", optional = true }
-tokio-stream = { version = "0.1", features = ["net"], optional = true }
+googleads-rs = { git = "https://github.com/mhuang74/googleads-rs", branch = "main" }
+tonic = { version = "0.14", features = ["transport", "tls-ring", "tls-native-roots"] }
+yup-oauth2 = { version = "6.7" }
+tokio-stream = { version = "0.1", features = ["net"] }
+flexi_logger = { version = "0.22", features = ["compress"] }
 ```
 
 **File:** `crates/mcc-gaql-common/src/lib.rs`
@@ -91,16 +87,11 @@ pub mod config;
 pub mod field_metadata;
 pub mod http_client;
 pub mod paths;
-
-#[cfg(feature = "api")]
 pub mod auth;
-#[cfg(feature = "api")]
 pub mod googleads_api;
-#[cfg(feature = "api")]
 pub mod query;
+pub mod util;
 ```
-
-No impact on `mcc-gaql-gen` (it doesn't enable the `api` feature).
 
 ---
 
@@ -238,34 +229,16 @@ pub fn load_profile(profile: &str) -> Result<MyConfig> {
     ...
 }
 
-/// Auto-select or load a config profile.
-/// Shared logic currently duplicated in main.rs and handle_mutate().
-/// Returns None if no profile specified and none found.
-pub fn resolve_profile_config(
-    auth: &SharedAuthArgs,
-) -> Result<Option<MyConfig>> {
-    if let Some(profile_name) = &auth.profile {
-        log::info!("Config profile: {profile_name}");
-        Some(load_profile(profile_name)
-            .context(format!("Loading config for profile: {profile_name}")))
-            .transpose()
-    } else {
-        let profiles = list_profiles()?;
-        if let Some(profile_name) = profiles.last() {
-            eprintln!("Using profile '{}'", profile_name);
-            log::info!("Auto-selected profile: {profile_name}");
-            Some(load_profile(profile_name)
-                .context(format!("Loading config for profile: {profile_name}")))
-                .transpose()
-        } else {
-            Ok(None)
-        }
-    }
-}
-
 /// List all available profiles from the config file.
 /// Moved from mcc-gaql/src/config.rs:list_profiles().
 pub fn list_profiles() -> Result<Vec<String>> { ... }
+
+/// Note: Profile auto-selection logic is NOT in common — each binary
+/// decides when to auto-select based on its own conditions:
+/// - mcc-gaql: conditional (only for --validate / --field-service)
+/// - mcc-gaql-gen: always for validation
+/// - mcc-gaql-mutate: always
+/// Each binary's main.rs calls load_profile()/list_profiles() directly.
 ```
 
 #### 2b. `crates/mcc-gaql-common/src/googleads_api.rs` — API Access
@@ -289,7 +262,54 @@ Moved from `mcc-gaql/src/googleads.rs` lines 59-302:
 
 No changes to logic. Imports updated to use `crate::paths::config_file_path` instead of `mcc_gaql_common::paths::config_file_path`.
 
-#### 2c. `crates/mcc-gaql-common/src/query.rs` — Query Primitives
+#### 2c. `crates/mcc-gaql-common/src/util.rs` — Common Logger
+
+```rust
+use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
+
+/// Initialize logger for any binary in the workspace.
+///
+/// Parameters:
+/// - `crate_prefix`: Environment variable prefix (always "MCC_GAQL" across all crates)
+/// - `verbose`: Enable debug-level logging
+pub fn init_logger(crate_prefix: &str, verbose: bool) {
+    let base_level = if verbose {
+        "debug".to_string()
+    } else {
+        env::var(format!("{}_LOG_LEVEL", crate_prefix))
+            .unwrap_or_else(|_| "off".to_string())
+    };
+
+    let my_log_dir = env::var(format!("{}_LOG_DIR", crate_prefix))
+        .unwrap_or_else(|_| ".".to_string());
+
+    let log_spec = format!("{}", base_level);
+
+    Logger::try_with_env_or_str(log_spec)
+        .unwrap()
+        .use_utc()
+        .log_to_file(
+            FileSpec::default()
+                .directory(my_log_dir)
+                .suppress_timestamp()
+                .basename(crate_prefix.to_lowercase().replace("_", "-")),
+        )
+        .format_for_files(flexi_logger::detailed_format)
+        .o_append(true)
+        .rotate(
+            Criterion::Size(1_000_000),
+            Naming::Numbers,
+            Cleanup::KeepLogAndCompressedFiles(10, 100),
+        )
+        .duplicate_to_stderr(Duplicate::Warn)
+        .start()
+        .unwrap();
+}
+```
+
+Replaces duplicate `init_logger()` implementations in `mcc-gaql/src/util.rs` and `mcc-gaql-gen/src/main.rs`.
+
+#### 2d. `crates/mcc-gaql-common/src/query.rs` — Query Primitives
 
 Moved from `mcc-gaql/src/googleads.rs`:
 
@@ -397,6 +417,12 @@ Add:
 **File:** `crates/mcc-gaql/src/config.rs`
 
 - `ResolvedConfig::from_args_and_config()` delegates auth resolution to `mcc_gaql_common::auth::resolve_auth_config()`
+
+**File:** `crates/mcc-gaql/src/main.rs`
+
+- Replace `util::init_logger()` with `mcc_gaql_common::util::init_logger("MCC_GAQL", false)`
+- Remove `use mcc_gaql::util;` import statement
+- Profile resolution stays local in `main.rs`, calling `mcc_gaql_common::auth::load_profile()` and `mcc_gaql_common::auth::list_profiles()` directly
 - Remove duplicated auth resolution logic (MCC fallback chain, user_email, token_cache_filename, dev_token)
 - `ResolvedConfig` embeds `ResolvedAuthConfig` or repeats only the query-specific fields
 
@@ -439,7 +465,7 @@ use mcc_gaql_common::query::{search_stream_rows, validate_gaql_query, get_child_
 - Remove `Command::Mutate` dispatch (lines 72-75)
 - Remove `use mcc_gaql::mutation_validate`
 - Use `mcc_gaql_common::googleads_api::get_api_access()` instead of local
-- Use `mcc_gaql_common::auth::resolve_profile_config()` for field-metadata config loading (dedup the profile resolution currently at lines 83-98 and 206-227)
+- Profile resolution stays local in `main.rs`, calling `mcc_gaql_common::auth::load_profile()` and `mcc_gaql_common::auth::list_profiles()` directly. Conditional auto-selection logic (only for `--validate`/`--field-service`) preserved as-is. Dedup the profile resolution currently at lines 83-98 and 206-227 into a single local helper.
 
 **Update `crates/mcc-gaql/src/lib.rs`:**
 ```rust
@@ -448,13 +474,13 @@ pub mod config;
 pub mod field_metadata;
 pub mod googleads;
 pub mod setup;
-pub mod util;
 // removed: pub mod mutation_validate;
+// removed: util; (moved to mcc-gaql-common)
 ```
 
 **Update `crates/mcc-gaql/Cargo.toml`:**
 ```toml
-mcc-gaql-common = { workspace = true, features = ["api"] }
+mcc-gaql-common = { workspace = true }
 # Remove:
 # prost-reflect = "0.16"  (no longer needed — mutation_validate moved out)
 ```
@@ -476,8 +502,8 @@ mcc-gaql-common = { workspace = true, features = ["api"] }
 ```toml
 # Remove:
 # mcc-gaql = { workspace = true }
-# Add api feature:
-mcc-gaql-common = { workspace = true, features = ["api"] }
+# Add:
+mcc-gaql-common = { workspace = true }
 ```
 
 **File:** `crates/mcc-gaql-gen/src/main.rs` (lines 1117-1211, `run_validation()`)
@@ -490,9 +516,10 @@ use mcc_gaql::googleads::{ApiAccessConfig, generate_token_cache_filename, get_ap
 
 With:
 ```rust
-use mcc_gaql_common::auth::{load_profile, resolve_auth_config, resolve_profile_config, SharedAuthArgs};
+use mcc_gaql_common::auth::{load_profile, list_profiles, resolve_auth_config, SharedAuthArgs};
 use mcc_gaql_common::googleads_api::{ApiAccessConfig, get_api_access};
 use mcc_gaql_common::query::validate_gaql_query;
+use mcc_gaql_common::util::init_logger;
 ```
 
 Rewrite `run_validation()` to use `resolve_auth_config()` — eliminates ~50 lines of manual MCC/email/dev_token resolution currently duplicated from `mcc-gaql`:
@@ -507,7 +534,22 @@ async fn run_validation(query: &str, profile: Option<String>) -> Result<()> {
         remote_auth: false,
     };
 
-    let config = resolve_profile_config(&auth)?;
+    let config = if let Some(profile_name) = &auth.profile {
+        log::info!("Config profile: {profile_name}");
+        Some(load_profile(profile_name)
+            .context(format!("Loading config for profile: {profile_name}"))?)
+    } else {
+        let profiles = list_profiles()?;
+        if let Some(profile_name) = profiles.last() {
+            eprintln!("Using profile '{}'", profile_name);
+            log::info!("Auto-selected profile: {profile_name}");
+            Some(load_profile(profile_name)
+                .context(format!("Loading config for profile: {profile_name}"))?)
+        } else {
+            None
+        }
+    };
+
     let auth_config = resolve_auth_config(&auth, config.as_ref())
         .map_err(|e| anyhow::anyhow!("__config_error__:{}", e))?;
 
@@ -520,6 +562,18 @@ async fn run_validation(query: &str, profile: Option<String>) -> Result<()> {
 ```
 
 Build time improvement: `mcc-gaql-gen` no longer transitively compiles `polars`, `cacache`, `bincode`, `dialoguer`, `figment`, `itertools`, `thousands`.
+
+Update logger initialization in `mcc-gaql-gen/src/main.rs`:
+
+```rust
+// Replace local init_logger() call (line 313):
+// init_logger(cli.verbose);
+
+// With common logger:
+init_logger("MCC_GAQL", cli.verbose);
+
+// Remove local init_logger() function definition (lines 1687-1713)
+```
 
 ---
 
@@ -549,14 +603,13 @@ edition.workspace = true
 description = "Mutate Google Ads resources via CLI."
 
 [dependencies]
-mcc-gaql-common = { workspace = true, features = ["api"] }
+mcc-gaql-common = { workspace = true }
 anyhow = { workspace = true }
 tokio = { workspace = true }
 log = { workspace = true }
 chrono = { workspace = true }
 clap = { version = "4", features = ["derive", "cargo"] }
 dialoguer = "0.11"
-flexi_logger = { version = "0.22", features = ["compress"] }
 googleads-rs = { git = "https://github.com/mhuang74/googleads-rs", branch = "main" }
 prost-reflect = "0.16"
 
@@ -566,7 +619,31 @@ chrono = { workspace = true }
 
 #### `crates/mcc-gaql-mutate/build.rs`
 
-Same pattern as `mcc-gaql/build.rs` — captures `GIT_HASH` and `BUILD_TIME` for version banner.
+Standard build.rs pattern for version information:
+```rust
+use std::env;
+use std::fs;
+
+fn main() {
+    let mut git_hash = if let Ok(hash) = std::process::Command::new("git")
+        .args(&["rev-parse", "--short=8", "HEAD"])
+        .output()
+    {
+        String::from_utf8_lossy(&hash.stdout).trim().to_string()
+    } else {
+        "unknown".to_string()
+    };
+
+    if git_hash.is_empty() {
+        git_hash = "unknown".to_string();
+    }
+
+    let build_time = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC").to_string();
+
+    println!("cargo:rustc-env=GIT_HASH={}", git_hash);
+    println!("cargo:rustc-env=BUILD_TIME={}", build_time);
+}
+```
 
 #### `crates/mcc-gaql-mutate/src/args.rs`
 
@@ -806,8 +883,9 @@ Moved verbatim from `crates/mcc-gaql/src/mutation_validate.rs`. All 10 unit test
 use anyhow::{Context, Result};
 use googleads_rs::MutationOp;
 
-use mcc_gaql_common::auth::{resolve_auth_config, resolve_profile_config};
+use mcc_gaql_common::auth::{load_profile, list_profiles, resolve_auth_config};
 use mcc_gaql_common::googleads_api::get_api_access;
+use mcc_gaql_common::util::init_logger;
 
 use crate::args::{self, Command};
 use crate::mutation;
@@ -825,15 +903,36 @@ fn print_startup_banner() {
     log::info!("═════════════════════════════════════════════════════════════════");
 }
 
+/// Profile resolution for mcc-gaql-mutate: always auto-select if none specified.
+fn resolve_profile(auth: &mcc_gaql_common::auth::SharedAuthArgs) -> Result<Option<mcc_gaql_common::config::MyConfig>> {
+    if let Some(profile_name) = &auth.profile {
+        log::info!("Config profile: {profile_name}");
+        Some(load_profile(profile_name)
+            .context(format!("Loading config for profile: {profile_name}")))
+            .transpose()
+    } else {
+        let profiles = list_profiles()?;
+        if let Some(profile_name) = profiles.last() {
+            eprintln!("Using profile '{}'", profile_name);
+            log::info!("Auto-selected profile: {profile_name}");
+            Some(load_profile(profile_name)
+                .context(format!("Loading config for profile: {profile_name}")))
+                .transpose()
+        } else {
+            Ok(None)
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
-    init_logger();
+    init_logger("MCC_GAQL", false);
     print_startup_banner();
 
     let cli = args::Cli::parse();
 
     // Auth resolution — no shim, direct construction
-    let config = resolve_profile_config(&cli.auth_args())?;
+    let config = resolve_profile(&cli.auth_args())?;
     let auth_config = resolve_auth_config(&cli.auth_args(), config.as_ref())?;
 
     match &cli.command {
@@ -931,44 +1030,6 @@ async fn main() -> Result<()> {
 
     Ok(())
 }
-
-fn init_logger() {
-    // Same pattern as mcc-gaql/src/util.rs:init_logger()
-    use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
-    use std::env;
-
-    let my_log_env = env::var(format!(
-        "{}{}",
-        mcc_gaql_common::config::ENV_VAR_PREFIX,
-        "LOG_LEVEL"
-    ))
-    .unwrap_or_else(|_| "off".to_string());
-    let my_log_dir = env::var(format!(
-        "{}{}",
-        mcc_gaql_common::config::ENV_VAR_PREFIX,
-        "LOG_DIR"
-    ))
-    .unwrap_or_else(|_| ".".to_string());
-
-    Logger::try_with_env_or_str(my_log_env)
-        .unwrap()
-        .use_utc()
-        .log_to_file(
-            FileSpec::default()
-                .directory(my_log_dir)
-                .suppress_timestamp(),
-        )
-        .format_for_files(flexi_logger::detailed_format)
-        .o_append(true)
-        .rotate(
-            Criterion::Size(1_000_000),
-            Naming::Numbers,
-            Cleanup::KeepLogAndCompressedFiles(10, 100),
-        )
-        .duplicate_to_stderr(Duplicate::Warn)
-        .start()
-        .unwrap();
-}
 ```
 
 ---
@@ -995,7 +1056,7 @@ Execute in this order to keep the tree green at each step:
 
 | Step | Description | Verification |
 |---|---|---|
-| 1 | Add `api` feature flag to `mcc-gaql-common` | `cargo check -p mcc-gaql-common` |
+| 1 | Add API dependencies to `mcc-gaql-common` | `cargo check -p mcc-gaql-common` |
 | 2 | Move auth/API/query code to common | `cargo check -p mcc-gaql-common` |
 | 3 | Update `mcc-gaql` to use common auth (keep mutation code temporarily) | `cargo check -p mcc-gaql -p mcc-gaql-common` |
 | 4 | Upgrade `mcc-gaql` clap 3→4 + remove mutation code | `cargo check -p mcc-gaql -p mcc-gaql-common` + `cargo test -p mcc-gaql -- --test-threads=1` |
@@ -1054,7 +1115,8 @@ Any new mutation subcommand (e.g., `pause-campaign`, `update-budget`) follows th
 | Risk | Mitigation |
 |---|---|
 | Clap 3→4 migration introduces subtle parsing changes | Clap 4 is largely compatible; `multiple_occurrences` → `ArgAction::Append` is the main change. Test all CLI invocations. |
-| `mcc-gaql-common` becomes too heavy with `api` feature | Feature flag ensures non-`api` users (like `mcc-gaql-gen` without `features = ["api"]`) don't pull in `googleads-rs`, `tonic`, `yup-oauth2`. |
-| `prost-reflect` version mismatch | `mcc-gaql-common[api]` inherits `googleads-rs`'s `prost-reflect` 0.16. `mcc-gaql-mutate` pins the same version explicitly. |
+| `mcc-gaql-common` becomes too heavy | All three binaries need the same API dependencies (googleads-rs, tonic, etc.), so no feature flag is needed. |
+| `prost-reflect` version mismatch | `mcc-gaql-common` inherits `googleads-rs`'s `prost-reflect` 0.16. `mcc-gaql-mutate` pins the same version explicitly. |
 | `mcc-gaql-gen` `run_validation()` rewrite introduces regression | Existing integration tests cover validation; manual smoke test with `mcc-gaql-gen test-run --validate`. |
-| `googleads-rs` git dep with `[patch]` | Same as current — no change. `mcc-gaql-common[api]` and `mcc-gaql-mutate` both depend on it via the same patch. |
+| `googleads-rs` git dep with `[patch]` | Same as current — no change. `mcc-gaql-common` and `mcc-gaql-mutate` both depend on it via the same patch. |
+| Common logger behavior differences | Parameterized init_logger() preserves per-binary behavior (basename, env prefix, verbose flag). |
