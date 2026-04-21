@@ -43,6 +43,7 @@ use mcc_gaql_gen::vector_store;
 use mcc_gaql_common::config::{QueryEntry, get_queries_from_file};
 use mcc_gaql_common::field_metadata::FieldMetadataCache;
 use mcc_gaql_common::paths::{config_file_path, field_metadata_enriched_path};
+use mcc_gaql_common::util::init_logger;
 
 /// Core resources for test-run mode
 const TEST_RUN_RESOURCES: &[&str] = &["campaign", "ad_group", "ad_group_ad", "keyword_view"];
@@ -310,7 +311,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // Initialize logging
-    init_logger(cli.verbose);
+    init_logger("MCC_GAQL", cli.verbose);
     print_startup_banner();
 
     match cli.command {
@@ -1112,17 +1113,16 @@ async fn cmd_generate(params: GenerateParams) -> Result<()> {
 /// Returns Err with message prefixed "__config_error__:" for auth/config issues (exit 2).
 /// Returns Err with API error message for invalid queries (exit 1).
 async fn run_validation(query: &str, profile: Option<String>) -> Result<()> {
-    use mcc_gaql::config as mcc_config;
-    use mcc_gaql::googleads::{
-        ApiAccessConfig, generate_token_cache_filename, get_api_access, validate_gaql_query,
-    };
-    use mcc_gaql_common::paths::config_file_path;
+    use mcc_gaql_common::auth::{load_profile, list_profiles, resolve_auth_config, SharedAuthArgs};
+    use mcc_gaql_common::googleads_api::{ApiAccessConfig, get_api_access};
+    use mcc_gaql_common::query::validate_gaql_query;
+    use mcc_gaql_common::util::init_logger;
 
     // Resolve profile name
     let profile_name = match profile {
         Some(p) => p,
         None => {
-            let profiles = mcc_config::list_profiles()
+            let profiles = list_profiles()
                 .map_err(|e| anyhow::anyhow!("__config_error__:Failed to list profiles: {}", e))?;
             match profiles.len() {
                 0 => {
@@ -1141,7 +1141,7 @@ async fn run_validation(query: &str, profile: Option<String>) -> Result<()> {
     };
 
     // Load config for the profile
-    let config = mcc_config::load(&profile_name).map_err(|e| {
+    let config = load_profile(&profile_name).map_err(|e| {
         anyhow::anyhow!(
             "__config_error__:Failed to load profile '{}': {}",
             profile_name,
@@ -1149,67 +1149,23 @@ async fn run_validation(query: &str, profile: Option<String>) -> Result<()> {
         )
     })?;
 
-    // Resolve token cache filename
-    let token_cache_filename = if let Some(explicit) = config.token_cache_filename.as_ref() {
-        explicit.clone()
-    } else if let Some(email) = config.user_email.as_ref() {
-        generate_token_cache_filename(email)
-    } else {
-        return Err(anyhow::anyhow!(
-            "__config_error__:Profile '{}' has no user_email or token_cache_filename. Run 'mcc-gaql --setup' first.",
-            profile_name
-        ));
+    // Resolve auth configuration
+    let auth = SharedAuthArgs {
+        customer_id: None,
+        mcc_id: None,
+        profile: Some(profile_name.clone()),
+        user_email: None,
+        remote_auth: false,
     };
 
-    // Check token cache exists
-    let token_cache_exists = config_file_path(&token_cache_filename)
-        .map(|p| p.exists())
-        .unwrap_or(false);
-    if !token_cache_exists {
-        return Err(anyhow::anyhow!(
-            "__config_error__:Token cache '{}' not found. Run 'mcc-gaql --setup' first to authenticate.",
-            token_cache_filename
-        ));
-    }
+    let auth_config = resolve_auth_config(&auth, Some(&config))
+        .map_err(|e| anyhow::anyhow!("__config_error__:{}", e))?;
 
-    // Resolve MCC customer ID
-    let mcc_customer_id_raw = config
-        .mcc_id
-        .as_ref()
-        .or(config.customer_id.as_ref())
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "__config_error__:Profile '{}' has no mcc_id or customer_id.",
-                profile_name
-            )
-        })?
-        .clone();
-
-    // Normalize: remove hyphens (Google Ads API requires 10-digit format without hyphens)
-    let mcc_customer_id = mcc_gaql_common::config::validate_and_normalize_customer_id(
-        &mcc_customer_id_raw,
-    )
-    .map_err(|e| {
-        anyhow::anyhow!(
-            "__config_error__:Invalid customer_id in config: {}",
-            e
-        )
-    })?;
-
-    // Get API access
-    let api_config = ApiAccessConfig {
-        mcc_customer_id: mcc_customer_id.clone(),
-        token_cache_filename,
-        user_email: config.user_email.clone(),
-        dev_token: config.dev_token.clone(),
-        use_remote_auth: false,
-    };
-
-    let access = get_api_access(&api_config)
+    let access = get_api_access(&auth_config.to_api_access_config())
         .await
-        .map_err(|e| anyhow::anyhow!("__config_error__:Authentication failed: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("__config_error__:{}", e))?;
 
-    validate_gaql_query(access, &mcc_customer_id, query).await
+    validate_gaql_query(access, &auth_config.mcc_customer_id, query).await
 }
 
 /// Index embeddings for fast query generation
@@ -1681,44 +1637,6 @@ fn merge_enriched_caches(
     merged.last_updated = chrono::Utc::now();
 
     merged
-}
-
-/// Initialize logging based on verbosity and environment variables
-fn init_logger(verbose: bool) {
-    use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
-
-    let base_level = if verbose {
-        "debug".to_string()
-    } else {
-        env::var("MCC_GAQL_LOG_LEVEL").unwrap_or_else(|_| "warn".to_string())
-    };
-
-    // Suppress LanceDB deprecation warning about _distance column auto-projection
-    // This is an upstream issue in rig-lancedb: https://github.com/0xPlaygrounds/rig/issues/XXX
-    // The warning is harmless - _distance is still being included via auto-projection
-    let log_spec = format!("{}, lance::dataset::scanner=error", base_level);
-
-    let log_dir = env::var("MCC_GAQL_LOG_DIR").unwrap_or_else(|_| ".".to_string());
-
-    Logger::try_with_env_or_str(&log_spec)
-        .unwrap()
-        .use_utc()
-        .log_to_file(
-            FileSpec::default()
-                .directory(log_dir)
-                .suppress_timestamp()
-                .basename("mcc-gaql-gen"),
-        )
-        .format_for_files(flexi_logger::detailed_format)
-        .o_append(true)
-        .rotate(
-            Criterion::Size(1_000_000),
-            Naming::Numbers,
-            Cleanup::KeepLogAndCompressedFiles(10, 100),
-        )
-        .duplicate_to_stderr(Duplicate::Warn)
-        .start()
-        .unwrap();
 }
 
 /// Backfill identity fields into an enriched metadata cache without running LLM enrichment.

@@ -1,12 +1,12 @@
 use figment::{
-    Figment,
     providers::{Env, Format, Toml},
+    Figment,
 };
 use serde::{Deserialize, Serialize};
 use std::fs;
 
 use mcc_gaql_common::config::{
-    ENV_VAR_PREFIX, MyConfig, TOML_CONFIG_FILENAME, validate_and_normalize_customer_id,
+    validate_and_normalize_customer_id, MyConfig, ENV_VAR_PREFIX, TOML_CONFIG_FILENAME,
 };
 use mcc_gaql_common::paths::config_file_path;
 
@@ -96,7 +96,7 @@ impl ResolvedConfig {
         let token_cache_filename = if let Some(explicit_cache) = explicit_token_cache {
             explicit_cache
         } else if let Some(email) = user_email.as_ref() {
-            crate::googleads::generate_token_cache_filename(email)
+            mcc_gaql_common::googleads_api::generate_token_cache_filename(email)
         } else {
             return Err(anyhow::anyhow!(
                 "User email or explicit token cache filename required for authentication.\n\

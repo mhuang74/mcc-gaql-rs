@@ -15,19 +15,19 @@ use tonic::{codegen::InterceptedService, transport::Channel};
 
 use mcc_gaql_common::config::get_queries_from_file;
 use mcc_gaql_common::paths::config_file_path;
+use mcc_gaql_common::googleads_api::GoogleAdsAPIAccess;
+use mcc_gaql_common::query::{validate_gaql_query, get_child_account_ids, SUB_ACCOUNTS_QUERY};
+use mcc_gaql_common::util::init_logger;
 
 use mcc_gaql::args;
 use mcc_gaql::config;
 use mcc_gaql::field_metadata;
-use mcc_gaql::googleads;
 #[allow(unused_imports)]
 use mcc_gaql::setup;
-use mcc_gaql::util;
 
 use args::OutputFormat;
 use config::ResolvedConfig;
 use field_metadata::{fetch_from_api, load_or_fetch};
-use googleads::GoogleAdsAPIAccess;
 
 /// Print startup banner with build information to logs
 fn print_startup_banner() {
@@ -45,7 +45,7 @@ fn print_startup_banner() {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    util::init_logger();
+    init_logger("MCC_GAQL", false);
     print_startup_banner();
 
     let mut args = args::parse();
@@ -95,7 +95,7 @@ async fn main() -> Result<()> {
             {
                 resolved_config.validate_for_operation(&args)?;
                 Some(
-                    googleads::get_api_access(&googleads::ApiAccessConfig {
+                    mcc_gaql_common::googleads_api::get_api_access(&mcc_gaql_common::googleads_api::ApiAccessConfig {
                         mcc_customer_id: resolved_config.mcc_customer_id.clone(),
                         token_cache_filename: resolved_config.token_cache_filename.clone(),
                         user_email: resolved_config.user_email.clone(),
@@ -278,7 +278,7 @@ async fn main() -> Result<()> {
     }
 
     // obtain Google Ads API credentials
-    let api_context = googleads::get_api_access(&googleads::ApiAccessConfig {
+    let api_context = mcc_gaql_common::googleads_api::get_api_access(&mcc_gaql_common::googleads_api::ApiAccessConfig {
         mcc_customer_id: mcc_customer_id.to_string(),
         token_cache_filename: resolved_config.token_cache_filename.clone(),
         user_email: user_email.map(|s| s.to_string()),
@@ -318,7 +318,7 @@ async fn main() -> Result<()> {
 
             for name in names {
                 let query = &map[name].query;
-                match googleads::validate_gaql_query(api_context.clone(), mcc_customer_id, query)
+                match validate_gaql_query(api_context.clone(), mcc_customer_id, query)
                     .await
                 {
                     Ok(()) => {
@@ -340,7 +340,7 @@ async fn main() -> Result<()> {
 
         // Single query validation
         if let Some(query) = args.gaql_query.as_deref() {
-            match googleads::validate_gaql_query(api_context, mcc_customer_id, query).await {
+            match validate_gaql_query(api_context, mcc_customer_id, query).await {
                 Ok(()) => {
                     eprintln!("Validation PASSED");
                 }
@@ -356,19 +356,19 @@ async fn main() -> Result<()> {
     // Handle 3 types of Google Ads query: list child accounts, field service, and GAQL query
     if args.list_child_accounts {
         let (customer_id_for_query, query) = if let Some(cid) = customer_id {
-            let query: String = googleads::SUB_ACCOUNTS_QUERY.to_owned();
+            let query: String = SUB_ACCOUNTS_QUERY.to_owned();
             log::debug!("Listing child accounts under {}", cid);
             (cid.to_string(), query)
         } else {
             log::debug!("Listing ALL child accounts under MCC {}", mcc_customer_id);
             (
                 mcc_customer_id.to_string(),
-                googleads::SUB_ACCOUNTS_QUERY.to_owned(),
+                SUB_ACCOUNTS_QUERY.to_owned(),
             )
         };
 
         let dataframe: Option<DataFrame> =
-            match googleads::gaql_query(api_context, customer_id_for_query, query).await {
+            match mcc_gaql::googleads::gaql_query(api_context, customer_id_for_query, query).await {
                 Ok((df, _api_consumption)) => Some(df),
                 Err(e) => {
                     let msg = format!("Error: {e}");
@@ -385,7 +385,7 @@ async fn main() -> Result<()> {
             .gaql_query
             .expect("Valid Field Service query required.");
         log::info!("Running Fields Metadata query: {query}");
-        googleads::fields_query(api_context, query).await;
+        mcc_gaql::googleads::fields_query(api_context, query).await;
     } else if args.gaql_query.is_some() {
         // figure out which customerids to query for
         let customer_ids: Option<Vec<String>> = if customer_id.is_some()
@@ -393,7 +393,7 @@ async fn main() -> Result<()> {
         {
             let cid = customer_id.expect("Valid customer_id required.");
             log::debug!("Querying child accounts under MCC: {}", &cid);
-            (googleads::get_child_account_ids(api_context.clone(), cid.to_string()).await).ok()
+            (get_child_account_ids(api_context.clone(), cid.to_string()).await).ok()
         } else if customer_id.is_some() & !args.all_linked_child_accounts {
             let cid = customer_id.expect("Valid customer_id required.");
             log::debug!("Querying account: {cid}");
@@ -401,7 +401,7 @@ async fn main() -> Result<()> {
         } else if customer_id.is_none() & args.all_linked_child_accounts {
             let cid = mcc_customer_id.to_string();
             log::debug!("Querying all linked child accounts under MCC: {}", &cid);
-            (googleads::get_child_account_ids(api_context.clone(), cid).await).ok()
+            (get_child_account_ids(api_context.clone(), cid).await).ok()
         } else if customer_id.is_none() & !args.all_linked_child_accounts {
             if let Some(customerids_filename) = resolved_config.customerids_filename.as_deref() {
                 let customerids_path = config_file_path(customerids_filename).unwrap();
@@ -471,7 +471,7 @@ async fn gaql_query_async(
     let mut gaql_handles = FuturesUnordered::new();
 
     for customer_id in customer_ids_vector.iter() {
-        let gaql_future = googleads::gaql_query_with_client(
+        let gaql_future = mcc_gaql::googleads::gaql_query_with_client(
             google_ads_client.clone(),
             customer_id.clone(),
             query.clone(),

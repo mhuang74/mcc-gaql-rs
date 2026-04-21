@@ -3,6 +3,7 @@ members = [
     "crates/mcc-gaql",
     "crates/mcc-gaql-gen",
     "crates/mcc-gaql-common",
+    "crates/mcc-gaql-mut",
 ]
 resolver = "2"
 

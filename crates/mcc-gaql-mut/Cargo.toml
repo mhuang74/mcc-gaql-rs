@@ -1,0 +1,24 @@
+[package]
+name = "mcc-gaql-mut"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+description = "Mutate Google Ads resources via CLI."
+
+[[bin]]
+name = "mcc-gaql-mut"
+path = "src/main.rs"
+
+[dependencies]
+mcc-gaql-common = { workspace = true }
+anyhow = { workspace = true }
+tokio = { workspace = true }
+log = { workspace = true }
+chrono = { workspace = true }
+clap = { version = "4", features = ["derive", "cargo"] }
+dialoguer = "0.11"
+googleads-rs = { git = "https://github.com/mhuang74/googleads-rs", branch = "main" }
+prost-reflect = "0.16"
+
+[build-dependencies]
+chrono = { workspace = true }

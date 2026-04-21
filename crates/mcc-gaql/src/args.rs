@@ -43,97 +43,110 @@ impl FromStr for OutputFormat {
 /// Supports profile-based configuration and ENV VAR override.
 ///
 #[derive(Parser, Debug)]
-#[clap(author, about, version = VERSION.as_str())]
+#[command(author, about, version = VERSION.as_str())]
 pub struct Cli {
     /// Google Ads GAQL query to run
     pub gaql_query: Option<String>,
 
     /// Load named query from file
-    #[clap(short = 'q', long)]
+    #[arg(short = 'q', long)]
     pub stored_query: Option<String>,
 
     /// GAQL output filename
-    #[clap(short, long)]
+    #[arg(short, long)]
     pub output: Option<String>,
 
     /// Output format: table, csv, json (defaults to table, or config profile default if set)
-    #[clap(long)]
+    #[arg(long)]
     pub format: Option<OutputFormat>,
 
     /// Query using default MCC and Child CustomerIDs file specified for this profile
-    #[clap(short, long)]
+    #[arg(short, long)]
     pub profile: Option<String>,
 
     /// User email for OAuth2 authentication (auto-generates token cache)
-    #[clap(short = 'u', long)]
+    #[arg(short = 'u', long)]
     pub user_email: Option<String>,
 
     /// MCC (Manager) Customer ID for login-customer-id header.
     /// Required unless specified in config profile.
     /// For solo accounts, can be omitted if --customer-id is provided.
-    #[clap(short = 'm', long = "mcc-id")]
+    #[arg(short = 'm', long = "mcc-id")]
     pub mcc_id: Option<String>,
 
     /// Apply query to a single account.
     /// If no --mcc-id is specified, this will be used as the MCC (for solo accounts).
-    #[clap(short, long)]
+    #[arg(short, long)]
     pub customer_id: Option<String>,
 
     /// List all child accounts under MCC
-    #[clap(short, long)]
+    #[arg(short, long)]
     pub list_child_accounts: bool,
 
     /// Query GoogleAdsFieldService to retrieve available fields
-    #[clap(long)]
+    #[arg(long)]
     pub field_service: bool,
 
     /// Force query to run across all linked child accounts (some may not be accessible)
-    #[clap(short, long)]
+    #[arg(short, long)]
     pub all_linked_child_accounts: bool,
 
     /// Keep going on errors
-    #[clap(long)]
+    #[arg(long)]
     pub keep_going: bool,
 
     /// Group by columns
-    #[clap(long, multiple_occurrences(true))]
+    #[arg(long, action = clap::ArgAction::Append)]
     pub groupby: Vec<String>,
 
     /// Sort by columns
-    #[clap(long, multiple_occurrences(true))]
+    #[arg(long, action = clap::ArgAction::Append)]
     pub sortby: Vec<String>,
 
     /// Set up configuration with interactive wizard
-    #[clap(long)]
+    #[arg(long)]
     pub setup: bool,
 
     /// Display current configuration and exit
-    #[clap(long)]
+    #[arg(long)]
     pub show_config: bool,
 
     /// Use remote OAuth flow (paste authorization code from another device)
-    #[clap(long)]
+    #[arg(long)]
     pub remote_auth: bool,
 
     /// Refresh field metadata cache from Google Ads API
-    #[clap(long)]
+    #[arg(long)]
     pub refresh_field_cache: bool,
 
     /// Show available fields for a specific resource (e.g., campaign, ad_group)
-    #[clap(long)]
+    #[arg(long)]
     pub show_fields: Option<String>,
 
     /// Export field metadata summary to stdout
-    #[clap(long)]
+    #[arg(long)]
     pub export_field_metadata: bool,
 
     /// Show resource hierarchy: all available resources with field counts, key attributes, and compatibility info
-    #[clap(long)]
+    #[arg(long)]
     pub show_resources: bool,
 
     /// Validate the query against Google Ads API without executing it (requires credentials)
-    #[clap(long)]
+    #[arg(long)]
     pub validate: bool,
+}
+
+impl Cli {
+    /// Convert auth fields from Cli to SharedAuthArgs for common auth resolution
+    pub fn auth_args(&self) -> mcc_gaql_common::auth::SharedAuthArgs {
+        mcc_gaql_common::auth::SharedAuthArgs {
+            customer_id: self.customer_id.clone(),
+            mcc_id: self.mcc_id.clone(),
+            profile: self.profile.clone(),
+            user_email: self.user_email.clone(),
+            remote_auth: self.remote_auth,
+        }
+    }
 }
 
 pub fn parse() -> Cli {

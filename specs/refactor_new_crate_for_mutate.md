@@ -1,4 +1,4 @@
-# mcc-gaql-mutate Extraction Specification
+# mcc-gaql-mut Extraction Specification
 
 **Date:** 2026-04-22
 **Status:** Planned
