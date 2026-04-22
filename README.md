@@ -5,18 +5,19 @@
 [![Rust](https://img.shields.io/badge/rust-1.90+-orange.svg)](https://www.rust-lang.org)
 [![GitHub release](https://img.shields.io/github/v/release/mhuang74/mcc-gaql-rs)](https://github.com/mhuang74/mcc-gaql-rs/releases)
 
-Two Rust CLI tools for working with Google Ads GAQL queries across MCC child accounts. Inspired by [gaql-cli](https://github.com/getyourguide/gaql-cli).
+Three Rust CLI tools for working with Google Ads GAQL queries and mutations across MCC child accounts. Inspired by [gaql-cli](https://github.com/getyourguide/gaql-cli).
 
 ## About
 
-This project provides two separate tools:
+This project provides three separate tools:
 
 | Tool | Size | Purpose |
 |------|------|---------|
 | `mcc-gaql` | ~52 MB | Lightweight query tool for executing GAQL queries |
 | `mcc-gaql-gen` | ~246 MB | GAQL generation tool with LLM/RAG for natural language queries |
+| `mcc-gaql-mut` | ~52 MB | Mutation tool for updating Google Ads resources (campaigns, budgets, etc.) |
 
-**Why two tools?** The core query tool is fast, lightweight, and has minimal dependencies. The generation tool includes LLM/RAG functionality for natural language queries, which requires many heavy dependencies. Keeping them separate allows most users to install only what they need.
+**Why three tools?** The core query tool is fast, lightweight, and has minimal dependencies. The generation tool includes LLM/RAG functionality for natural language queries, which requires many heavy dependencies. The mutation tool is kept separate to allow users who only need querying to avoid mutation capabilities. Keeping them separate allows most users to install only what they need.
 
 > **For Developers**: See [DEVELOPER.md](DEVELOPER.md) for architecture details, development setup, and contribution guidelines.
 
@@ -40,11 +41,12 @@ Download the latest release from [GitHub Releases](https://github.com/mhuang74/m
 curl -L https://github.com/mhuang74/mcc-gaql-rs/releases/latest/download/mcc-gaql-<version>-macos-aarch64.tar.gz | tar xz
 
 # Move to PATH
-mv mcc-gaql mcc-gaql-gen /usr/local/bin/
+mv mcc-gaql mcc-gaql-gen mcc-gaql-mut /usr/local/bin/
 
 # Verify installation
 mcc-gaql --version
 mcc-gaql-gen --version
+mcc-gaql-mut --version
 ```
 
 **Linux x86_64:**
@@ -53,11 +55,12 @@ mcc-gaql-gen --version
 curl -L https://github.com/mhuang74/mcc-gaql-rs/releases/latest/download/mcc-gaql-<version>-linux-x86_64.tar.gz | tar xz
 
 # Move to PATH
-mv mcc-gaql mcc-gaql-gen /usr/local/bin/
+mv mcc-gaql mcc-gaql-gen mcc-gaql-mut /usr/local/bin/
 
 # Verify installation
 mcc-gaql --version
 mcc-gaql-gen --version
+mcc-gaql-mut --version
 ```
 
 **Linux ARM64 (for AWS Graviton):**
@@ -66,11 +69,12 @@ mcc-gaql-gen --version
 curl -L https://github.com/mhuang74/mcc-gaql-rs/releases/latest/download/mcc-gaql-<version>-linux-aarch64.tar.gz | tar xz
 
 # Move to PATH
-mv mcc-gaql mcc-gaql-gen /usr/local/bin/
+mv mcc-gaql mcc-gaql-gen mcc-gaql-mut /usr/local/bin/
 
 # Verify installation
 mcc-gaql --version
 mcc-gaql-gen --version
+mcc-gaql-mut --version
 ```
 
 ### Install Only mcc-gaql (Query Tool)
@@ -230,6 +234,124 @@ mcc-gaql \
   --user-email "mcc@company.com" \
   "SELECT customer.id, campaign.name, campaign.status FROM campaign"
 ```
+
+## Mutations (mcc-gaql-mut)
+
+The `mcc-gaql-mut` tool allows you to modify Google Ads resources directly from the command line. Use it to update campaign budgets, change campaign status, modify bids, and more.
+
+### Update Campaign Daily Budget
+
+This example shows how to update a campaign's daily budget using the `mcc-gaql-mut` tool:
+
+**Step 1: Find the campaign budget resource name**
+
+First, query to find the campaign and its associated budget:
+
+```bash
+mcc-gaql -p themade --format csv "
+SELECT
+  campaign.id,
+  campaign.name,
+  campaign.resource_name,
+  campaign.status,
+  campaign_budget.resource_name,
+  campaign_budget.amount_micros
+FROM campaign
+WHERE campaign.status <> 'REMOVED'
+"
+```
+
+Example output:
+```
+campaign.id,campaign.name,campaign.resource_name,campaign.status,campaign_budget.resource_name,campaign_budget.amount_micros
+22836438934,PMax - Blog,customers/3902228771/campaigns/22836438934,ENABLED,customers/3902228771/campaignBudgets/14789330607,329000000
+```
+
+**Step 2: Update the budget using dry-run first**
+
+Always test your mutation with `--dry-run` before applying:
+
+```bash
+mcc-gaql-mut mutate \
+  --resource CampaignBudget \
+  --resource-name "customers/3902228771/campaignBudgets/14789330607" \
+  --operation update \
+  --set "amount_micros=328000000" \
+  --dry-run
+```
+
+**Step 3: Apply the mutation**
+
+Once you've verified the dry-run output looks correct, remove `--dry-run` to apply:
+
+```bash
+mcc-gaql-mut mutate \
+  --resource CampaignBudget \
+  --resource-name "customers/3902228771/campaignBudgets/14789330607" \
+  --operation update \
+  --set "amount_micros=328000000"
+```
+
+Output:
+```
+Using profile 'themade'
+Apply Update mutation on CampaignBudget (1 field(s))? yes
+Mutation succeeded.
+  Resource: CampaignBudget
+  Operation: Update
+  Resource name: customers/3902228771/campaignBudgets/14789330607
+  Results: 1 operation(s) completed
+```
+
+**Step 4: Verify the change**
+
+Query again to confirm the budget was updated:
+
+```bash
+mcc-gaql -p themade --format csv "
+SELECT
+  campaign.id,
+  campaign.name,
+  campaign_budget.resource_name,
+  campaign_budget.amount_micros
+FROM campaign
+WHERE campaign.id = 22836438934
+"
+```
+
+> **Note:** Amount values are in **micros** (1 million micros = 1 unit of currency). For example, `$328.00 USD` = `328000000` micros.
+
+### Common Mutation Patterns
+
+**Update campaign status:**
+```bash
+mcc-gaql-mut mutate \
+  --resource Campaign \
+  --resource-name "customers/1234567890/campaigns/9876543210" \
+  --operation update \
+  --set "status=PAUSED"
+```
+
+**Update multiple fields:**
+```bash
+mcc-gaql-mut mutate \
+  --resource Campaign \
+  --resource-name "customers/1234567890/campaigns/9876543210" \
+  --operation update \
+  --set "name=New Campaign Name" \
+  --set "status=ENABLED"
+```
+
+### Mutation CLI Reference
+
+| Option | Description |
+|--------|-------------|
+| `--resource <RESOURCE>` | Resource type (e.g., Campaign, CampaignBudget, AdGroup) |
+| `--resource-name <NAME>` | Full resource name (e.g., `customers/123/campaigns/456`) |
+| `--operation <OP>` | Operation type: `update` or `remove` |
+| `--set <FIELD=VALUE>` | Field to update (can be specified multiple times) |
+| `--dry-run` | Preview mutation without executing |
+| `-p, --profile <PROFILE>` | Use configuration profile |
 
 ## Advanced Use Cases
 
@@ -865,6 +987,9 @@ mcc-gaql --export-field-metadata > field_metadata.txt
 | Generate GAQL from natural language | `mcc-gaql-gen generate` |
 | Download Google Ads metadata | `mcc-gaql-gen bootstrap` |
 | Explore fields supported by a resource | `mcc-gaql-gen metadata <resource>` |
+| Update campaign budgets | `mcc-gaql-mut` |
+| Change campaign status (pause/enable) | `mcc-gaql-mut` |
+| Modify resource fields directly | `mcc-gaql-mut` |
 
 > **For maintainers:** Commands for building and publishing metadata (`parse-protos`, `enrich`, `publish`, etc.) are documented in [METADATA_MAINTENANCE.md](METADATA_MAINTENANCE.md).
 
