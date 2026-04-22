@@ -115,6 +115,9 @@ pub enum Command {
 
         #[arg(long, default_value = "true", help = "Continue on partial failures")]
         partial_failure: bool,
+
+        #[arg(short = 'y', long, help = "Skip confirmation prompt (CI/automation)")]
+        yes: bool,
     },
     // Future:
     // UpdateBidding { ... }
@@ -152,4 +155,24 @@ pub fn parse_field_sets(field_sets: &[String]) -> Result<Vec<FieldUpdate>> {
         .iter()
         .map(|s| parse_field_set(s).with_context(|| format!("Parsing --set '{}'", s)))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_field_set_with_equals_in_value() {
+        let result = parse_field_set("url=https://example.com?a=1").unwrap();
+        assert_eq!(result.field_path, "url");
+        assert_eq!(result.value, "https://example.com?a=1");
+    }
+
+    #[test]
+    fn test_mutation_op_cli_invalid() {
+        let result = MutationOpCli::from_str("invalid_op");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("Invalid operation"));
+    }
 }

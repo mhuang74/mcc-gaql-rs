@@ -68,13 +68,18 @@ async fn main() -> Result<()> {
             dry_run,
             preview,
             partial_failure,
+            yes,
         } => {
             let customer_id = auth_config.customer_id.as_deref().ok_or_else(|| {
                 anyhow::anyhow!("--customer-id is required for mutate operations")
             })?;
 
             let field_updates = args::parse_field_sets(field_set)?;
-            mutation_validate::validate_mutation_locally(resource, &field_updates)?;
+            mutation_validate::validate_mutation_locally(
+                resource,
+                &field_updates,
+                (*operation).into(),
+            )?;
 
             if *preview {
                 let request = mutation::build_mutation_request(
@@ -123,6 +128,22 @@ async fn main() -> Result<()> {
                     for update in &field_updates {
                         eprintln!("[dry-run]   {} = {}", update.field_path, update.value);
                     }
+                }
+            }
+
+            if !*dry_run && !*preview && !*yes {
+                let confirmed = dialoguer::Confirm::new()
+                    .with_prompt(format!(
+                        "Apply {:?} mutation on {} ({} field(s))?",
+                        operation,
+                        resource,
+                        field_updates.len()
+                    ))
+                    .default(false)
+                    .interact()?;
+                if !confirmed {
+                    eprintln!("Mutation cancelled.");
+                    return Ok(());
                 }
             }
 

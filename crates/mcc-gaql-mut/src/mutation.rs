@@ -4,67 +4,14 @@ use googleads_rs::google::ads::googleads::v23::services::{
     MutateGoogleAdsRequest, MutateGoogleAdsResponse,
     google_ads_service_client::GoogleAdsServiceClient,
 };
+use googleads_rs::{DynamicMutationBuilder, MutationOp};
 use mcc_gaql_common::googleads_api::GoogleAdsAPIAccess;
 
-/// Builder for constructing MutateGoogleAdsRequest instances.
-/// NOTE: This is a stub implementation. The full implementation should use
-/// googleads-rs DynamicMutationBuilder when available.
-struct DynamicMutationBuilder {
-    #[allow(dead_code)]
-    resource_type: String,
-    customer_id: String,
-    operation: MutationOperation,
-    validate_only: bool,
-    partial_failure: bool,
-    field_updates: Vec<FieldUpdate>,
-}
-
-impl DynamicMutationBuilder {
-    fn new(resource_type: &str, customer_id: &str) -> Self {
-        Self {
-            resource_type: resource_type.to_string(),
-            customer_id: customer_id.to_string(),
-            operation: MutationOperation::Update,
-            validate_only: false,
-            partial_failure: false,
-            field_updates: Vec::new(),
-        }
-    }
-
-    fn operation_type(&mut self, op: MutationOperation) -> &mut Self {
-        self.operation = op;
-        self
-    }
-
-    fn validate_only(&mut self, value: bool) -> &mut Self {
-        self.validate_only = value;
-        self
-    }
-
-    fn partial_failure(&mut self, value: bool) -> &mut Self {
-        self.partial_failure = value;
-        self
-    }
-
-    fn set_field(&mut self, field_path: &str, value: &str) -> &mut Self {
-        self.field_updates.push(FieldUpdate {
-            field_path: field_path.to_string(),
-            value: value.to_string(),
-        });
-        self
-    }
-
-    fn build(&self, _resource_name: &str) -> Result<MutateGoogleAdsRequest> {
-        // Stub implementation - returns a minimal request
-        // In the full implementation, this would properly convert field updates
-        // to protobuf messages and construct the mutation operations
-        Ok(MutateGoogleAdsRequest {
-            customer_id: self.customer_id.clone(),
-            validate_only: self.validate_only,
-            partial_failure: self.partial_failure,
-            response_content_type: 0, // RESPONSE_CONTENT_TYPE_UNSPECIFIED
-            mutate_operations: vec![],
-        })
+fn to_mutation_op(op: MutationOperation) -> MutationOp {
+    match op {
+        MutationOperation::Update => MutationOp::Update,
+        MutationOperation::Create => MutationOp::Create,
+        MutationOperation::Remove => MutationOp::Remove,
     }
 }
 
@@ -123,7 +70,7 @@ pub fn build_mutation_request(
     partial_failure: bool,
 ) -> Result<MutateGoogleAdsRequest> {
     let mut builder = DynamicMutationBuilder::new(resource_type, customer_id);
-    builder.operation_type(operation);
+    builder.operation_type(to_mutation_op(operation));
     builder.validate_only(validate_only);
     builder.partial_failure(partial_failure);
 
@@ -134,4 +81,77 @@ pub fn build_mutation_request(
     builder
         .build(resource_name)
         .map_err(|e| anyhow::anyhow!("Failed to build mutation request: {}", e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_build_mutation_request_update() {
+        let field_updates = vec![FieldUpdate {
+            field_path: "name".to_string(),
+            value: "Test Campaign".to_string(),
+        }];
+
+        let result = build_mutation_request(
+            "Campaign",
+            "1234567890",
+            "customers/1234567890/campaigns/987654321",
+            MutationOperation::Update,
+            &field_updates,
+            false,
+            true,
+        );
+
+        assert!(result.is_ok());
+        let request = result.unwrap();
+        assert_eq!(request.customer_id, "1234567890");
+        assert_eq!(request.validate_only, false);
+        assert_eq!(request.partial_failure, true);
+    }
+
+    #[test]
+    fn test_build_mutation_request_create() {
+        let field_updates = vec![FieldUpdate {
+            field_path: "name".to_string(),
+            value: "New Campaign".to_string(),
+        }];
+
+        let result = build_mutation_request(
+            "Campaign",
+            "1234567890",
+            "customers/1234567890/campaigns/new",
+            MutationOperation::Create,
+            &field_updates,
+            false,
+            false,
+        );
+
+        assert!(result.is_ok());
+        let request = result.unwrap();
+        assert_eq!(request.customer_id, "1234567890");
+        assert_eq!(request.validate_only, false);
+        assert_eq!(request.partial_failure, false);
+    }
+
+    #[test]
+    fn test_build_mutation_request_remove() {
+        let field_updates = vec![];
+
+        let result = build_mutation_request(
+            "Campaign",
+            "1234567890",
+            "customers/1234567890/campaigns/987654321",
+            MutationOperation::Remove,
+            &field_updates,
+            false,
+            false,
+        );
+
+        assert!(result.is_ok());
+        let request = result.unwrap();
+        assert_eq!(request.customer_id, "1234567890");
+        assert_eq!(request.validate_only, false);
+    }
 }

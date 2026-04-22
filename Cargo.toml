@@ -10,7 +10,7 @@ resolver = "2"
 [workspace.package]
 authors = ["Michael S. Huang <mhuang74@gmail.com>"]
 edition = "2024"
-version = "0.17.4"
+version = "0.18.0"
 
 [workspace.dependencies]
 anyhow = "1.0"
