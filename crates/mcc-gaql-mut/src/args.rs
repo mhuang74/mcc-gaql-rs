@@ -1,11 +1,22 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::{ArgAction, Parser, Subcommand};
-use googleads_rs::proto::google::ads::googleads::v23::services::FieldUpdate;
-use googleads_rs::proto::google::ads::googleads::v23::services::MutationOperation;
 use std::str::FromStr;
 use std::sync::LazyLock;
 
 use mcc_gaql_common::auth::SharedAuthArgs;
+
+#[derive(Debug, Clone)]
+pub struct FieldUpdate {
+    pub field_path: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MutationOperation {
+    Update,
+    Create,
+    Remove,
+}
 
 static VERSION: LazyLock<String> = LazyLock::new(|| {
     format!(

@@ -14,9 +14,9 @@ use thousands::Separable;
 use tonic::{codegen::InterceptedService, transport::Channel};
 
 use mcc_gaql_common::config::get_queries_from_file;
-use mcc_gaql_common::paths::config_file_path;
 use mcc_gaql_common::googleads_api::GoogleAdsAPIAccess;
-use mcc_gaql_common::query::{validate_gaql_query, get_child_account_ids, SUB_ACCOUNTS_QUERY};
+use mcc_gaql_common::paths::config_file_path;
+use mcc_gaql_common::query::{SUB_ACCOUNTS_QUERY, get_child_account_ids, validate_gaql_query};
 use mcc_gaql_common::util::init_logger;
 
 use mcc_gaql::args;
@@ -95,13 +95,15 @@ async fn main() -> Result<()> {
             {
                 resolved_config.validate_for_operation(&args)?;
                 Some(
-                    mcc_gaql_common::googleads_api::get_api_access(&mcc_gaql_common::googleads_api::ApiAccessConfig {
-                        mcc_customer_id: resolved_config.mcc_customer_id.clone(),
-                        token_cache_filename: resolved_config.token_cache_filename.clone(),
-                        user_email: resolved_config.user_email.clone(),
-                        dev_token: resolved_config.dev_token.clone(),
-                        use_remote_auth: resolved_config.remote_auth,
-                    })
+                    mcc_gaql_common::googleads_api::get_api_access(
+                        &mcc_gaql_common::googleads_api::ApiAccessConfig {
+                            mcc_customer_id: resolved_config.mcc_customer_id.clone(),
+                            token_cache_filename: resolved_config.token_cache_filename.clone(),
+                            user_email: resolved_config.user_email.clone(),
+                            dev_token: resolved_config.dev_token.clone(),
+                            use_remote_auth: resolved_config.remote_auth,
+                        },
+                    )
                     .await
                     .context("Authentication required for field metadata operations")?,
                 )
@@ -278,13 +280,15 @@ async fn main() -> Result<()> {
     }
 
     // obtain Google Ads API credentials
-    let api_context = mcc_gaql_common::googleads_api::get_api_access(&mcc_gaql_common::googleads_api::ApiAccessConfig {
-        mcc_customer_id: mcc_customer_id.to_string(),
-        token_cache_filename: resolved_config.token_cache_filename.clone(),
-        user_email: user_email.map(|s| s.to_string()),
-        dev_token: resolved_config.dev_token.clone(),
-        use_remote_auth: resolved_config.remote_auth,
-    })
+    let api_context = mcc_gaql_common::googleads_api::get_api_access(
+        &mcc_gaql_common::googleads_api::ApiAccessConfig {
+            mcc_customer_id: mcc_customer_id.to_string(),
+            token_cache_filename: resolved_config.token_cache_filename.clone(),
+            user_email: user_email.map(|s| s.to_string()),
+            dev_token: resolved_config.dev_token.clone(),
+            use_remote_auth: resolved_config.remote_auth,
+        },
+    )
     .await
     .context(format!(
         "OAuth2 authentication failed for MCC: {}, User: {:?}",
@@ -318,9 +322,7 @@ async fn main() -> Result<()> {
 
             for name in names {
                 let query = &map[name].query;
-                match validate_gaql_query(api_context.clone(), mcc_customer_id, query)
-                    .await
-                {
+                match validate_gaql_query(api_context.clone(), mcc_customer_id, query).await {
                     Ok(()) => {
                         eprintln!("{name}: PASSED");
                         passed += 1;
@@ -361,21 +363,23 @@ async fn main() -> Result<()> {
             (cid.to_string(), query)
         } else {
             log::debug!("Listing ALL child accounts under MCC {}", mcc_customer_id);
-            (
-                mcc_customer_id.to_string(),
-                SUB_ACCOUNTS_QUERY.to_owned(),
-            )
+            (mcc_customer_id.to_string(), SUB_ACCOUNTS_QUERY.to_owned())
         };
 
-        let dataframe: Option<DataFrame> =
-            match mcc_gaql::googleads::gaql_query(api_context, customer_id_for_query, query).await {
-                Ok((df, _api_consumption)) => Some(df),
-                Err(e) => {
-                    let msg = format!("Error: {e}");
-                    println!("{msg}");
-                    None
-                }
-            };
+        let dataframe: Option<DataFrame> = match mcc_gaql::googleads::gaql_query(
+            api_context,
+            customer_id_for_query,
+            query,
+        )
+        .await
+        {
+            Ok((df, _api_consumption)) => Some(df),
+            Err(e) => {
+                let msg = format!("Error: {e}");
+                println!("{msg}");
+                None
+            }
+        };
 
         if dataframe.is_some() {
             output_dataframe(&mut dataframe.unwrap(), output_format, args.output)?;

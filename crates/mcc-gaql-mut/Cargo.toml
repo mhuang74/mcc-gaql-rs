@@ -19,6 +19,7 @@ clap = { version = "4", features = ["derive", "cargo"] }
 dialoguer = "0.11"
 googleads-rs = { git = "https://github.com/mhuang74/googleads-rs", branch = "main" }
 prost-reflect = "0.16"
+tonic = { version = "0.14", features = ["transport", "tls-ring", "tls-native-roots"] }
 
 [build-dependencies]
 chrono = { workspace = true }

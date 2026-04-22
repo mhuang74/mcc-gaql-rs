@@ -1004,7 +1004,11 @@ async fn cmd_generate(params: GenerateParams) -> Result<()> {
 
     // Handle PromptOnly result
     match result {
-        rag::GenerateResult::PromptOnly { system_prompt, user_prompt, phase } => {
+        rag::GenerateResult::PromptOnly {
+            system_prompt,
+            user_prompt,
+            phase,
+        } => {
             println!("═══════════════════════════════════════════════════════════════");
             println!("               PHASE {} LLM PROMPT", phase);
             println!("═══════════════════════════════════════════════════════════════\n");
@@ -1013,7 +1017,6 @@ async fn cmd_generate(params: GenerateParams) -> Result<()> {
             return Ok(());
         }
         rag::GenerateResult::Query(gaql_result) => {
-
             println!("{}", gaql_result.query);
 
             // Validate generated query against Google Ads API if requested
@@ -1113,10 +1116,9 @@ async fn cmd_generate(params: GenerateParams) -> Result<()> {
 /// Returns Err with message prefixed "__config_error__:" for auth/config issues (exit 2).
 /// Returns Err with API error message for invalid queries (exit 1).
 async fn run_validation(query: &str, profile: Option<String>) -> Result<()> {
-    use mcc_gaql_common::auth::{load_profile, list_profiles, resolve_auth_config, SharedAuthArgs};
-    use mcc_gaql_common::googleads_api::{ApiAccessConfig, get_api_access};
+    use mcc_gaql_common::auth::{SharedAuthArgs, list_profiles, load_profile, resolve_auth_config};
+    use mcc_gaql_common::googleads_api::get_api_access;
     use mcc_gaql_common::query::validate_gaql_query;
-    use mcc_gaql_common::util::init_logger;
 
     // Resolve profile name
     let profile_name = match profile {
@@ -1574,7 +1576,10 @@ async fn cmd_metadata(
 
     // Format based on format type
     match format.as_str() {
-        "llm" => print!("{}", formatter::format_llm(&query_result, show_all, &cache, hidden_count)),
+        "llm" => print!(
+            "{}",
+            formatter::format_llm(&query_result, show_all, &cache, hidden_count)
+        ),
         "full" => print!("{}", formatter::format_full(&query_result)),
         "json" => {
             let json = formatter::format_json(&query_result)?;

@@ -15,7 +15,7 @@ pub fn init_logger(crate_prefix: &str, verbose: bool) {
     let my_log_dir =
         std::env::var(format!("{}_LOG_DIR", crate_prefix)).unwrap_or_else(|_| ".".to_string());
 
-    let log_spec = format!("{}", base_level);
+    let log_spec = base_level.to_string();
 
     Logger::try_with_env_or_str(log_spec)
         .unwrap()

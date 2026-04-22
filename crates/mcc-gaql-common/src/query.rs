@@ -1,15 +1,15 @@
 use anyhow::{Result, bail};
 
+use googleads_rs::google::ads::googleads::v23::services::GoogleAdsRow;
 use googleads_rs::google::ads::googleads::v23::services::{
     SearchGoogleAdsRequest, SearchGoogleAdsStreamRequest,
     google_ads_service_client::GoogleAdsServiceClient,
 };
-use googleads_rs::google::ads::googleads::v23::services::GoogleAdsRow;
 
 use crate::googleads_api::GoogleAdsAPIAccess;
+use tokio_stream::StreamExt;
 use tonic::codegen::InterceptedService;
 use tonic::transport::Channel;
-use tokio_stream::StreamExt;
 
 pub const SUB_ACCOUNTS_QUERY: &str = "
 SELECT
@@ -140,10 +140,7 @@ pub async fn search_stream_rows(
     query: &str,
 ) -> Result<Vec<GoogleAdsRow>> {
     let mut client: GoogleAdsServiceClient<InterceptedService<Channel, GoogleAdsAPIAccess>> =
-        GoogleAdsServiceClient::with_interceptor(
-            api_context.channel.clone(),
-            api_context.clone(),
-        );
+        GoogleAdsServiceClient::with_interceptor(api_context.channel.clone(), api_context.clone());
 
     let response = client
         .search_stream(SearchGoogleAdsStreamRequest {

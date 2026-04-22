@@ -1,13 +1,13 @@
 use anyhow::{Context, Result};
-use googleads_rs::proto::google::ads::googleads::v23::services::MutationOperation;
+use clap::Parser;
 
-use mcc_gaql_common::auth::{load_profile, list_profiles, resolve_auth_config};
+use mcc_gaql_common::auth::{list_profiles, load_profile, resolve_auth_config};
 use mcc_gaql_common::googleads_api::get_api_access;
 use mcc_gaql_common::util::init_logger;
 
-use crate::args::{self, Command};
-use crate::mutation;
-use crate::mutation_validate;
+use mcc_gaql_mut::args::{self, Command};
+use mcc_gaql_mut::mutation;
+use mcc_gaql_mut::mutation_validate;
 
 fn print_startup_banner() {
     let version_info = format!(
@@ -22,20 +22,26 @@ fn print_startup_banner() {
 }
 
 /// Profile resolution for mcc-gaql-mut: always auto-select if none specified.
-fn resolve_profile(auth: &mcc_gaql_common::auth::SharedAuthArgs) -> Result<Option<mcc_gaql_common::config::MyConfig>> {
+fn resolve_profile(
+    auth: &mcc_gaql_common::auth::SharedAuthArgs,
+) -> Result<Option<mcc_gaql_common::config::MyConfig>> {
     if let Some(profile_name) = &auth.profile {
         log::info!("Config profile: {profile_name}");
-        Some(load_profile(profile_name)
-            .context(format!("Loading config for profile: {profile_name}")))
-            .transpose()
+        Some(
+            load_profile(profile_name)
+                .context(format!("Loading config for profile: {profile_name}")),
+        )
+        .transpose()
     } else {
         let profiles = list_profiles()?;
         if let Some(profile_name) = profiles.last() {
             eprintln!("Using profile '{}'", profile_name);
             log::info!("Auto-selected profile: {profile_name}");
-            Some(load_profile(profile_name)
-                .context(format!("Loading config for profile: {profile_name}")))
-                .transpose()
+            Some(
+                load_profile(profile_name)
+                    .context(format!("Loading config for profile: {profile_name}")),
+            )
+            .transpose()
         } else {
             Ok(None)
         }
@@ -54,7 +60,15 @@ async fn main() -> Result<()> {
     let auth_config = resolve_auth_config(&cli.auth_args(), config.as_ref())?;
 
     match &cli.command {
-        Command::Mutate { resource, resource_name, operation, field_set, dry_run, preview, partial_failure } => {
+        Command::Mutate {
+            resource,
+            resource_name,
+            operation,
+            field_set,
+            dry_run,
+            preview,
+            partial_failure,
+        } => {
             let customer_id = auth_config.customer_id.as_deref().ok_or_else(|| {
                 anyhow::anyhow!("--customer-id is required for mutate operations")
             })?;
@@ -67,7 +81,7 @@ async fn main() -> Result<()> {
                     resource,
                     customer_id,
                     resource_name,
-                    operation.into(),
+                    (*operation).into(),
                     &field_updates,
                     *dry_run,
                     *partial_failure,
@@ -77,7 +91,10 @@ async fn main() -> Result<()> {
                 println!("  customer_id: {}", request.customer_id);
                 println!("  validate_only: {}", request.validate_only);
                 println!("  partial_failure: {}", request.partial_failure);
-                println!("  operations: {} operation(s)", request.mutate_operations.len());
+                println!(
+                    "  operations: {} operation(s)",
+                    request.mutate_operations.len()
+                );
                 println!();
                 println!("  Operation 1:");
                 println!("    resource_type: {}", resource);
@@ -123,7 +140,7 @@ async fn main() -> Result<()> {
                     resource_type: resource.clone(),
                     customer_id: customer_id.to_string(),
                     resource_name: resource_name.clone(),
-                    operation: operation.into(),
+                    operation: (*operation).into(),
                     field_updates,
                     validate_only: *dry_run,
                     partial_failure: *partial_failure,

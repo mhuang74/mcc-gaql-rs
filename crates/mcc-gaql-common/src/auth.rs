@@ -1,4 +1,4 @@
-use crate::config::{validate_and_normalize_customer_id, MyConfig};
+use crate::config::{MyConfig, validate_and_normalize_customer_id};
 use crate::paths::config_file_path;
 use anyhow::{Context, Result};
 
@@ -119,8 +119,8 @@ pub fn resolve_auth_config(
 /// Moved from mcc-gaql/src/config.rs:load().
 pub fn load_profile(profile: &str) -> Result<MyConfig> {
     use figment::{
-        providers::{Env, Format, Toml},
         Figment,
+        providers::{Env, Format, Toml},
     };
 
     let mut figment: Figment = Figment::new();

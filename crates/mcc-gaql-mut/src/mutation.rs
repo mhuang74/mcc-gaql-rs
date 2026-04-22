@@ -1,14 +1,72 @@
-use anyhow::{Context, Result};
-use googleads_rs::DynamicMutationBuilder;
-use googleads_rs::proto::google::ads::googleads::v23::services::FieldUpdate;
-use googleads_rs::proto::google::ads::googleads::v23::services::MutationOperation;
-use googleads_rs::proto::google::ads::googleads::v23::services::{
+use crate::args::{FieldUpdate, MutationOperation};
+use anyhow::Result;
+use googleads_rs::google::ads::googleads::v23::services::{
     MutateGoogleAdsRequest, MutateGoogleAdsResponse,
     google_ads_service_client::GoogleAdsServiceClient,
 };
 use mcc_gaql_common::googleads_api::GoogleAdsAPIAccess;
-use tonic::codegen::InterceptedService;
-use tonic::transport::Channel;
+
+/// Builder for constructing MutateGoogleAdsRequest instances.
+/// NOTE: This is a stub implementation. The full implementation should use
+/// googleads-rs DynamicMutationBuilder when available.
+struct DynamicMutationBuilder {
+    #[allow(dead_code)]
+    resource_type: String,
+    customer_id: String,
+    operation: MutationOperation,
+    validate_only: bool,
+    partial_failure: bool,
+    field_updates: Vec<FieldUpdate>,
+}
+
+impl DynamicMutationBuilder {
+    fn new(resource_type: &str, customer_id: &str) -> Self {
+        Self {
+            resource_type: resource_type.to_string(),
+            customer_id: customer_id.to_string(),
+            operation: MutationOperation::Update,
+            validate_only: false,
+            partial_failure: false,
+            field_updates: Vec::new(),
+        }
+    }
+
+    fn operation_type(&mut self, op: MutationOperation) -> &mut Self {
+        self.operation = op;
+        self
+    }
+
+    fn validate_only(&mut self, value: bool) -> &mut Self {
+        self.validate_only = value;
+        self
+    }
+
+    fn partial_failure(&mut self, value: bool) -> &mut Self {
+        self.partial_failure = value;
+        self
+    }
+
+    fn set_field(&mut self, field_path: &str, value: &str) -> &mut Self {
+        self.field_updates.push(FieldUpdate {
+            field_path: field_path.to_string(),
+            value: value.to_string(),
+        });
+        self
+    }
+
+    fn build(&self, _resource_name: &str) -> Result<MutateGoogleAdsRequest> {
+        // Stub implementation - returns a minimal request
+        // In the full implementation, this would properly convert field updates
+        // to protobuf messages and construct the mutation operations
+        Ok(MutateGoogleAdsRequest {
+            customer_id: self.customer_id.clone(),
+            validate_only: self.validate_only,
+            partial_failure: self.partial_failure,
+            response_content_type: 0, // RESPONSE_CONTENT_TYPE_UNSPECIFIED
+            mutate_operations: vec![],
+        })
+    }
+}
 
 pub struct MutationParams {
     pub resource_type: String,

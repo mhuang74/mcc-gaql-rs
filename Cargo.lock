@@ -5147,6 +5147,7 @@ dependencies = [
  "mcc-gaql-common",
  "prost-reflect",
  "tokio",
+ "tonic",
 ]
 
 [[package]]

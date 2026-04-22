@@ -1,12 +1,12 @@
 use figment::{
-    providers::{Env, Format, Toml},
     Figment,
+    providers::{Env, Format, Toml},
 };
 use serde::{Deserialize, Serialize};
 use std::fs;
 
 use mcc_gaql_common::config::{
-    validate_and_normalize_customer_id, MyConfig, ENV_VAR_PREFIX, TOML_CONFIG_FILENAME,
+    ENV_VAR_PREFIX, MyConfig, TOML_CONFIG_FILENAME, validate_and_normalize_customer_id,
 };
 use mcc_gaql_common::paths::config_file_path;
 

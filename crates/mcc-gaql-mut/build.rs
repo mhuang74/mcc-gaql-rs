@@ -1,6 +1,6 @@
 fn main() {
     let mut git_hash = if let Ok(hash) = std::process::Command::new("git")
-        .args(&["rev-parse", "--short=8", "HEAD"])
+        .args(["rev-parse", "--short=8", "HEAD"])
         .output()
     {
         String::from_utf8_lossy(&hash.stdout).trim().to_string()

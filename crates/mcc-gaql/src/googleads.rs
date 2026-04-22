@@ -2,21 +2,14 @@ use anyhow::{Result, bail};
 use polars::prelude::*;
 use tokio::io::AsyncWriteExt;
 use tokio_stream::StreamExt;
-use tonic::{
-    Response, Streaming,
-    codegen::InterceptedService,
-    Status,
-    transport::Channel,
-};
+use tonic::{Response, Status, Streaming, codegen::InterceptedService, transport::Channel};
 
 use googleads_rs::google::ads::googleads::v23::services::{
+    SearchGoogleAdsStreamRequest, SearchGoogleAdsStreamResponse,
     google_ads_service_client::GoogleAdsServiceClient,
-    SearchGoogleAdsStreamRequest,
-    SearchGoogleAdsStreamResponse,
 };
 
 use mcc_gaql_common::googleads_api::GoogleAdsAPIAccess;
-
 
 // incomplete. Only what I need for the moment.
 const GOOGLE_ADS_METRICS_INTEGER_FIELDS: &[&str] = &[
@@ -133,7 +126,6 @@ pub async fn gaql_query_with_client(
             let df = DataFrame::new(series_vec).unwrap();
 
             (df, api_consumption)
-
         }
         Err(status) => {
             bail!(

@@ -1,9 +1,8 @@
-use std::time::Duration;
 use anyhow::{Context, Result, bail};
+use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tonic::{
     Status,
-    codegen::InterceptedService,
     metadata::{Ascii, MetadataValue},
     service::Interceptor,
     transport::Channel,
