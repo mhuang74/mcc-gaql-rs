@@ -462,8 +462,7 @@ async fn search_fields_semantic(query: &str, show_all: bool) -> Result<Vec<(Fiel
         resource_name: Option<String>,
     }
 
-    let raw_results = index
-        .top_n::<FieldSearchResult>(search_request)
+    let raw_results = VectorStoreIndex::top_n::<FieldSearchResult>(&index, search_request)
         .await
         .map_err(|e| anyhow::anyhow!("Vector search failed: {}", e))?;
 

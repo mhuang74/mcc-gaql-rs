@@ -5148,7 +5148,7 @@ dependencies = [
  "rand 0.8.6",
  "regex",
  "reqwest 0.13.2",
- "rig-core 0.33.0",
+ "rig-core",
  "rig-fastembed",
  "rig-lancedb",
  "scraper",
@@ -7292,9 +7292,9 @@ checksum = "47b34b781b31e5d73e9fbc8689c70551fd1ade9a19e3e28cfec8580a79290cc4"
 
 [[package]]
 name = "rig-core"
-version = "0.33.0"
+version = "0.35.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a529b9b72f51a46a9ea87c9ba8031e36593de7a89461983f01d8c24462f9eb06"
+checksum = "f31caace97ed9646cfb713f32f8321c9fe5dc6ee4390ff5041b565163bf900dc"
 dependencies = [
  "as-any",
  "async-stream",
@@ -7324,45 +7324,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "rig-core"
-version = "0.35.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f31caace97ed9646cfb713f32f8321c9fe5dc6ee4390ff5041b565163bf900dc"
-dependencies = [
- "as-any",
- "async-stream",
- "base64 0.22.1",
- "bytes",
- "eventsource-stream",
- "fastrand",
- "futures",
- "futures-timer",
- "glob",
- "http 1.4.0",
- "mime",
- "mime_guess",
- "nanoid",
- "ordered-float 5.3.0",
- "pin-project-lite",
- "reqwest 0.13.2",
- "schemars 1.2.1",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "tracing-futures",
- "url",
-]
-
-[[package]]
 name = "rig-fastembed"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "518dbb1377775dc3115ef8a4267df09619cd8db7b761b5a52b779d518822fd28"
 dependencies = [
  "fastembed",
- "rig-core 0.35.0",
+ "rig-core",
  "schemars 1.2.1",
  "serde",
  "serde_json",
@@ -7379,7 +7347,7 @@ dependencies = [
  "deranged",
  "futures",
  "lancedb",
- "rig-core 0.35.0",
+ "rig-core",
  "serde",
  "serde_json",
 ]
