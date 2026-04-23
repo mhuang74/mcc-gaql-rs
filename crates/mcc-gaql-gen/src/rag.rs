@@ -1859,7 +1859,7 @@ impl MultiStepRAGAgent {
         // Phase 1: Resource selection (or use override)
         let phase1_start = std::time::Instant::now();
         log::info!("Phase 1: Resource selection...");
-        
+
         let (primary_resource, related_resources, dropped_resources, reasoning, resource_sample) =
             if let Some(ref resource) = self.pipeline_config.resource_override {
                 // Validate resource exists
@@ -1868,17 +1868,11 @@ impl MultiStepRAGAgent {
                 }
                 log::info!("Phase 1: Using resource override: {}", resource);
                 // Return empty values for skipped Phase 1 RAG search
-                (
-                    resource.clone(),
-                    vec![],
-                    vec![],
-                    String::new(),
-                    vec![],
-                )
+                (resource.clone(), vec![], vec![], String::new(), vec![])
             } else {
                 self.select_resource(user_query).await?
             };
-        
+
         let phase1_time_ms = phase1_start.elapsed().as_millis() as u64;
         log::info!(
             "Phase 1 complete: {} ({}ms)",

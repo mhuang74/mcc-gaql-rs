@@ -6,7 +6,7 @@ use std::path::Path;
 use googleads_rs::google::ads::googleads::v23::services::SearchGoogleAdsFieldsRequest;
 use googleads_rs::google::ads::googleads::v23::services::google_ads_field_service_client::GoogleAdsFieldServiceClient;
 
-use crate::googleads::GoogleAdsAPIAccess;
+use mcc_gaql_common::googleads_api::GoogleAdsAPIAccess;
 
 // Re-export the common types so callers can use crate::field_metadata::FieldMetadata etc.
 pub use mcc_gaql_common::field_metadata::{FieldMetadata, FieldMetadataCache, ResourceMetadata};

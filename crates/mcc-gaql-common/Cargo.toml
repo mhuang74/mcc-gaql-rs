@@ -12,9 +12,15 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 dirs = { workspace = true }
 toml = { workspace = true }
+figment = { version = "0.10", features = ["toml", "env"] }
 chrono = { workspace = true, features = ["serde"] }
 log = { workspace = true }
 tokio = { workspace = true }
 reqwest = { workspace = true }
 rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs"] }
 webpki-roots = "0.26"
+googleads-rs = { git = "https://github.com/mhuang74/googleads-rs", branch = "main" }
+tonic = { version = "0.14", features = ["transport", "tls-ring", "tls-native-roots"] }
+yup-oauth2 = { version = "6.7" }
+tokio-stream = { version = "0.1", features = ["net"] }
+flexi_logger = { version = "0.22", features = ["compress"] }
