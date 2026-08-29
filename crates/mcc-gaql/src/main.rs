@@ -8,7 +8,7 @@ use std::{
 use anyhow::{Context, Result};
 use futures::{StreamExt, stream::FuturesUnordered};
 
-use googleads_rs::google::ads::googleads::v23::services::google_ads_service_client::GoogleAdsServiceClient;
+use googleads_rs::current_gads_version::services::google_ads_service_client::GoogleAdsServiceClient;
 use polars::prelude::*;
 use thousands::Separable;
 use tonic::{codegen::InterceptedService, transport::Channel};

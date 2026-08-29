@@ -216,7 +216,7 @@ fn create_test_field_cache() -> FieldMetadataCache {
 
     FieldMetadataCache {
         last_updated: chrono::Utc::now(),
-        api_version: "v23".to_string(),
+        api_version: "v24".to_string(),
         fields,
         resources: None,
         resource_metadata: None,

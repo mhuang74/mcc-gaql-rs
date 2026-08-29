@@ -4,7 +4,7 @@ use tokio::io::AsyncWriteExt;
 use tokio_stream::StreamExt;
 use tonic::{Response, Status, Streaming, codegen::InterceptedService, transport::Channel};
 
-use googleads_rs::google::ads::googleads::v23::services::{
+use googleads_rs::current_gads_version::services::{
     SearchGoogleAdsStreamRequest, SearchGoogleAdsStreamResponse,
     google_ads_service_client::GoogleAdsServiceClient,
 };
@@ -60,7 +60,7 @@ pub async fn gaql_query_with_client(
                             headers = Some(field_mask.paths.clone());
                         }
                         for r in stream_response.results {
-                            let row: googleads_rs::google::ads::googleads::v23::services::GoogleAdsRow = r;
+                            let row: googleads_rs::current_gads_version::services::GoogleAdsRow = r;
 
                             for i in 0..headers.as_ref().unwrap().len() {
                                 let path = &headers.as_ref().unwrap()[i];
@@ -154,10 +154,10 @@ pub async fn gaql_query(
 /// Run query via GoogleAdsFieldService to obtain field metadata
 pub async fn fields_query(api_context: GoogleAdsAPIAccess, query: &str) {
     let mut client =
-        googleads_rs::google::ads::googleads::v23::services::google_ads_field_service_client::GoogleAdsFieldServiceClient::with_interceptor(api_context.channel.clone(), api_context);
+        googleads_rs::current_gads_version::services::google_ads_field_service_client::GoogleAdsFieldServiceClient::with_interceptor(api_context.channel.clone(), api_context);
 
-    let response: googleads_rs::google::ads::googleads::v23::services::SearchGoogleAdsFieldsResponse = client
-        .search_google_ads_fields(googleads_rs::google::ads::googleads::v23::services::SearchGoogleAdsFieldsRequest {
+    let response: googleads_rs::current_gads_version::services::SearchGoogleAdsFieldsResponse = client
+        .search_google_ads_fields(googleads_rs::current_gads_version::services::SearchGoogleAdsFieldsRequest {
             query: query.to_owned(),
             page_token: String::new(),
             page_size: 10000,

@@ -302,7 +302,7 @@ async fn test_cache_save_and_load_roundtrip() {
 
     let mut original = ScrapedDocs {
         scraped_at: Utc::now(),
-        api_version: "v23".to_string(),
+        api_version: "v24".to_string(),
         docs: HashMap::new(),
         resources_scraped: 2,
         resources_skipped: 1,
@@ -329,7 +329,7 @@ async fn test_cache_save_and_load_roundtrip() {
 
     let loaded = ScrapedDocs::load_from_disk(&path).await.unwrap();
 
-    assert_eq!(loaded.api_version, "v23");
+    assert_eq!(loaded.api_version, "v24");
     assert_eq!(loaded.resources_scraped, 2);
     assert_eq!(loaded.resources_skipped, 1);
     assert_eq!(loaded.docs.len(), 2);
@@ -370,7 +370,7 @@ async fn test_load_or_scrape_returns_cached_when_fresh() {
     // Write a cache file with scraped_at = now (fresh)
     let cached = ScrapedDocs {
         scraped_at: Utc::now(),
-        api_version: "v23".to_string(),
+        api_version: "v24".to_string(),
         docs: {
             let mut m = HashMap::new();
             m.insert(
@@ -392,7 +392,7 @@ async fn test_load_or_scrape_returns_cached_when_fresh() {
     // because the HTTP call would error out.
     let result = ScrapedDocs::load_or_scrape(
         &["campaign".to_string()],
-        "v23",
+        "v24",
         &path,
         30, // 30-day TTL
         0,  // no delay
@@ -421,7 +421,7 @@ async fn test_load_or_scrape_rescapes_when_stale() {
     // Write a cache that is 60 days old (past the 30-day TTL)
     let stale = ScrapedDocs {
         scraped_at: Utc::now() - Duration::days(60),
-        api_version: "v23".to_string(),
+        api_version: "v24".to_string(),
         docs: HashMap::new(),
         resources_scraped: 0,
         resources_skipped: 0,
@@ -430,11 +430,11 @@ async fn test_load_or_scrape_rescapes_when_stale() {
 
     // Start a mock server that returns valid HTML
     let mut responses = HashMap::new();
-    responses.insert("/v23/campaign".to_string(), (200, campaign_html()));
+    responses.insert("/v24/campaign".to_string(), (200, campaign_html()));
     let base_url = start_mock_server(responses, 5).await;
 
     let result =
-        ScrapedDocs::scrape_all_with_base_url(&["campaign".to_string()], "v23", 0, &base_url)
+        ScrapedDocs::scrape_all_with_base_url(&["campaign".to_string()], "v24", 0, &base_url)
             .await
             .unwrap();
 
@@ -457,20 +457,20 @@ async fn test_scrape_all_with_mock_server_extracts_fields() {
     }
 
     let mut responses = HashMap::new();
-    responses.insert("/v23/campaign".to_string(), (200, campaign_html()));
+    responses.insert("/v24/campaign".to_string(), (200, campaign_html()));
 
     let base_url = start_mock_server(responses, 5).await;
 
     let result = ScrapedDocs::scrape_all_with_base_url(
         &["campaign".to_string()],
-        "v23",
+        "v24",
         0, // no delay in tests
         &base_url,
     )
     .await
     .unwrap();
 
-    assert_eq!(result.api_version, "v23");
+    assert_eq!(result.api_version, "v24");
     assert_eq!(
         result.resources_scraped, 1,
         "One resource should be scraped"
@@ -499,12 +499,12 @@ async fn test_scrape_all_extracts_enum_values_via_mock() {
     }
 
     let mut responses = HashMap::new();
-    responses.insert("/v23/campaign".to_string(), (200, campaign_html()));
+    responses.insert("/v24/campaign".to_string(), (200, campaign_html()));
 
     let base_url = start_mock_server(responses, 5).await;
 
     let result =
-        ScrapedDocs::scrape_all_with_base_url(&["campaign".to_string()], "v23", 0, &base_url)
+        ScrapedDocs::scrape_all_with_base_url(&["campaign".to_string()], "v24", 0, &base_url)
             .await
             .unwrap();
 
@@ -529,7 +529,7 @@ async fn test_scrape_all_handles_404_gracefully() {
     let base_url = start_mock_server(responses, 5).await;
 
     let result =
-        ScrapedDocs::scrape_all_with_base_url(&["campaign".to_string()], "v23", 0, &base_url)
+        ScrapedDocs::scrape_all_with_base_url(&["campaign".to_string()], "v24", 0, &base_url)
             .await
             .unwrap();
 
@@ -555,12 +555,12 @@ async fn test_scrape_all_handles_too_small_page_gracefully() {
     }
 
     let mut responses = HashMap::new();
-    responses.insert("/v23/campaign".to_string(), (200, tiny_page_html()));
+    responses.insert("/v24/campaign".to_string(), (200, tiny_page_html()));
 
     let base_url = start_mock_server(responses, 5).await;
 
     let result =
-        ScrapedDocs::scrape_all_with_base_url(&["campaign".to_string()], "v23", 0, &base_url)
+        ScrapedDocs::scrape_all_with_base_url(&["campaign".to_string()], "v24", 0, &base_url)
             .await
             .unwrap();
 
@@ -580,12 +580,12 @@ async fn test_scrape_all_handles_large_unrelated_page_gracefully() {
     }
 
     let mut responses = HashMap::new();
-    responses.insert("/v23/campaign".to_string(), (200, large_unrelated_html()));
+    responses.insert("/v24/campaign".to_string(), (200, large_unrelated_html()));
 
     let base_url = start_mock_server(responses, 5).await;
 
     let result =
-        ScrapedDocs::scrape_all_with_base_url(&["campaign".to_string()], "v23", 0, &base_url)
+        ScrapedDocs::scrape_all_with_base_url(&["campaign".to_string()], "v24", 0, &base_url)
             .await
             .unwrap();
 
@@ -610,7 +610,7 @@ async fn test_scrape_all_skips_metrics_prefix() {
 
     let result = ScrapedDocs::scrape_all_with_base_url(
         &["metrics".to_string(), "segments".to_string()],
-        "v23",
+        "v24",
         0,
         &base_url,
     )
@@ -634,15 +634,15 @@ async fn test_scrape_all_processes_multiple_resources() {
     }
 
     let mut responses = HashMap::new();
-    responses.insert("/v23/campaign".to_string(), (200, campaign_html()));
+    responses.insert("/v24/campaign".to_string(), (200, campaign_html()));
     // ad_group page uses unqualified ids
-    responses.insert("/v23/ad_group".to_string(), (200, unqualified_id_html()));
+    responses.insert("/v24/ad_group".to_string(), (200, unqualified_id_html()));
 
     let base_url = start_mock_server(responses, 10).await;
 
     let result = ScrapedDocs::scrape_all_with_base_url(
         &["campaign".to_string(), "ad_group".to_string()],
-        "v23",
+        "v24",
         0,
         &base_url,
     )
@@ -667,14 +667,14 @@ async fn test_scrape_all_partial_failure_continues() {
 
     // campaign succeeds; ad_group returns 404 — the scraper should continue and return campaign results
     let mut responses = HashMap::new();
-    responses.insert("/v23/campaign".to_string(), (200, campaign_html()));
+    responses.insert("/v24/campaign".to_string(), (200, campaign_html()));
     // ad_group is absent → 404
 
     let base_url = start_mock_server(responses, 10).await;
 
     let result = ScrapedDocs::scrape_all_with_base_url(
         &["campaign".to_string(), "ad_group".to_string()],
-        "v23",
+        "v24",
         0,
         &base_url,
     )
@@ -698,7 +698,7 @@ async fn test_scrape_all_partial_failure_continues() {
 fn test_get_description_returns_none_for_missing_field() {
     let docs = ScrapedDocs {
         scraped_at: Utc::now(),
-        api_version: "v23".to_string(),
+        api_version: "v24".to_string(),
         docs: HashMap::new(),
         resources_scraped: 0,
         resources_skipped: 0,
@@ -710,7 +710,7 @@ fn test_get_description_returns_none_for_missing_field() {
 fn test_get_description_returns_none_for_empty_description() {
     let mut docs = ScrapedDocs {
         scraped_at: Utc::now(),
-        api_version: "v23".to_string(),
+        api_version: "v24".to_string(),
         docs: HashMap::new(),
         resources_scraped: 0,
         resources_skipped: 0,
@@ -734,7 +734,7 @@ fn test_get_description_returns_none_for_empty_description() {
 fn test_get_enum_values_returns_none_for_empty_list() {
     let mut docs = ScrapedDocs {
         scraped_at: Utc::now(),
-        api_version: "v23".to_string(),
+        api_version: "v24".to_string(),
         docs: HashMap::new(),
         resources_scraped: 0,
         resources_skipped: 0,

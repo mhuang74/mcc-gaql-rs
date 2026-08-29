@@ -3273,8 +3273,8 @@ dependencies = [
 
 [[package]]
 name = "googleads-rs"
-version = "23.2.1"
-source = "git+https://github.com/mhuang74/googleads-rs?branch=main#4e1c5473115b78ac40444154e71c83abf489d4ce"
+version = "24.2.0"
+source = "git+https://github.com/mhuang74/googleads-rs?branch=main#3d36a5a840a7fa7c473bbed92a99c5d10b712dd9"
 dependencies = [
  "anyhow",
  "build-print",

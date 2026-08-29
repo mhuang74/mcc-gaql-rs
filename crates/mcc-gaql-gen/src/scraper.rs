@@ -45,7 +45,7 @@ pub struct ScrapedFieldDoc {
     /// Field behavior annotations from proto (e.g., OUTPUT_ONLY, REQUIRED, IMMUTABLE)
     #[serde(default)]
     pub field_behavior: Vec<String>,
-    /// Proto type name for the field (e.g., "google.ads.googleads.v23.enums.CampaignStatusEnum.CampaignStatus")
+    /// Proto type name for the field (e.g., "google.ads.googleads.v24.enums.CampaignStatusEnum.CampaignStatus")
     #[serde(default)]
     pub proto_type: String,
 }
@@ -536,7 +536,7 @@ mod tests {
     fn test_scraped_docs_get_description() {
         let mut docs = ScrapedDocs {
             scraped_at: Utc::now(),
-            api_version: "v23".to_string(),
+            api_version: "v24".to_string(),
             docs: HashMap::new(),
             resources_scraped: 0,
             resources_skipped: 0,
@@ -564,7 +564,7 @@ mod tests {
     fn test_scraped_docs_get_enum_values() {
         let mut docs = ScrapedDocs {
             scraped_at: Utc::now(),
-            api_version: "v23".to_string(),
+            api_version: "v24".to_string(),
             docs: HashMap::new(),
             resources_scraped: 0,
             resources_skipped: 0,

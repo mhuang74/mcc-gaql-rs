@@ -4,7 +4,7 @@ use googleads_rs::coerce_value;
 use googleads_rs::descriptor_pool;
 use prost_reflect::Kind;
 
-const RESOURCES_FQN_PREFIX: &str = "google.ads.googleads.v23.resources";
+const RESOURCES_FQN_PREFIX: &str = "google.ads.googleads.v24.resources";
 
 pub fn validate_mutation_locally(
     resource_type: &str,
