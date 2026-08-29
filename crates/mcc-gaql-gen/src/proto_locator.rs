@@ -5,8 +5,9 @@
 
 use anyhow::Result;
 use std::path::{Path, PathBuf};
+use mcc_gaql_common::GOOGLEADS_API_VERSION;
 
-/// Locates the googleads-rs proto directory containing V23 proto files.
+/// Locates the googleads-rs proto directory containing the current API version's proto files.
 ///
 /// Tries multiple strategies in order:
 /// 1. Check if googleads-rs is a path dependency
@@ -30,7 +31,8 @@ pub fn find_googleads_proto_dir() -> Result<PathBuf> {
         "Could not locate googleads-rs proto files. \n\
          Either set GOOGLEADS_PROTO_DIR environment variable, or ensure \n\
          googleads-rs dependency is fetched. Proto files should be in: \n\
-         $CARGO_HOME/git/checkouts/googleads-rs-*/proto/google/ads/googleads/v24/"
+         $CARGO_HOME/git/checkouts/googleads-rs-*/proto/google/ads/googleads/{}/",
+        GOOGLEADS_API_VERSION
     )
 }
 
@@ -64,7 +66,7 @@ fn find_in_cargo_cache() -> Option<PathBuf> {
             // Look for subdirectories within the checkout (the commit hash folders)
             if let Ok(subdirs) = std::fs::read_dir(&crate_dir) {
                 for subdir in subdirs.flatten() {
-                    let proto_path = subdir.path().join("proto/google/ads/googleads/v24");
+                    let proto_path = subdir.path().join(format!("proto/google/ads/googleads/{GOOGLEADS_API_VERSION}"));
 
                     if proto_path.exists() {
                         return Some(proto_path);

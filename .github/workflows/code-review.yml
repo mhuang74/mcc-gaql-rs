@@ -10,10 +10,11 @@ jobs:
   review:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: AI PR Review
-        uses: jonit-dev/openrouter-github-action@v1.0.0
+        # v1.0.0
+        uses: jonit-dev/openrouter-github-action@88f63615c769f8db6031973503c2c40a9a3f4feb
         with:
           # Required inputs
           github_token: ${{ secrets.GITHUB_TOKEN }} # Automatically provided

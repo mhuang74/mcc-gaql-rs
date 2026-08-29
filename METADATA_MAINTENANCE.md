@@ -49,7 +49,7 @@ mcc-gaql-gen parse-protos
 
 **Who can run:** Only developers who can build `mcc-gaql-gen` from source. The proto files are located in the Cargo registry/git checkouts and are not available in pre-built binaries.
 
-**Output:** `proto_docs_v23.json` in your cache directory containing:
+**Output:** `proto_docs_v24.json` in your cache directory containing:
 - ~182 resource messages with ~3000 fields
 - ~360 enums with ~1200 values
 - Field behavior annotations (IMMUTABLE, OUTPUT_ONLY, REQUIRED, OPTIONAL)
@@ -61,7 +61,7 @@ mcc-gaql-gen parse-protos
 
 **Proto file location:**
 ```
-$CARGO_HOME/git/checkouts/googleads-rs-*/proto/google/ads/googleads/v23/
+$CARGO_HOME/git/checkouts/googleads-rs-*/proto/google/ads/googleads/v24/
 ```
 
 ---
@@ -226,11 +226,11 @@ grep "googleads-rs" Cargo.lock
 
 ```bash
 # Check proto docs exist and have content
-ls -la ~/.cache/mcc-gaql/proto_docs_v23.json
-wc -l ~/.cache/mcc-gaql/proto_docs_v23.json
+ls -la ~/.cache/mcc-gaql/proto_docs_v24.json
+wc -l ~/.cache/mcc-gaql/proto_docs_v24.json
 
 # Verify parsing worked
-grep -c "message" ~/.cache/mcc-gaql/proto_docs_v23.json
+grep -c "message" ~/.cache/mcc-gaql/proto_docs_v24.json
 ```
 
 ### Checking LanceDB Contents
@@ -270,7 +270,7 @@ find ~/.cache/mcc-gaql/lancedb -name "*.lance" | wc -l
 |------|----------|---------|
 | Field metadata | `~/.config/mcc-gaql/field_metadata.json` | Raw field metadata from Google Ads API |
 | Enriched metadata | `~/.cache/mcc-gaql/field_metadata_enriched.json` | Metadata with descriptions (used for generation) |
-| Proto docs | `~/.cache/mcc-gaql/proto_docs_v23.json` | Parsed proto documentation |
+| Proto docs | `~/.cache/mcc-gaql/proto_docs_v24.json` | Parsed proto documentation |
 | LanceDB | `~/.cache/mcc-gaql/lancedb/` | Vector embeddings for RAG search |
 | Scraped docs | `~/.config/mcc-gaql/scraped_docs.json` | Legacy: web-scraped documentation (deprecated) |
 

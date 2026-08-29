@@ -169,7 +169,7 @@ pub async fn fetch_from_api(api_context: &GoogleAdsAPIAccess) -> Result<FieldMet
 
     let cache = FieldMetadataCache {
         last_updated: Utc::now(),
-        api_version: "v24".to_string(),
+        api_version: mcc_gaql_common::GOOGLEADS_API_VERSION.to_string(),
         fields,
         resources: Some(resources),
         resource_metadata: Some(resource_metadata),

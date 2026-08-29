@@ -4,7 +4,6 @@ use googleads_rs::coerce_value;
 use googleads_rs::descriptor_pool;
 use prost_reflect::Kind;
 
-const RESOURCES_FQN_PREFIX: &str = "google.ads.googleads.v24.resources";
 
 pub fn validate_mutation_locally(
     resource_type: &str,
@@ -39,7 +38,11 @@ fn validate_field_paths(
     operation: MutationOperation,
 ) -> Result<()> {
     let pool = descriptor_pool();
-    let resource_fqn = format!("{}.{}", RESOURCES_FQN_PREFIX, resource_type);
+    let resource_fqn = format!(
+        "google.ads.googleads.{}.resources.{}",
+        mcc_gaql_common::GOOGLEADS_API_VERSION,
+        resource_type
+    );
     let resource_desc = pool.get_message_by_name(&resource_fqn).ok_or_else(|| {
         anyhow::anyhow!(
             "Unknown resource type '{}'. Not found in descriptor pool as '{}'",

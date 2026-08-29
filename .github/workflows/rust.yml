@@ -22,7 +22,7 @@ jobs:
     outputs:
       gen: ${{ steps.filter.outputs.gen }}
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     - uses: dorny/paths-filter@v2
       id: filter
       with:
@@ -36,7 +36,7 @@ jobs:
     name: Build Core (mcc-gaql + mcc-gaql-common)
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
     - name: Rust Cache
@@ -65,7 +65,7 @@ jobs:
     env:
       MCC_GAQL_R2_PUBLIC_ID: ${{ vars.MCC_GAQL_R2_PUBLIC_ID }}
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
     - name: Rust Cache

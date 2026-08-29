@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 use tokio::fs;
+use crate::version::GOOGLEADS_API_VERSION;
 
 /// Represents metadata for a single Google Ads field
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -163,7 +164,7 @@ impl FieldMetadataCache {
     pub fn new() -> Self {
         Self {
             last_updated: Utc::now(),
-            api_version: "v24".to_string(),
+            api_version: GOOGLEADS_API_VERSION.to_string(),
             fields: HashMap::new(),
             resources: None,
             resource_metadata: None,

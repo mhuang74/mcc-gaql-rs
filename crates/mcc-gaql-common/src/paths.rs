@@ -1,6 +1,8 @@
 use anyhow::{Result, anyhow};
 use std::path::PathBuf;
 
+use crate::version::GOOGLEADS_API_VERSION;
+
 const CRATE_NAME: &str = "mcc-gaql";
 
 /// Get the platform-correct config directory for mcc-gaql
@@ -70,5 +72,5 @@ pub fn query_cookbook_path() -> Result<PathBuf> {
 
 /// Get the path to proto docs cache
 pub fn proto_docs_path() -> Result<PathBuf> {
-    Ok(cache_dir()?.join("proto_docs_v24.json"))
+    Ok(cache_dir()?.join(format!("proto_docs_{GOOGLEADS_API_VERSION}.json")))
 }
