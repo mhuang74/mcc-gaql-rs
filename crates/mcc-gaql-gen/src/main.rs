@@ -200,7 +200,7 @@ enum Commands {
     /// Download pre-built RAG resources for instant GAQL generation
     Bootstrap {
         /// API version to download
-        #[arg(long, default_value = "v24")]
+        #[arg(long, default_value = mcc_gaql_common::GOOGLEADS_API_VERSION)]
         version: String,
 
         /// Overwrite existing cache even if valid
@@ -219,7 +219,7 @@ enum Commands {
     /// Create and upload a RAG bundle to R2 storage
     Publish {
         /// Object key name
-        #[arg(long, default_value = "mcc-gaql-rag-bundle-v24.tar.gz")]
+        #[arg(long, default_value = mcc_gaql_common::RAG_BUNDLE_KEY)]
         key: String,
 
         /// Create bundle locally without uploading
@@ -233,7 +233,7 @@ enum Commands {
 
     /// Parse proto files from googleads-rs to extract field documentation
     ParseProtos {
-        /// Path to proto docs cache output. Defaults to ~/.cache/mcc-gaql/proto_docs_v24.json
+        /// Path to proto docs cache output. Defaults to ~/.cache/mcc-gaql/proto_docs_<VERSION>.json
         #[arg(long)]
         output: Option<PathBuf>,
 

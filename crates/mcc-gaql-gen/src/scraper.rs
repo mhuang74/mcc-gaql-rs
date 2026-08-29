@@ -536,7 +536,7 @@ mod tests {
     fn test_scraped_docs_get_description() {
         let mut docs = ScrapedDocs {
             scraped_at: Utc::now(),
-            api_version: "v24".to_string(),
+            api_version: mcc_gaql_common::GOOGLEADS_API_VERSION.to_string(),
             docs: HashMap::new(),
             resources_scraped: 0,
             resources_skipped: 0,
@@ -564,7 +564,7 @@ mod tests {
     fn test_scraped_docs_get_enum_values() {
         let mut docs = ScrapedDocs {
             scraped_at: Utc::now(),
-            api_version: "v24".to_string(),
+            api_version: mcc_gaql_common::GOOGLEADS_API_VERSION.to_string(),
             docs: HashMap::new(),
             resources_scraped: 0,
             resources_skipped: 0,

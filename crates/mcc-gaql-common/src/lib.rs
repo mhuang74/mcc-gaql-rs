@@ -6,3 +6,5 @@ pub mod http_client;
 pub mod paths;
 pub mod query;
 pub mod util;
+pub mod version;
+pub use version::{GOOGLEADS_API_VERSION, RAG_BUNDLE_KEY};

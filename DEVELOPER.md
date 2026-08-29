@@ -243,7 +243,7 @@ Configuration and data files are stored in:
 | File/Directory | Location |
 |----------------|----------|
 | Config file | `~/Library/Application Support/mcc-gaql/config.toml` (macOS)<br>`~/.config/mcc-gaql/config.toml` (Linux)<br>`%APPDATA%\mcc-gaql\config.toml` (Windows) |
-| Proto docs cache | `~/Library/Caches/mcc-gaql/proto_docs_v23.json` (macOS)<br>`~/.cache/mcc-gaql/proto_docs_v23.json` (Linux) |
+| Proto docs cache | `~/Library/Caches/mcc-gaql/proto_docs_v24.json` (macOS)<br>`~/.cache/mcc-gaql/proto_docs_v24.json` (Linux) |
 | Field metadata cache | `~/Library/Caches/mcc-gaql/field_metadata.json` (macOS)<br>`~/.cache/mcc-gaql/field_metadata.json` (Linux) |
 | Enriched metadata | `~/Library/Caches/mcc-gaql/field_metadata_enriched.json` (macOS)<br>`~/.cache/mcc-gaql/field_metadata_enriched.json` (Linux) |
 | LanceDB vector store | `~/Library/Caches/mcc-gaql/lancedb/` (macOS)<br>`~/.cache/mcc-gaql/lancedb/` (Linux) |

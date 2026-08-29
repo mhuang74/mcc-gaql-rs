@@ -708,7 +708,7 @@ mod tests {
     fn test_manifest_serialization() {
         let manifest = Manifest {
             version: "1.0".to_string(),
-            api_version: "v24".to_string(),
+            api_version: mcc_gaql_common::GOOGLEADS_API_VERSION.to_string(),
             created_at: chrono::Utc::now(),
             created_by: "test".to_string(),
             cli_version: "0.16.2".to_string(),
