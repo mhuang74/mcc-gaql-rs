@@ -73,7 +73,7 @@ pub fn gaql_to_proto(field_name: &str) -> Option<(String, String)> {
 }
 
 /// Extract the simple (last-segment) type name from a possibly fully-qualified proto type.
-/// e.g., `"google.ads.googleads.v23.common.PolicySummary"` → `"PolicySummary"`
+/// e.g., `"google.ads.googleads.v24.common.PolicySummary"` → `"PolicySummary"`
 /// e.g., `"PolicySummary"` → `"PolicySummary"`
 fn simple_type_name(type_name: &str) -> &str {
     type_name.rsplit('.').next().unwrap_or(type_name)
@@ -84,7 +84,7 @@ fn simple_type_name(type_name: &str) -> &str {
 pub struct ProtoDocsCache {
     /// When this cache was parsed
     pub parsed_at: DateTime<Utc>,
-    /// API version (e.g., "v23")
+    /// API version (e.g., "v24")
     pub api_version: String,
     /// googleads-rs commit hash
     pub googleads_rs_commit: String,
@@ -342,7 +342,7 @@ impl std::fmt::Display for CacheStats {
 /// Get the default cache path.
 pub fn get_cache_path() -> Result<PathBuf> {
     let cache_dir = mcc_gaql_common::paths::cache_dir()?;
-    Ok(cache_dir.join("proto_docs_v23.json"))
+    Ok(cache_dir.join("proto_docs_v24.json"))
 }
 
 /// Build the cache by parsing all proto files.
@@ -382,7 +382,7 @@ pub fn load_or_build_cache(proto_dir: &PathBuf) -> Result<ProtoDocsCache> {
     }
 
     // Build new cache
-    let api_version = "v23";
+    let api_version = "v24";
     let commit = extract_commit_from_path(proto_dir).unwrap_or_default();
 
     log::info!("Parsing proto files from {:?}", proto_dir);
@@ -477,7 +477,7 @@ mod tests {
 
     #[test]
     fn test_cache_stats() {
-        let cache = ProtoDocsCache::new("v23".to_string(), "abc123".to_string());
+        let cache = ProtoDocsCache::new("v24".to_string(), "abc123".to_string());
         let stats = cache.stats();
 
         assert_eq!(stats.message_count, 0);
@@ -488,7 +488,7 @@ mod tests {
 
     #[test]
     fn test_cache_validity() {
-        let cache = ProtoDocsCache::new("v23".to_string(), "abc123".to_string());
+        let cache = ProtoDocsCache::new("v24".to_string(), "abc123".to_string());
 
         assert!(cache.is_valid("abc123"));
         assert!(!cache.is_valid("different"));
@@ -554,7 +554,7 @@ mod tests {
 
     #[test]
     fn test_schema_version_invalidates_cache() {
-        let cache = ProtoDocsCache::new("v23".to_string(), "abc123".to_string());
+        let cache = ProtoDocsCache::new("v24".to_string(), "abc123".to_string());
         // Current schema version should be valid
         assert!(cache.is_valid("abc123"));
 
@@ -567,7 +567,7 @@ mod tests {
     fn make_test_cache() -> ProtoDocsCache {
         use crate::proto_parser::{ProtoFieldDoc, ProtoMessageDoc};
 
-        let mut cache = ProtoDocsCache::new("v23".to_string(), "test".to_string());
+        let mut cache = ProtoDocsCache::new("v24".to_string(), "test".to_string());
 
         // PolicySummary sub-message (not a resource)
         let policy_summary = ProtoMessageDoc {
@@ -662,7 +662,7 @@ mod tests {
     fn test_to_scraped_docs_cycle_guard() {
         use crate::proto_parser::{ProtoFieldDoc, ProtoMessageDoc};
 
-        let mut cache = ProtoDocsCache::new("v23".to_string(), "test".to_string());
+        let mut cache = ProtoDocsCache::new("v24".to_string(), "test".to_string());
 
         // A -> B -> A (cycle)
         let msg_a = ProtoMessageDoc {

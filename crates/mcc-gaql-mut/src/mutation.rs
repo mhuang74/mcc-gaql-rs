@@ -1,6 +1,6 @@
 use crate::args::{FieldUpdate, MutationOperation};
 use anyhow::Result;
-use googleads_rs::google::ads::googleads::v23::services::{
+use googleads_rs::current_gads_version::services::{
     MutateGoogleAdsRequest, MutateGoogleAdsResponse,
     google_ads_service_client::GoogleAdsServiceClient,
 };

@@ -1,7 +1,7 @@
 use anyhow::{Result, bail};
 
-use googleads_rs::google::ads::googleads::v23::services::GoogleAdsRow;
-use googleads_rs::google::ads::googleads::v23::services::{
+use googleads_rs::current_gads_version::services::GoogleAdsRow;
+use googleads_rs::current_gads_version::services::{
     SearchGoogleAdsRequest, SearchGoogleAdsStreamRequest,
     google_ads_service_client::GoogleAdsServiceClient,
 };

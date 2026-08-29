@@ -70,5 +70,5 @@ pub fn query_cookbook_path() -> Result<PathBuf> {
 
 /// Get the path to proto docs cache
 pub fn proto_docs_path() -> Result<PathBuf> {
-    Ok(cache_dir()?.join("proto_docs_v23.json"))
+    Ok(cache_dir()?.join("proto_docs_v24.json"))
 }

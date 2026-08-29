@@ -3,8 +3,8 @@ use chrono::{Duration, Utc};
 use std::collections::HashMap;
 use std::path::Path;
 
-use googleads_rs::google::ads::googleads::v23::services::SearchGoogleAdsFieldsRequest;
-use googleads_rs::google::ads::googleads::v23::services::google_ads_field_service_client::GoogleAdsFieldServiceClient;
+use googleads_rs::current_gads_version::services::SearchGoogleAdsFieldsRequest;
+use googleads_rs::current_gads_version::services::google_ads_field_service_client::GoogleAdsFieldServiceClient;
 
 use mcc_gaql_common::googleads_api::GoogleAdsAPIAccess;
 
@@ -103,7 +103,7 @@ pub async fn fetch_from_api(api_context: &GoogleAdsAPIAccess) -> Result<FieldMet
         .to_string();
 
         // Convert data_type enum to string representation
-        // Google Ads API v23 GoogleAdsFieldDataType enum:
+        // Google Ads API v24 GoogleAdsFieldDataType enum:
         // 0 = UNSPECIFIED, 1 = UNKNOWN, 2 = BOOLEAN, 3 = DATE,
         // 4 = DOUBLE, 5 = ENUM, 6 = FLOAT, 7 = INT32, 8 = INT64,
         // 9 = MESSAGE, 10 = RESOURCE_NAME, 11 = STRING, 12 = UINT64
@@ -169,7 +169,7 @@ pub async fn fetch_from_api(api_context: &GoogleAdsAPIAccess) -> Result<FieldMet
 
     let cache = FieldMetadataCache {
         last_updated: Utc::now(),
-        api_version: "v23".to_string(),
+        api_version: "v24".to_string(),
         fields,
         resources: Some(resources),
         resource_metadata: Some(resource_metadata),

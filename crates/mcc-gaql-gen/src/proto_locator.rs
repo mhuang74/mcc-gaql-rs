@@ -30,7 +30,7 @@ pub fn find_googleads_proto_dir() -> Result<PathBuf> {
         "Could not locate googleads-rs proto files. \n\
          Either set GOOGLEADS_PROTO_DIR environment variable, or ensure \n\
          googleads-rs dependency is fetched. Proto files should be in: \n\
-         $CARGO_HOME/git/checkouts/googleads-rs-*/proto/google/ads/googleads/v23/"
+         $CARGO_HOME/git/checkouts/googleads-rs-*/proto/google/ads/googleads/v24/"
     )
 }
 
@@ -64,7 +64,7 @@ fn find_in_cargo_cache() -> Option<PathBuf> {
             // Look for subdirectories within the checkout (the commit hash folders)
             if let Ok(subdirs) = std::fs::read_dir(&crate_dir) {
                 for subdir in subdirs.flatten() {
-                    let proto_path = subdir.path().join("proto/google/ads/googleads/v23");
+                    let proto_path = subdir.path().join("proto/google/ads/googleads/v24");
 
                     if proto_path.exists() {
                         return Some(proto_path);

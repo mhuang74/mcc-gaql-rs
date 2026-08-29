@@ -163,7 +163,7 @@ impl FieldMetadataCache {
     pub fn new() -> Self {
         Self {
             last_updated: Utc::now(),
-            api_version: "v23".to_string(),
+            api_version: "v24".to_string(),
             fields: HashMap::new(),
             resources: None,
             resource_metadata: None,

@@ -760,7 +760,7 @@ mod tests {
     const SAMPLE_PROTO: &str = r#"
 syntax = "proto3";
 
-package google.ads.googleads.v23.resources;
+package google.ads.googleads.v24.resources;
 
 // A campaign resource.
 message Campaign {
@@ -769,7 +769,7 @@ message Campaign {
 
   // Output only. The status of the campaign.
   // When a new campaign is added, the default value is ENABLED.
-  google.ads.googleads.v23.enums.CampaignStatusEnum.CampaignStatus status = 2 [
+  google.ads.googleads.v24.enums.CampaignStatusEnum.CampaignStatus status = 2 [
     (google.api.field_behavior) = OUTPUT_ONLY
   ];
 }
@@ -1275,7 +1275,7 @@ message AdGroup {
   string resource_name = 1;
 
   // The excluded parent asset field types.
-  repeated google.ads.googleads.v23.enums.AssetFieldTypeEnum.AssetFieldType
+  repeated google.ads.googleads.v24.enums.AssetFieldTypeEnum.AssetFieldType
       excluded_parent_asset_field_types = 54;
 
   // The name of the ad group.
@@ -1308,7 +1308,7 @@ message AdGroup {
         assert_eq!(repeated_field.field_number, 54);
         assert_eq!(
             repeated_field.type_name,
-            "google.ads.googleads.v23.enums.AssetFieldTypeEnum.AssetFieldType"
+            "google.ads.googleads.v24.enums.AssetFieldTypeEnum.AssetFieldType"
         );
         assert!(repeated_field.description.contains("excluded parent asset"));
     }
@@ -1318,7 +1318,7 @@ message DemandGenAdGroupSettings {
   // The channel controls.
   message ChannelControls {
     // The channel strategy.
-    google.ads.googleads.v23.enums.DemandGenChannelStrategyEnum
+    google.ads.googleads.v24.enums.DemandGenChannelStrategyEnum
         .DemandGenChannelStrategy channel_strategy = 2;
   }
 
@@ -1347,7 +1347,7 @@ message DemandGenAdGroupSettings {
         // Type name should be clean (no internal whitespace)
         assert_eq!(
             field.type_name,
-            "google.ads.googleads.v23.enums.DemandGenChannelStrategyEnum.DemandGenChannelStrategy"
+            "google.ads.googleads.v24.enums.DemandGenChannelStrategyEnum.DemandGenChannelStrategy"
         );
         assert!(field.description.contains("channel strategy"));
     }
@@ -1358,7 +1358,7 @@ message Campaign {
   string resource_name = 1;
 
   // The excluded parent asset set types for this campaign.
-  repeated google.ads.googleads.v23.enums.AssetSetTypeEnum
+  repeated google.ads.googleads.v24.enums.AssetSetTypeEnum
       .AssetSetType excluded_parent_asset_set_types = 80;
 }
 "#;
@@ -1380,7 +1380,7 @@ message Campaign {
         assert_eq!(field.field_number, 80);
         assert_eq!(
             field.type_name,
-            "google.ads.googleads.v23.enums.AssetSetTypeEnum.AssetSetType"
+            "google.ads.googleads.v24.enums.AssetSetTypeEnum.AssetSetType"
         );
         assert!(field.description.contains("excluded parent asset set"));
     }
