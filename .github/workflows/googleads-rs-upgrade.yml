@@ -364,6 +364,7 @@ jobs:
             VERSION_NOTE=" (GOOGLEADS_API_VERSION + RAG_BUNDLE_KEY)"
             RELEASE_LINE="Release notes: https://developers.google.com/google-ads/api/docs/release-notes/v${MAJOR}"
           fi
+          git push -u origin "$BRANCH"
           PR_URL="$(gh pr create --base main --head "$BRANCH" \
             --title "chore: upgrade googleads-rs to ${LATEST_VER}" \
             --body "$(cat <<EOF
