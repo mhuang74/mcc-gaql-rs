@@ -1,0 +1,531 @@
+# googleads-rs auto-upgrade workflow
+#
+# Mirrors googleads-rs's own automated Google-Ads-API upgrade pipeline
+# (see googleads-rs CICD.md / .github/workflows/google-ads-upgrade.yml):
+#   1. detect   — read current googleads-rs rev pin from Cargo.lock (resolved
+#                 truth), resolve target (manual input or googleads-rs main
+#                 HEAD), compare crate versions, apply skip guards.
+#   2. migrate  — branch bot/googleads-rs-<ver>, bump the 3 Cargo.toml rev
+#                 pins, `cargo update -p googleads-rs`, and on major bumps
+#                 update GOOGLEADS_API_VERSION + RAG_BUNDLE_KEY in
+#                 crates/mcc-gaql-common/src/version.rs. Commit locally, no
+#                 push yet.
+#   3. validate — cargo check / test (serial) / mcc-gaql-gen parse-protos
+#                 against the new pin.
+#   4. PR       — on green validation: push branch + open PR with UPGRADE_PAT
+#                 (PAT is required so the PR fires other workflows;
+#                 GITHUB_TOKEN PRs never trigger `pull_request` workflows).
+#   5. repair   — on failed validation: bounded pi (AI) repair loop, up to
+#                 PI_MAX_ATTEMPTS attempts; PR opened only if repair finally
+#                 passes validation.
+#
+# Schedule: Thu 07:00 UTC — deliberately after googleads-rs's own Thursday
+# detect (04:30 UTC) + worker (05:00 UTC) cycle, so this repo consumes what
+# upstream produced this week. Commits landing later are caught next week;
+# manual dispatch covers urgency.
+#
+# Secrets:
+#   UPGRADE_PAT        — required. classic PAT with repo scope, or fine-grained
+#                        Contents+Pull-requests RW. Used ONLY for `gh pr create`
+#                        so the PR triggers rust.yml/code-review.yml.
+#   PI_API_KEY         — required for AI repair only. Injected ONLY into the
+#                        repair step (never job-level).
+# Variables (repo → Settings → Secrets and variables → Actions):
+#   MCC_GAQL_R2_PUBLIC_ID — required (build-time env for mcc-gaql-gen build.rs).
+#   PI_MODEL / PI_PROVIDER — optional; defaults glm-5.3-flash / ollama-cloud.
+#
+# Retry contract:
+#   Success → PR on main; human merges. An open PR for the same branch blocks
+#     further upgrades (skipped at detect) until merged/closed.
+#   Failure → branch pushed without PR (for inspection); NO PR is opened.
+#     Next weekly run deletes the stale branch (no open PR) and retries fresh
+#     from main with a full 5-attempt repair budget.
+#   Manual dispatch with `target_rev=<sha>` re-runs against a chosen upstream
+#     commit. PI_MODEL/PI_PROVIDER retune the repair model without workflow
+#     edits.
+
+name: googleads-rs-upgrade
+
+on:
+  schedule:
+    - cron: '0 7 * * 4'   # Thu 07:00 UTC
+  workflow_dispatch:
+    inputs:
+      target_rev:
+        description: 'Optional googleads-rs commit sha to pin (default: main HEAD)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write        # push/delete upgrade branch
+  pull-requests: write   # open PR
+
+concurrency:
+  group: googleads-rs-upgrade
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  upgrade:
+    name: Detect, pin, validate, PR
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history helps pi repair context
+
+      - name: Install deps
+        run: sudo apt-get -y install protobuf-compiler
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "mcc-gaql-rs-gen"
+          cache-on-failure: true
+          # same cache-directories list as rust.yml build-gen
+          cache-directories: |
+            ~/.cargo/registry/cache
+            ~/.cargo/registry/src
+            ~/.cargo/git/db
+            target
+
+      - name: Clear ort cache
+        run: rm -rf ~/.cache/ort.pyke.io
+
+      - name: Detect upgrade
+        id: detect
+        env:
+          TARGET_REV: ${{ inputs.target_rev }}
+          UP_PAT: ${{ secrets.UPGRADE_PAT }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # gh pr list in stale-branch policy
+        run: |
+          set -euo pipefail
+
+          # current pin from Cargo.lock (authoritative resolved state)
+          BLOCK="$(grep -A2 '^name = "googleads-rs"$' Cargo.lock | head -4)"
+          CUR_VER="$(sed -nE 's/^version = "([^"]+)"$/\1/p' <<<"$BLOCK")"
+          CUR_REV="$(sed -nE 's/.*rev=([0-9a-f]{40}).*/\1/p' <<<"$BLOCK")"
+          [ -n "$CUR_REV" ] || { echo "::error::no googleads-rs rev pin found in Cargo.lock"; exit 1; }
+
+          # target: manual input or googleads-rs main HEAD; normalize short sha
+          LATEST_SHA="$TARGET_REV"
+          if [ -n "$LATEST_SHA" ] && [ "${#LATEST_SHA}" -ne 40 ]; then
+            LATEST_SHA="$(gh api "repos/mhuang74/googleads-rs/commits/${LATEST_SHA}" --jq .sha)"
+          fi
+          if [ -z "$LATEST_SHA" ]; then
+            LATEST_SHA="$(git ls-remote https://github.com/mhuang74/googleads-rs.git refs/heads/main | cut -f1)"
+          fi
+          [ -n "$LATEST_SHA" ] || { echo "::error::could not resolve googleads-rs main"; exit 1; }
+
+          # crate version at target commit (the effective "release" —
+          # googleads-rs bumps it per Google API release)
+          CURL_AUTH=()
+          if [ -n "$UP_PAT" ]; then
+            CURL_AUTH=(-H "Authorization: Bearer ${UP_PAT}")
+          fi
+          CARGO_TOML="$(curl -fsSL "${CURL_AUTH[@]}" "https://raw.githubusercontent.com/mhuang74/googleads-rs/${LATEST_SHA}/Cargo.toml")"
+          LATEST_VER="$(sed -nE 's/^version = "([^"]+)"$/\1/p' <<<"$CARGO_TOML" | head -1)"
+
+          SUMMARY_HEADER="### googleads-rs upgrade"
+          if [ "$LATEST_SHA" == "$CUR_REV" ]; then
+            {
+              echo "$SUMMARY_HEADER"
+              echo ""
+              echo "Already up to date: googleads-rs ${CUR_VER} @ ${CUR_REV:0:9}"
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # docs-only drift guard: compare pin..target; skip when crate version
+          # is unchanged AND only non-binding paths changed
+          CHANGED="$(curl -fsSL "${CURL_AUTH[@]}" "https://api.github.com/repos/mhuang74/googleads-rs/compare/${CUR_REV}...${LATEST_SHA}" | jq -r '.files[].filename' || true)"
+          [ -n "$CHANGED" ] || CHANGED="Cargo.toml"   # unknown → material
+          MATERIAL="$(echo "$CHANGED" | grep -Ev '^(CICD\.md|README\.md|CHANGELOG\.md|specs/|reports/|\.github/|\.gitignore|tests/.*\.md|docs/)' || true)"
+          if [ -z "$MATERIAL" ] && [ "$LATEST_VER" == "$CUR_VER" ]; then
+            {
+              echo "$SUMMARY_HEADER"
+              echo ""
+              echo "Only docs/CI drift between ${CUR_REV:0:9}..${LATEST_SHA:0:9} (crate version unchanged at ${CUR_VER}); skipping."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          MAJOR_BUMP=$([ "${CUR_VER%%.*}" != "${LATEST_VER%%.*}" ] && echo true || echo false)
+          BRANCH="bot/googleads-rs-${LATEST_VER}"
+
+          # stale-branch policy: open PR → wait for human; stale branch without
+          # PR (past failed run) → delete so this run retries fresh from main
+          if git fetch origin "$BRANCH" 2>/dev/null; then
+            OPEN_PR="$(gh pr list --head "$BRANCH" --state open --json number --jq 'length')"
+            if [ "${OPEN_PR}" != "0" ]; then
+              {
+                echo "$SUMMARY_HEADER"
+                echo ""
+                echo "PR for branch \`${BRANCH}\` is open and awaiting review; not starting a new upgrade."
+              } >> "$GITHUB_STEP_SUMMARY"
+              echo "changed=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            git push origin --delete "$BRANCH"
+            {
+              echo "$SUMMARY_HEADER"
+              echo ""
+              echo "Deleted stale branch \`${BRANCH}\` (previous run failed without PR); retrying fresh."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          # summary + outputs
+          {
+            echo "$SUMMARY_HEADER"
+            echo ""
+            echo "| | rev | crate |"
+            echo "|---|---|---|"
+            echo "| was | \`${CUR_REV:0:9}\` | ${CUR_VER} |"
+            echo "| now | \`${LATEST_SHA:0:9}\` | ${LATEST_VER} |"
+            echo "| major bump | ${MAJOR_BUMP} | branch \`${BRANCH}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "changed=true"
+            echo "latest_ver=${LATEST_VER}"
+            echo "latest_sha=${LATEST_SHA}"
+            echo "cur_ver=${CUR_VER}"
+            echo "cur_rev=${CUR_REV}"
+            echo "major_bump=${MAJOR_BUMP}"
+            echo "branch=${BRANCH}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Migrate — bump pin
+        id: migrate
+        if: steps.detect.outputs.changed == 'true'
+        env:
+          BRANCH: ${{ steps.detect.outputs.branch }}
+          LATEST_SHA: ${{ steps.detect.outputs.latest_sha }}
+          LATEST_VER: ${{ steps.detect.outputs.latest_ver }}
+          MAJOR_BUMP: ${{ steps.detect.outputs.major_bump }}
+        run: |
+          set -euo pipefail
+          MAJOR="${LATEST_VER%%.*}"
+
+          # branch from main (the checked-out workflow ref), no push yet — a
+          # failing run must never land an unvalidated branch
+          git checkout -B "$BRANCH"
+          git config user.name "mcc-gaql-upgrade-bot"
+          git config user.email "mhuang74@users.noreply.github.com"
+
+          for f in crates/mcc-gaql/Cargo.toml crates/mcc-gaql-common/Cargo.toml crates/mcc-gaql-mut/Cargo.toml; do
+            sed -i -E "s/rev = \"[0-9a-f]{40}\"/rev = \"${LATEST_SHA}\"/" "$f"
+            grep -q "rev = \"${LATEST_SHA}\"" "$f" || { echo "::error::pin update failed in $f"; exit 1; }
+          done
+
+          cargo update -p googleads-rs
+          grep -q "rev=${LATEST_SHA}" Cargo.lock || { echo "::error::Cargo.lock not updated to ${LATEST_SHA}"; exit 1; }
+
+          if [ "$MAJOR_BUMP" == "true" ]; then
+            sed -i -E 's/pub const GOOGLEADS_API_VERSION: &str = "v[0-9]+";/pub const GOOGLEADS_API_VERSION: \&str = "v'"${MAJOR}"';/' crates/mcc-gaql-common/src/version.rs
+            sed -i -E 's/mcc-gaql-rag-bundle-v[0-9]+\.tar\.gz/mcc-gaql-rag-bundle-v'"${MAJOR}"'.tar.gz/' crates/mcc-gaql-common/src/version.rs
+            grep -q '"v'"${MAJOR}"'"' crates/mcc-gaql-common/src/version.rs || { echo "::error::version.rs not updated to v${MAJOR}"; exit 1; }
+          fi
+
+          git add Cargo.lock crates/mcc-gaql/Cargo.toml crates/mcc-gaql-common/Cargo.toml crates/mcc-gaql-mut/Cargo.toml crates/mcc-gaql-common/src/version.rs
+          git commit -m "chore: upgrade googleads-rs to ${LATEST_VER} (rev ${LATEST_SHA:0:9})"
+
+      - name: First validation
+        id: first_validate
+        if: steps.detect.outputs.changed == 'true'
+        env:
+          MCC_GAQL_R2_PUBLIC_ID: ${{ vars.MCC_GAQL_R2_PUBLIC_ID }}
+        run: |
+          : > /tmp/first-validation-failures.txt
+          set +e
+          failed=false
+          run() {
+            echo "::group::$*" >> /tmp/first-validation-failures.txt
+            if ! "$@" >> /tmp/first-validation-failures.txt 2>&1; then failed=true; fi
+            echo "::endgroup::" >> /tmp/first-validation-failures.txt
+          }
+          # --test-threads=1 is mandatory (repo convention: race conditions)
+          run cargo check --profile ci --workspace
+          run cargo test --profile ci --workspace -- --test-threads=1
+          # parse-protos at the end: needs workspace+gen compile anyway; its
+          # implicit GOOGLEADS_API_VERSION-keyed proto lookup doubles as the
+          # version-consistency check
+          run cargo run --profile ci -p mcc-gaql-gen -- parse-protos --force --output /tmp/proto_docs.json
+          echo "failed=$failed" >> "$GITHUB_OUTPUT"
+
+      - name: Open PR (validation passed)
+        id: open_pr
+        if: steps.first_validate.outputs.failed == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.UPGRADE_PAT }}   # PAT so PR events fire rust.yml checks
+          BRANCH: ${{ steps.detect.outputs.branch }}
+          LATEST_SHA: ${{ steps.detect.outputs.latest_sha }}
+          LATEST_VER: ${{ steps.detect.outputs.latest_ver }}
+          CUR_REV: ${{ steps.detect.outputs.cur_rev }}
+          CUR_VER: ${{ steps.detect.outputs.cur_ver }}
+          MAJOR_BUMP: ${{ steps.detect.outputs.major_bump }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          MAJOR="${LATEST_VER%%.*}"
+          VERSION_NOTE=""
+          RELEASE_LINE=""
+          if [ "$MAJOR_BUMP" == "true" ]; then
+            VERSION_NOTE=" (GOOGLEADS_API_VERSION + RAG_BUNDLE_KEY)"
+            RELEASE_LINE="Release notes: https://developers.google.com/google-ads/api/docs/release-notes/v${MAJOR}"
+          fi
+          git push -u origin "$BRANCH"
+          gh pr create --base main --head "$BRANCH" \
+            --title "chore: upgrade googleads-rs to ${LATEST_VER}" \
+            --body "$(cat <<EOF
+          Automated googleads-rs upgrade ([workflow run](${RUN_URL})).
+
+          | | rev | crate |
+          |---|---|---|
+          | was | \`${CUR_REV:0:9}\` | ${CUR_VER} |
+          | now | \`${LATEST_SHA:0:9}\` | ${LATEST_VER} |
+
+          Changes: 3× rev pins, \`cargo update -p googleads-rs\`, version.rs${VERSION_NOTE}.
+          Upstream: https://github.com/mhuang74/googleads-rs/commit/${LATEST_SHA}
+          ${RELEASE_LINE}
+          EOF
+          )"
+
+      - name: Install pi (AI repair agent)
+        if: steps.first_validate.outputs.failed == 'true'
+        run: npm install -g @earendil-works/pi-coding-agent
+
+      - name: AI repair (pi)
+        id: ai_repair
+        if: steps.first_validate.outputs.failed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # git push only; never for pi
+          PI_API_KEY: ${{ secrets.PI_API_KEY }}   # step-local; never job-level
+          PI_PROVIDER: ${{ vars.PI_PROVIDER || 'ollama-cloud' }}
+          PI_MODEL: ${{ vars.PI_MODEL || 'glm-5.3-flash' }}
+          PI_MAX_ATTEMPTS: '5'
+          MCC_GAQL_R2_PUBLIC_ID: ${{ vars.MCC_GAQL_R2_PUBLIC_ID }}
+          BRANCH: ${{ steps.detect.outputs.branch }}
+          LATEST_SHA: ${{ steps.detect.outputs.latest_sha }}
+          LATEST_VER: ${{ steps.detect.outputs.latest_ver }}
+          CUR_REV: ${{ steps.detect.outputs.cur_rev }}
+          CUR_VER: ${{ steps.detect.outputs.cur_ver }}
+          MAJOR_BUMP: ${{ steps.detect.outputs.major_bump }}
+        run: |
+          set -euo pipefail
+          MAJOR="${LATEST_VER%%.*}"
+          MAJOR_NOTE=""
+          RELEASE_LINE=""
+          if [ "$MAJOR_BUMP" == "true" ]; then
+            MAJOR_NOTE=" This is a MAJOR bump (API v${CUR_VER%%.*} → v${MAJOR})."
+            RELEASE_LINE="Google Ads API release notes: https://developers.google.com/google-ads/api/docs/release-notes/v${MAJOR}"
+          fi
+
+          # migration context (pi has no --context/--failures flags; inline it)
+          cat > /tmp/mcc-gaql-migration.md <<MIGRATION_EOF
+          # googleads-rs upgrade — automated migration context
+
+          This workspace (mcc-gaql-rs) consumes the googleads-rs crate (Google
+          Ads API bindings) as a git dependency pinned by rev in three
+          Cargo.toml files. A workflow just bumped the pin from googleads-rs
+          ${CUR_VER} (rev ${CUR_REV}) to ${LATEST_VER} (rev ${LATEST_SHA}).${MAJOR_NOTE}
+          ${RELEASE_LINE}
+
+          ## Repository layout
+
+          - 4 crates under crates/: mcc-gaql (query CLI, polars),
+            mcc-gaql-gen (documentation/RAG generator),
+            mcc-gaql-common (shared), mcc-gaql-mut (mutations).
+          - The versioned googleads-rs module entrypoint is the
+            'current_gads_version' alias — always use that alias, never raw
+            vNN module paths.
+          - crates/mcc-gaql-common/src/version.rs holds GOOGLEADS_API_VERSION
+            and RAG_BUNDLE_KEY. It has ALREADY been updated by the workflow —
+            do NOT re-edit it.
+
+          ## Validation commands (all three must pass)
+
+          1. cargo check --profile ci --workspace
+          2. cargo test --profile ci --workspace -- --test-threads=1
+             (--test-threads=1 is a repo convention; mandatory)
+          3. cargo run --profile ci -p mcc-gaql-gen -- parse-protos --force --output /tmp/proto_docs.json
+             (must parse all protos for the new API version with 0 errors)
+
+          ## Hard rules — violating any is a hard failure
+
+          1. Do NOT delete tests or test files.
+          2. Do NOT weaken assertions (e.g. changing assert_eq to assert, removing checks).
+          3. Do NOT add #[ignore] to tests to bypass failures.
+          4. Do NOT disable clippy lints or add #[allow(...)] attributes.
+          5. Do NOT edit .github/** or specs/**.
+          6. Do NOT edit the Cargo.toml googleads-rs rev pins or Cargo.lock
+             (Cargo.lock regenerates only via 'cargo update -p googleads-rs').
+          7. Do NOT edit crates/mcc-gaql-common/src/version.rs (pre-updated by
+             the workflow).
+
+          ## What you may edit
+
+          - Source and tests under crates/*/src and crates/*/tests only.
+
+          ## What to do
+
+          - Fix compile errors and test failures caused by the upgrade.
+          - Make minimal, targeted edits.
+          - Run the three validation commands to check your fixes.
+          MIGRATION_EOF
+
+          SYSTEM_PROMPT='You are an automated repair agent for the mcc-gaql-rs workspace\
+          (Google Ads API upgrade to new googleads-rs crate). Read\
+          /tmp/mcc-gaql-migration.md for context, versions, and repository structure.\
+          \
+          HARD RULES — violating any is a hard failure:\
+          1. Do NOT delete tests or test files.\
+          2. Do NOT weaken assertions (e.g. changing assert_eq to assert).\
+          3. Do NOT add #[ignore] to tests to bypass failures.\
+          4. Do NOT disable clippy lints or add #[allow(...)] attributes.\
+          5. Do NOT edit .github/** or specs/**.\
+          6. Do NOT edit the Cargo.toml googleads-rs rev pins or Cargo.lock.\
+          7. Do NOT edit crates/mcc-gaql-common/src/version.rs (pre-updated).\
+          \
+          WHAT TO DO:\
+          - Fix compile errors and test failures caused by the API version upgrade.\
+          - Make minimal, targeted edits to source and tests under crates/*/src and crates/*/tests only.\
+          - The versioned googleads-rs module is accessed via the current_gads_version alias — use it, never raw vNN paths.\
+          - Run the three validation commands from the migration notes to check your fixes.\
+          - You have a limited total attempt budget; the outer loop counts attempts.\
+          \
+          COMMON UPGRADE FAILURE PATTERNS:\
+          - Removed/renamed fields: update field references in match arms, callsites, and tests.\
+          - Changed enum variants: update match arms.\
+          - New required fields: add defaults in test constructors.\
+          - Proto FQN / module changes: derived from the versioned module entrypoint;\
+            check whether the current_gads_version alias line needs repointing\
+            (the alias lives in source you may edit; version.rs stays untouched).'
+
+          REPAIR_SUCCEEDED=false
+          for ATTEMPT in $(seq 1 "$PI_MAX_ATTEMPTS"); do
+            ATTEMPT_LOG=/tmp/ai-repair-attempt-${ATTEMPT}.log
+            echo "=== Repair attempt ${ATTEMPT}/${PI_MAX_ATTEMPTS} ===" | tee "${ATTEMPT_LOG}"
+
+            PROMPT="$(cat /tmp/mcc-gaql-migration.md)
+
+          ## Validation failures
+
+          $(sed -n '1,400p' /tmp/first-validation-failures.txt)
+
+          Attempt ${ATTEMPT} of ${PI_MAX_ATTEMPTS}. Re-run the three validation
+          commands; all must pass."
+
+            pi \
+              --provider "${PI_PROVIDER}" \
+              --model "${PI_MODEL}" \
+              --system-prompt "${SYSTEM_PROMPT}" \
+              --api-key "${PI_API_KEY}" \
+              --print \
+              --no-session \
+              --approve \
+              "${PROMPT}" >> "${ATTEMPT_LOG}" 2>&1 || true
+
+            # capture pi's changes as a diff for post-hoc review
+            git diff HEAD >> "${ATTEMPT_LOG}" 2>&1 || true
+
+            # re-validate (same 3 commands)
+            : > /tmp/attempt-failures.txt
+            ok=true
+            runv() {
+              echo "::group::$*" >> /tmp/attempt-failures.txt
+              "$@" >> /tmp/attempt-failures.txt 2>&1 || ok=false
+              echo "::endgroup::" >> /tmp/attempt-failures.txt
+            }
+            runv cargo check --profile ci --workspace
+            runv cargo test --profile ci --workspace -- --test-threads=1
+            runv cargo run --profile ci -p mcc-gaql-gen -- parse-protos --force --output /tmp/proto_docs.json
+
+            if [ "$ok" == "true" ]; then
+              echo "Repair attempt ${ATTEMPT}: validation passed" | tee -a "${ATTEMPT_LOG}"
+              git add -A
+              git commit -m "fix: repair googleads-rs ${LATEST_VER} upgrade failures (attempt ${ATTEMPT})"
+              git push origin "$BRANCH"
+              REPAIR_SUCCEEDED=true
+              break
+            fi
+
+            echo "Repair attempt ${ATTEMPT}: validation still failing" | tee -a "${ATTEMPT_LOG}"
+            # keep partial fixes on the branch for the next attempt / inspection
+            git add -A
+            git commit -m "fix: partial repair (attempt ${ATTEMPT}, still failing)" || true
+            git push origin "$BRANCH" || true
+          done
+
+          echo "repair_succeeded=${REPAIR_SUCCEEDED}" >> "$GITHUB_OUTPUT"
+          [ "$REPAIR_SUCCEEDED" == "true" ] || { echo "::error::AI repair failed after ${PI_MAX_ATTEMPTS} attempts; branch pushed for inspection"; exit 1; }
+
+      - name: Open PR (after AI repair)
+        id: post_repair_pr
+        if: steps.first_validate.outputs.failed == 'true' && steps.ai_repair.outputs.repair_succeeded == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.UPGRADE_PAT }}
+          BRANCH: ${{ steps.detect.outputs.branch }}
+          LATEST_SHA: ${{ steps.detect.outputs.latest_sha }}
+          LATEST_VER: ${{ steps.detect.outputs.latest_ver }}
+          CUR_REV: ${{ steps.detect.outputs.cur_rev }}
+          CUR_VER: ${{ steps.detect.outputs.cur_ver }}
+          MAJOR_BUMP: ${{ steps.detect.outputs.major_bump }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          MAJOR="${LATEST_VER%%.*}"
+          VERSION_NOTE=""
+          RELEASE_LINE=""
+          if [ "$MAJOR_BUMP" == "true" ]; then
+            VERSION_NOTE=" (GOOGLEADS_API_VERSION + RAG_BUNDLE_KEY)"
+            RELEASE_LINE="Release notes: https://developers.google.com/google-ads/api/docs/release-notes/v${MAJOR}"
+          fi
+          gh pr create --base main --head "$BRANCH" \
+            --title "chore: upgrade googleads-rs to ${LATEST_VER}" \
+            --body "$(cat <<EOF
+          Automated googleads-rs upgrade ([workflow run](${RUN_URL})).
+
+          | | rev | crate |
+          |---|---|---|
+          | was | \`${CUR_REV:0:9}\` | ${CUR_VER} |
+          | now | \`${LATEST_SHA:0:9}\` | ${LATEST_VER} |
+
+          Changes: 3× rev pins, \`cargo update -p googleads-rs\`, version.rs${VERSION_NOTE}.
+          Upstream: https://github.com/mhuang74/googleads-rs/commit/${LATEST_SHA}
+          ${RELEASE_LINE}
+
+          Validation passed after AI repair (5-attempt budget).
+          EOF
+          )"
+
+      - name: Final summary
+        if: always()
+        env:
+          CHANGED: ${{ steps.detect.outputs.changed }}
+          CUR_VER: ${{ steps.detect.outputs.cur_ver }}
+          LATEST_VER: ${{ steps.detect.outputs.latest_ver }}
+          MAJOR_BUMP: ${{ steps.detect.outputs.major_bump }}
+          BRANCH: ${{ steps.detect.outputs.branch }}
+          FIRST_FAILED: ${{ steps.first_validate.outputs.failed }}
+          REPAIR_SUCCEEDED: ${{ steps.ai_repair.outputs.repair_succeeded }}
+        run: |
+          set -euo pipefail
+          if [ "$CHANGED" != "true" ]; then
+            OUTCOME="No upgrade started (up to date / PR already open / docs-only drift)."
+          elif [ "$FIRST_FAILED" == "false" ]; then
+            OUTCOME="PR opened for \`${BRANCH}\`: googleads-rs ${CUR_VER} → ${LATEST_VER} (major_bump=${MAJOR_BUMP})."
+          elif [ "$REPAIR_SUCCEEDED" == "true" ]; then
+            OUTCOME="PR opened for \`${BRANCH}\` after AI repair: googleads-rs ${CUR_VER} → ${LATEST_VER} (major_bump=${MAJOR_BUMP})."
+          else
+            OUTCOME="FAILED: validation failed and AI repair did not succeed. Branch \`${BRANCH}\` pushed for inspection; next run deletes it and retries fresh."
+          fi
+          { echo "### googleads-rs upgrade — outcome"; echo ""; echo "$OUTCOME"; } >> "$GITHUB_STEP_SUMMARY"
