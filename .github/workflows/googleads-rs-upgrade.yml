@@ -284,9 +284,9 @@ jobs:
           grep -q "rev=${LATEST_SHA}" Cargo.lock || { echo "::error::Cargo.lock not updated to ${LATEST_SHA}"; exit 1; }
 
           if [ "$MAJOR_BUMP" == "true" ]; then
-            sed -i -E 's/pub const GOOGLEADS_API_VERSION: &str = "v[0-9]+";/pub const GOOGLEADS_API_VERSION: \&str = "v'"${MAJOR}"';/' crates/mcc-gaql-common/src/version.rs
-            sed -i -E 's/mcc-gaql-rag-bundle-v[0-9]+\.tar\.gz/mcc-gaql-rag-bundle-v'"${MAJOR}"'.tar.gz/' crates/mcc-gaql-common/src/version.rs
-            grep -q '"v'"${MAJOR}"'"' crates/mcc-gaql-common/src/version.rs || { echo "::error::version.rs not updated to v${MAJOR}"; exit 1; }
+            sed -i -E "s/pub const GOOGLEADS_API_VERSION: &str = \"v[0-9]+\";/pub const GOOGLEADS_API_VERSION: \&str = \"v${MAJOR}\";/" crates/mcc-gaql-common/src/version.rs
+            sed -i -E "s/mcc-gaql-rag-bundle-v[0-9]+\.tar\.gz/mcc-gaql-rag-bundle-v${MAJOR}.tar.gz/" crates/mcc-gaql-common/src/version.rs
+            grep -q "\"v${MAJOR}\"" crates/mcc-gaql-common/src/version.rs || { echo "::error::version.rs not updated to v${MAJOR}"; exit 1; }
           fi
 
           git add Cargo.lock crates/mcc-gaql/Cargo.toml crates/mcc-gaql-common/Cargo.toml crates/mcc-gaql-mut/Cargo.toml crates/mcc-gaql-common/src/version.rs
