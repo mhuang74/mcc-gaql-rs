@@ -40,6 +40,11 @@
 #   Failure → branch pushed without PR (for inspection); NO PR is opened.
 #     Next weekly run deletes the stale branch (no open PR) and retries fresh
 #     from main with a full 5-attempt repair budget.
+#   Tracking issue → an issue titled `Upgrade googleads-rs to <ver>
+#     (automated)` is created when an upgrade starts; validation/repair
+#     errors are posted as comments on it; the upgrade PR contains
+#     `Closes #<issue>` so merging closes it; failed runs leave the issue
+#     open for human review.
 #   Manual dispatch with `target_rev=<sha>` re-runs against a chosen upstream
 #     commit. PI_MODEL/PI_PROVIDER retune the repair model without workflow
 #     edits.
@@ -59,6 +64,7 @@ on:
 permissions:
   contents: write        # push/delete upgrade branch
   pull-requests: write   # open PR
+  issues: write          # create/comment tracking issue
 
 concurrency:
   group: googleads-rs-upgrade
@@ -203,6 +209,54 @@ jobs:
             echo "branch=${BRANCH}"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Create tracking issue
+        id: tracking_issue
+        if: steps.detect.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # issue create/comment; issue events trigger no workflows
+          LATEST_VER: ${{ steps.detect.outputs.latest_ver }}
+          LATEST_SHA: ${{ steps.detect.outputs.latest_sha }}
+          CUR_VER: ${{ steps.detect.outputs.cur_ver }}
+          CUR_REV: ${{ steps.detect.outputs.cur_rev }}
+          MAJOR_BUMP: ${{ steps.detect.outputs.major_bump }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          TITLE="Upgrade googleads-rs to ${LATEST_VER} (automated)"
+
+          # bot-controlled titles → exact-phrase title search is a reliable dedupe;
+          # version in the title prevents matching older upgrades' issues
+          EXISTING="$(gh issue list --state open --search "\"${TITLE}\" in:title" --json number --jq '.[0].number // empty')"
+
+          if [ -z "$EXISTING" ]; then
+            cat > /tmp/issue-body.md <<ISSUE_EOF
+          Automated googleads-rs upgrade detected ([workflow run](${RUN_URL})).
+
+          | | rev | crate |
+          |---|---|---|
+          | was | \`${CUR_REV:0:9}\` | ${CUR_VER} |
+          | now | \`${LATEST_SHA:0:9}\` | ${LATEST_VER} |
+
+          Upstream commit: https://github.com/mhuang74/googleads-rs/commit/${LATEST_SHA}
+          ISSUE_EOF
+            if [ "$MAJOR_BUMP" == "true" ]; then
+              echo "Release notes: https://developers.google.com/google-ads/api/docs/release-notes/v${LATEST_VER%%.*}" >> /tmp/issue-body.md
+            fi
+            cat >> /tmp/issue-body.md <<ISSUE_EOF
+          Validation failures and AI-repair progress will be posted as comments on this issue. The upgrade PR references this issue with \`Closes #N\` — merging the PR closes it. If a run fails, the branch stays pushed for inspection and the next scheduled run deletes it and retries (comments continue here).
+          ISSUE_EOF
+            ISSUE_URL="$(gh issue create --title "$TITLE" --body-file /tmp/issue-body.md)"
+            ISSUE_NUM="${ISSUE_URL##*/}"
+          else
+            gh issue comment "$EXISTING" --body "New upgrade run for the same target (${LATEST_VER}): ${RUN_URL}. Previous attempt failed without a PR; stale branch deleted, retrying fresh."
+            ISSUE_URL="https://github.com/${GITHUB_REPOSITORY}/issues/${EXISTING}"
+            ISSUE_NUM="$EXISTING"
+          fi
+          {
+            echo "number=${ISSUE_NUM}"
+            echo "url=${ISSUE_URL}"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Migrate — bump pin
         id: migrate
         if: steps.detect.outputs.changed == 'true'
@@ -261,6 +315,33 @@ jobs:
           run cargo run --profile ci -p mcc-gaql-gen -- parse-protos --force --output /tmp/proto_docs.json
           echo "failed=$failed" >> "$GITHUB_OUTPUT"
 
+
+      - name: Report first-validation failures
+        id: report_first_fail
+        if: steps.first_validate.outputs.failed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE: ${{ steps.tracking_issue.outputs.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## First validation failed"
+            echo ""
+            echo "Run: ${RUN_URL}"
+            echo ""
+            echo '```'
+            sed -n '1,300p' /tmp/first-validation-failures.txt
+            echo '```'
+            if [ "$(wc -l < /tmp/first-validation-failures.txt)" -gt 300 ]; then
+              echo ""
+              echo "…(truncated — full log in run ${RUN_URL})"
+            fi
+            echo ""
+            echo "AI repair starting (≤5 attempts); per-attempt results will be commented here."
+          } > /tmp/fail-comment.md
+          gh issue comment "$ISSUE" --body-file /tmp/fail-comment.md
+
       - name: Open PR (validation passed)
         id: open_pr
         if: steps.first_validate.outputs.failed == 'false'
@@ -273,6 +354,7 @@ jobs:
           CUR_VER: ${{ steps.detect.outputs.cur_ver }}
           MAJOR_BUMP: ${{ steps.detect.outputs.major_bump }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          ISSUE: ${{ steps.tracking_issue.outputs.number }}
         run: |
           set -euo pipefail
           MAJOR="${LATEST_VER%%.*}"
@@ -282,8 +364,7 @@ jobs:
             VERSION_NOTE=" (GOOGLEADS_API_VERSION + RAG_BUNDLE_KEY)"
             RELEASE_LINE="Release notes: https://developers.google.com/google-ads/api/docs/release-notes/v${MAJOR}"
           fi
-          git push -u origin "$BRANCH"
-          gh pr create --base main --head "$BRANCH" \
+          PR_URL="$(gh pr create --base main --head "$BRANCH" \
             --title "chore: upgrade googleads-rs to ${LATEST_VER}" \
             --body "$(cat <<EOF
           Automated googleads-rs upgrade ([workflow run](${RUN_URL})).
@@ -296,8 +377,12 @@ jobs:
           Changes: 3× rev pins, \`cargo update -p googleads-rs\`, version.rs${VERSION_NOTE}.
           Upstream: https://github.com/mhuang74/googleads-rs/commit/${LATEST_SHA}
           ${RELEASE_LINE}
+
+          Closes #${ISSUE}
           EOF
-          )"
+          )" )"
+          GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" gh issue comment "$ISSUE" --body "Upgrade PR opened: ${PR_URL} — merging auto-closes this issue." || true
+          echo "pr_url=${PR_URL}" >> "$GITHUB_OUTPUT"
 
       - name: Install pi (AI repair agent)
         if: steps.first_validate.outputs.failed == 'true'
@@ -319,6 +404,8 @@ jobs:
           CUR_REV: ${{ steps.detect.outputs.cur_rev }}
           CUR_VER: ${{ steps.detect.outputs.cur_ver }}
           MAJOR_BUMP: ${{ steps.detect.outputs.major_bump }}
+          ISSUE: ${{ steps.tracking_issue.outputs.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
           MAJOR="${LATEST_VER%%.*}"
@@ -455,18 +542,38 @@ jobs:
               git commit -m "fix: repair googleads-rs ${LATEST_VER} upgrade failures (attempt ${ATTEMPT})"
               git push origin "$BRANCH"
               REPAIR_SUCCEEDED=true
+              gh issue comment "$ISSUE" --body "Validation passed after repair attempt ${ATTEMPT}; opening PR." || true
               break
             fi
 
+            {
+              echo "Repair attempt ${ATTEMPT}/${PI_MAX_ATTEMPTS} failed — run ${RUN_URL}"
+              echo ""
+              echo '```'
+              sed -n '1,300p' /tmp/attempt-failures.txt
+              echo '```'
+              echo ""
+              echo "pi agent log tail:"
+              echo '```'
+              tail -n 40 "/tmp/ai-repair-attempt-${ATTEMPT}.log"
+              echo '```'
+              echo ""
+              echo "Partial fixes pushed to branch \`${BRANCH}\`."
+            } > /tmp/attempt-comment.md
+            gh issue comment "$ISSUE" --body-file /tmp/attempt-comment.md || echo "::warning::issue comment failed"
             echo "Repair attempt ${ATTEMPT}: validation still failing" | tee -a "${ATTEMPT_LOG}"
             # keep partial fixes on the branch for the next attempt / inspection
             git add -A
             git commit -m "fix: partial repair (attempt ${ATTEMPT}, still failing)" || true
             git push origin "$BRANCH" || true
           done
+          [ "$REPAIR_SUCCEEDED" == "true" ] || {
+            gh issue comment "$ISSUE" --body "AI repair failed after ${PI_MAX_ATTEMPTS} attempts. Branch \`${BRANCH}\` pushed for inspection; next run deletes it and retries fresh. Review the attempt comments above and the pushed branch." || echo "::warning::issue comment failed"
+            echo "::error::AI repair failed after ${PI_MAX_ATTEMPTS} attempts; branch pushed for inspection"
+            exit 1
+          }
 
           echo "repair_succeeded=${REPAIR_SUCCEEDED}" >> "$GITHUB_OUTPUT"
-          [ "$REPAIR_SUCCEEDED" == "true" ] || { echo "::error::AI repair failed after ${PI_MAX_ATTEMPTS} attempts; branch pushed for inspection"; exit 1; }
 
       - name: Open PR (after AI repair)
         id: post_repair_pr
@@ -478,6 +585,7 @@ jobs:
           LATEST_VER: ${{ steps.detect.outputs.latest_ver }}
           CUR_REV: ${{ steps.detect.outputs.cur_rev }}
           CUR_VER: ${{ steps.detect.outputs.cur_ver }}
+          ISSUE: ${{ steps.tracking_issue.outputs.number }}
           MAJOR_BUMP: ${{ steps.detect.outputs.major_bump }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
@@ -489,7 +597,7 @@ jobs:
             VERSION_NOTE=" (GOOGLEADS_API_VERSION + RAG_BUNDLE_KEY)"
             RELEASE_LINE="Release notes: https://developers.google.com/google-ads/api/docs/release-notes/v${MAJOR}"
           fi
-          gh pr create --base main --head "$BRANCH" \
+          PR_URL="$(gh pr create --base main --head "$BRANCH" \
             --title "chore: upgrade googleads-rs to ${LATEST_VER}" \
             --body "$(cat <<EOF
           Automated googleads-rs upgrade ([workflow run](${RUN_URL})).
@@ -504,8 +612,12 @@ jobs:
           ${RELEASE_LINE}
 
           Validation passed after AI repair (5-attempt budget).
+
+          Closes #${ISSUE}
           EOF
-          )"
+          )" )"
+          GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" gh issue comment "$ISSUE" --body "Upgrade PR opened: ${PR_URL} — merging auto-closes this issue." || true
+          echo "pr_url=${PR_URL}" >> "$GITHUB_OUTPUT"
 
       - name: Final summary
         if: always()
@@ -517,6 +629,10 @@ jobs:
           BRANCH: ${{ steps.detect.outputs.branch }}
           FIRST_FAILED: ${{ steps.first_validate.outputs.failed }}
           REPAIR_SUCCEEDED: ${{ steps.ai_repair.outputs.repair_succeeded }}
+          ISSUE: ${{ steps.tracking_issue.outputs.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          PR_URL: ${{ steps.open_pr.outputs.pr_url || steps.post_repair_pr.outputs.pr_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           if [ "$CHANGED" != "true" ]; then
@@ -529,3 +645,6 @@ jobs:
             OUTCOME="FAILED: validation failed and AI repair did not succeed. Branch \`${BRANCH}\` pushed for inspection; next run deletes it and retries fresh."
           fi
           { echo "### googleads-rs upgrade — outcome"; echo ""; echo "$OUTCOME"; } >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$ISSUE" ]; then
+            gh issue comment "$ISSUE" --body "Outcome: ${OUTCOME} Run: ${RUN_URL} PR: ${PR_URL}" || true
+          fi
