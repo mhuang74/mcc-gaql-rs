@@ -19,7 +19,7 @@ tokio = { workspace = true }
 reqwest = { workspace = true }
 rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs"] }
 webpki-roots = "0.26"
-googleads-rs = { git = "https://github.com/mhuang74/googleads-rs", rev = "81c005f028bb0e1857435e3948d96a23af5472cb" }
+googleads-rs = { git = "https://github.com/mhuang74/googleads-rs", rev = "3d36a5a840a7fa7c473bbed92a99c5d10b712dd9" }
 tonic = { version = "0.14", features = ["transport", "tls-ring", "tls-native-roots"] }
 yup-oauth2 = { version = "6.7" }
 tokio-stream = { version = "0.1", features = ["net"] }

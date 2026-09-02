@@ -1,10 +1,10 @@
 /// Google Ads API version this workspace is built against.
 /// Single source of truth — bump this (and googleads-rs) together.
-pub const GOOGLEADS_API_VERSION: &str = "v25";
+pub const GOOGLEADS_API_VERSION: &str = "v24";
 
 /// Default R2 object key for published RAG bundles.
 /// Contains a literal version segment, guarded by the test below.
-pub const RAG_BUNDLE_KEY: &str = "mcc-gaql-rag-bundle-v25.tar.gz";
+pub const RAG_BUNDLE_KEY: &str = "mcc-gaql-rag-bundle-v24.tar.gz";
 
 #[cfg(test)]
 mod tests {
