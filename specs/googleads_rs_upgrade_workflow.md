@@ -76,7 +76,7 @@ Single job `upgrade` on `ubuntu-latest`, steps in this order:
    sed -i -E 's/pub const GOOGLEADS_API_VERSION: &str = "v[0-9]+";/.../' crates/mcc-gaql-common/src/version.rs
    sed -i -E 's/mcc-gaql-rag-bundle-v[0-9]+\.tar\.gz/.../' crates/mcc-gaql-common/src/version.rs
    git add Cargo.lock <3 Cargo.tomls> crates/mcc-gaql-common/src/version.rs
-   git commit -m "chore: upgrade googleads-rs to ${LATEST_VER} (rev ${LATEST_SHA:0:9})"
+   git commit -m "Feature: Upgrade to googleads-rs version ${LATEST_VER} (rev ${LATEST_SHA:0:9})"
    ```
    Commit WITHOUT push here; push happens once after validation so a failing run never lands an unvalidated branch. (`git checkout -B` handles the recreated-branch case.)
 6. **First validation — id: first_validate** (`if: changed == 'true'`); failures appended to `/tmp/first-validation-failures.txt` inside `::group::` wrappers:
@@ -88,7 +88,7 @@ Single job `upgrade` on `ubuntu-latest`, steps in this order:
    `MCC_GAQL_R2_PUBLIC_ID` from repo vars. parse-protos run last: needs workspace+gen compile anyway; its implicit `GOOGLEADS_API_VERSION`-keyed proto lookup doubles as the version-consistency check (if version.rs says v25 but pin still v24, locator fails).
 7. **PR on success — id: open_pr** (`if: steps.first_validate.outputs.failed == 'false'`):
    `env: GH_TOKEN: ${{ secrets.UPGRADE_PAT }}` — PAT not GITHUB_TOKEN, so PR events trigger rust.yml/code-review.yml required checks (GITHUB_TOKEN PRs never fire `pull_request` workflows).
-   Push branch, `gh pr create` titled "chore: upgrade googleads-rs to <ver>" with was/now rev+crate table, workflow-run link, upstream commit link; release-notes URL `https://developers.google.com/google-ads/api/docs/release-notes/vNN` only when `major_bump == 'true'`.
+   Push branch, `gh pr create` titled "Feature: Upgrade to googleads-rs version <ver>" with was/now rev+crate table, workflow-run link, upstream commit link; release-notes URL `https://developers.google.com/google-ads/api/docs/release-notes/vNN` only when `major_bump == 'true'`.
 8. **Install pi** (`if: steps.first_validate.outputs.failed == 'true'`): `npm install -g @earendil-works/pi-coding-agent`.
 9. **AI repair (pi) — id: ai_repair** (`if: steps.first_validate.outputs.failed == 'true'`), env:
    ```yaml

@@ -84,27 +84,6 @@ jobs:
         with:
           fetch-depth: 0   # full history helps pi repair context
 
-      - name: Install deps
-        run: sudo apt-get -y install protobuf-compiler
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Rust Cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: "mcc-gaql-rs-gen"
-          cache-on-failure: true
-          # same cache-directories list as rust.yml build-gen
-          cache-directories: |
-            ~/.cargo/registry/cache
-            ~/.cargo/registry/src
-            ~/.cargo/git/db
-            target
-
-      - name: Clear ort cache
-        run: rm -rf ~/.cache/ort.pyke.io
-
       - name: Detect upgrade
         id: detect
         env:
@@ -209,6 +188,31 @@ jobs:
             echo "branch=${BRANCH}"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Install deps
+        if: steps.detect.outputs.changed == 'true'
+        run: sudo apt-get -y install protobuf-compiler
+
+      - name: Install Rust toolchain
+        if: steps.detect.outputs.changed == 'true'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        if: steps.detect.outputs.changed == 'true'
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "mcc-gaql-rs-gen"
+          cache-on-failure: true
+          # same cache-directories list as rust.yml build-gen
+          cache-directories: |
+            ~/.cargo/registry/cache
+            ~/.cargo/registry/src
+            ~/.cargo/git/db
+            target
+
+      - name: Clear ort cache
+        if: steps.detect.outputs.changed == 'true'
+        run: rm -rf ~/.cache/ort.pyke.io
+
       - name: Create tracking issue
         id: tracking_issue
         if: steps.detect.outputs.changed == 'true'
@@ -290,7 +294,7 @@ jobs:
           fi
 
           git add Cargo.lock crates/mcc-gaql/Cargo.toml crates/mcc-gaql-common/Cargo.toml crates/mcc-gaql-mut/Cargo.toml crates/mcc-gaql-common/src/version.rs
-          git commit -m "chore: upgrade googleads-rs to ${LATEST_VER} (rev ${LATEST_SHA:0:9})"
+          git commit -m "Feature: Upgrade to googleads-rs version ${LATEST_VER} (rev ${LATEST_SHA:0:9})"
 
       - name: First validation
         id: first_validate
@@ -366,7 +370,7 @@ jobs:
           fi
           git push -u origin "$BRANCH"
           PR_URL="$(gh pr create --base main --head "$BRANCH" \
-            --title "chore: upgrade googleads-rs to ${LATEST_VER}" \
+            --title "Feature: Upgrade to googleads-rs version ${LATEST_VER}" \
             --body "$(cat <<EOF
           Automated googleads-rs upgrade ([workflow run](${RUN_URL})).
 
@@ -599,7 +603,7 @@ jobs:
             RELEASE_LINE="Release notes: https://developers.google.com/google-ads/api/docs/release-notes/v${MAJOR}"
           fi
           PR_URL="$(gh pr create --base main --head "$BRANCH" \
-            --title "chore: upgrade googleads-rs to ${LATEST_VER}" \
+            --title "Feature: Upgrade to googleads-rs version ${LATEST_VER}" \
             --body "$(cat <<EOF
           Automated googleads-rs upgrade ([workflow run](${RUN_URL})).
 
