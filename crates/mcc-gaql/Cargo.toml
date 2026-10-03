@@ -23,7 +23,7 @@ clap = { version = "4", features = ["derive", "cargo"] }
 dialoguer = "0.11"
 figment = { version = "0.10", features = ["toml", "env"] }
 flexi_logger = { version = "0.22", features = ["compress"] }
-googleads-rs = { git = "https://github.com/mhuang74/googleads-rs", rev = "81c005f028bb0e1857435e3948d96a23af5472cb" }
+googleads-rs = { git = "https://github.com/mhuang74/googleads-rs", rev = "cc715c81bbb4a79ae35e92058fcb229c876c8534" }
 itertools = "0.10"
 polars = { version = "0.42", default-features = false, features = ["lazy", "fmt", "csv"] }
 thousands = "0.2"
