@@ -276,9 +276,12 @@ jobs:
           set -euo pipefail
           MAJOR="${LATEST_VER%%.*}"
 
-          # branch from main (the checked-out workflow ref), no push yet — a
-          # failing run must never land an unvalidated branch
-          git checkout -B "$BRANCH"
+          # base the branch on CURRENT main, not the run-time checkout: if main
+          # moved after checkout (e.g. a workflow edit merged), pushing a branch
+          # with stale .github/workflows content is rejected without `workflows`
+          # permission
+          git fetch origin main
+          git checkout -B "$BRANCH" origin/main
           git config user.name "mcc-gaql-upgrade-bot"
           git config user.email "mhuang74@users.noreply.github.com"
 
@@ -371,7 +374,17 @@ jobs:
             VERSION_NOTE=" (GOOGLEADS_API_VERSION + RAG_BUNDLE_KEY)"
             RELEASE_LINE="Release notes: https://developers.google.com/google-ads/api/docs/release-notes/v${MAJOR}"
           fi
-          git push -u origin "$BRANCH"
+          push_branch() {
+            local i
+            for i in 1 2 3; do
+              if git push -u origin "$BRANCH"; then return 0; fi
+              echo "::warning::push rejected (attempt ${i}); refreshing onto origin/main and retrying"
+              git fetch origin main || return 1
+              git rebase origin/main || { git rebase --abort; return 1; }
+            done
+            return 1
+          }
+          push_branch || { echo "::error::could not push ${BRANCH} after 3 attempts (rebase onto origin/main failed or push still rejected)"; exit 1; }
           PR_URL="$(gh pr create --base main --head "$BRANCH" \
             --title "Feature: Upgrade to googleads-rs version ${LATEST_VER}" \
             --body "$(cat <<EOF
@@ -548,7 +561,17 @@ jobs:
               echo "Repair attempt ${ATTEMPT}: validation passed" | tee -a "${ATTEMPT_LOG}"
               git add -A
               git commit -m "fix: repair googleads-rs ${LATEST_VER} upgrade failures (attempt ${ATTEMPT})"
-              git push origin "$BRANCH"
+              push_branch() {
+                local i
+                for i in 1 2 3; do
+                  if git push origin "$BRANCH"; then return 0; fi
+                  echo "::warning::push rejected (attempt ${i}); refreshing onto origin/main and retrying"
+                  git fetch origin main || return 1
+                  git rebase origin/main || { git rebase --abort; return 1; }
+                done
+                return 1
+              }
+              push_branch || { echo "::error::could not push ${BRANCH} after 3 attempts (rebase onto origin/main failed or push still rejected)"; exit 1; }
               REPAIR_SUCCEEDED=true
               gh issue comment "$ISSUE" --body "Validation passed after repair attempt ${ATTEMPT}; opening PR." || true
               break
@@ -636,7 +659,6 @@ jobs:
           MAJOR_BUMP: ${{ steps.detect.outputs.major_bump }}
           BRANCH: ${{ steps.detect.outputs.branch }}
           FIRST_FAILED: ${{ steps.first_validate.outputs.failed }}
-          REPAIR_SUCCEEDED: ${{ steps.ai_repair.outputs.repair_succeeded }}
           ISSUE: ${{ steps.tracking_issue.outputs.number }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           PR_URL: ${{ steps.open_pr.outputs.pr_url || steps.post_repair_pr.outputs.pr_url }}
@@ -645,14 +667,14 @@ jobs:
           set -euo pipefail
           if [ "$CHANGED" != "true" ]; then
             OUTCOME="No upgrade started (up to date / PR already open / docs-only drift)."
-          elif [ "$FIRST_FAILED" == "false" ]; then
-            OUTCOME="PR opened for \`${BRANCH}\`: googleads-rs ${CUR_VER} → ${LATEST_VER} (major_bump=${MAJOR_BUMP})."
           elif [ -z "$FIRST_FAILED" ]; then
             OUTCOME="Run was cancelled/timed out during validation (likely cold cache plus job timeout). Branch was NOT pushed; next run retries fresh from main."
-          elif [ "$REPAIR_SUCCEEDED" == "true" ]; then
+          elif [ -n "$PR_URL" ] && [ "$FIRST_FAILED" == "false" ]; then
+            OUTCOME="PR opened for \`${BRANCH}\`: googleads-rs ${CUR_VER} → ${LATEST_VER} (major_bump=${MAJOR_BUMP})."
+          elif [ -n "$PR_URL" ]; then
             OUTCOME="PR opened for \`${BRANCH}\` after AI repair: googleads-rs ${CUR_VER} → ${LATEST_VER} (major_bump=${MAJOR_BUMP})."
           else
-            OUTCOME="FAILED: validation failed and AI repair did not succeed. Branch \`${BRANCH}\` pushed for inspection; next run deletes it and retries fresh."
+            OUTCOME="FAILED: upgrade not delivered (validation failed without repair success, or the push/PR step errored). Branch may be pushed for inspection; next run deletes it and retries fresh."
           fi
           { echo "### googleads-rs upgrade — outcome"; echo ""; echo "$OUTCOME"; } >> "$GITHUB_STEP_SUMMARY"
           if [ -n "$ISSUE" ]; then
