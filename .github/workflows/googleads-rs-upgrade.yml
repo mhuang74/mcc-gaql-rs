@@ -148,6 +148,8 @@ jobs:
           fi
 
           MAJOR_BUMP=$([ "${CUR_VER%%.*}" != "${LATEST_VER%%.*}" ] && echo true || echo false)
+          # minor bump: workspace version bumps when googleads-rs major OR minor changes
+          MINOR_BUMP=$([ "${CUR_VER%.*}" != "${LATEST_VER%.*}" ] && echo true || echo false)
           BRANCH="bot/googleads-rs-${LATEST_VER}"
 
           # stale-branch policy: open PR → wait for human; stale branch without
@@ -180,6 +182,7 @@ jobs:
             echo "| was | \`${CUR_REV:0:9}\` | ${CUR_VER} |"
             echo "| now | \`${LATEST_SHA:0:9}\` | ${LATEST_VER} |"
             echo "| major bump | ${MAJOR_BUMP} | branch \`${BRANCH}\` |"
+            echo "| minor bump | ${MINOR_BUMP} | |"
           } >> "$GITHUB_STEP_SUMMARY"
           {
             echo "changed=true"
@@ -188,6 +191,7 @@ jobs:
             echo "cur_ver=${CUR_VER}"
             echo "cur_rev=${CUR_REV}"
             echo "major_bump=${MAJOR_BUMP}"
+            echo "minor_bump=${MINOR_BUMP}"
             echo "branch=${BRANCH}"
           } >> "$GITHUB_OUTPUT"
 
@@ -272,6 +276,7 @@ jobs:
           LATEST_SHA: ${{ steps.detect.outputs.latest_sha }}
           LATEST_VER: ${{ steps.detect.outputs.latest_ver }}
           MAJOR_BUMP: ${{ steps.detect.outputs.major_bump }}
+          MINOR_BUMP: ${{ steps.detect.outputs.minor_bump }}
         run: |
           set -euo pipefail
           MAJOR="${LATEST_VER%%.*}"
@@ -301,6 +306,35 @@ jobs:
 
           git add Cargo.lock crates/mcc-gaql/Cargo.toml crates/mcc-gaql-common/Cargo.toml crates/mcc-gaql-mut/Cargo.toml crates/mcc-gaql-common/src/version.rs
           git commit -m "Feature: Upgrade to googleads-rs version ${LATEST_VER} (rev ${LATEST_SHA:0:9})"
+
+          if [ "$MINOR_BUMP" == "true" ]; then
+            # separate chore commit: workspace minor tracks googleads-rs major/minor
+            WS_VER="$(sed -nE 's/^version = "([0-9]+\.[0-9]+\.[0-9]+)"$/\1/p' Cargo.toml)"
+            [ -n "$WS_VER" ] || { echo "::error::could not read workspace version from Cargo.toml"; exit 1; }
+            WS_MAJOR="${WS_VER%%.*}"
+            WS_MINOR="${WS_VER#*.}"; WS_MINOR="${WS_MINOR%%.*}"
+            NEW_WS_VER="${WS_MAJOR}.$((WS_MINOR + 1)).0"
+            sed -i -E "s/^version = \"[0-9]+\.[0-9]+\.[0-9]+\"$/version = \"${NEW_WS_VER}\"/" Cargo.toml
+            grep -q "^version = \"${NEW_WS_VER}\"$" Cargo.toml || { echo "::error::workspace version bump failed in Cargo.toml"; exit 1; }
+
+            # refresh lock member versions (network ok; workflow already ran cargo update -p)
+            cargo update -w
+            grep -A1 '^name = "mcc-gaql-common"$' Cargo.lock | grep -q "version = \"${NEW_WS_VER}\"" \
+              || { echo "::error::Cargo.lock member version not bumped to ${NEW_WS_VER}"; exit 1; }
+
+            # changelog: bullets directly under [Unreleased]
+            cat > /tmp/changelog-bullets.txt <<CHANGELOG_EOF
+
+          - Upgrade googleads-rs to v${LATEST_VER} (Google Ads API v${MAJOR}, rev ${LATEST_SHA:0:9})
+          - Bump workspace version to ${NEW_WS_VER}
+          CHANGELOG_EOF
+            sed -i "/^## \[Unreleased\]$/r /tmp/changelog-bullets.txt" CHANGELOG.md
+
+            git add Cargo.toml Cargo.lock CHANGELOG.md
+            git commit -m "chore: bump workspace version to ${NEW_WS_VER}"
+            echo "old_ws_ver=${WS_VER}" >> "$GITHUB_OUTPUT"
+            echo "new_ws_ver=${NEW_WS_VER}" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: First validation
         id: first_validate
@@ -363,6 +397,9 @@ jobs:
           CUR_REV: ${{ steps.detect.outputs.cur_rev }}
           CUR_VER: ${{ steps.detect.outputs.cur_ver }}
           MAJOR_BUMP: ${{ steps.detect.outputs.major_bump }}
+          MINOR_BUMP: ${{ steps.detect.outputs.minor_bump }}
+          NEW_WS_VER: ${{ steps.migrate.outputs.new_ws_ver }}
+          OLD_WS_VER: ${{ steps.migrate.outputs.old_ws_ver }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           ISSUE: ${{ steps.tracking_issue.outputs.number }}
         run: |
@@ -370,9 +407,13 @@ jobs:
           MAJOR="${LATEST_VER%%.*}"
           VERSION_NOTE=""
           RELEASE_LINE=""
+          WS_LINE=""
           if [ "$MAJOR_BUMP" == "true" ]; then
             VERSION_NOTE=" (GOOGLEADS_API_VERSION + RAG_BUNDLE_KEY)"
             RELEASE_LINE="Release notes: https://developers.google.com/google-ads/api/docs/release-notes/v${MAJOR}"
+          fi
+          if [ "$MINOR_BUMP" == "true" ]; then
+            WS_LINE="Workspace version bump: ${OLD_WS_VER} → ${NEW_WS_VER} (workspace minor tracks googleads-rs major/minor)."
           fi
           push_branch() {
             local i
@@ -396,6 +437,7 @@ jobs:
           | now | \`${LATEST_SHA:0:9}\` | ${LATEST_VER} |
 
           Changes: 3× rev pins, \`cargo update -p googleads-rs\`, version.rs${VERSION_NOTE}.
+          ${WS_LINE}
           Upstream: https://github.com/mhuang74/googleads-rs/commit/${LATEST_SHA}
           ${RELEASE_LINE}
 
@@ -457,7 +499,8 @@ jobs:
             vNN module paths.
           - crates/mcc-gaql-common/src/version.rs holds GOOGLEADS_API_VERSION
             and RAG_BUNDLE_KEY. It has ALREADY been updated by the workflow —
-            do NOT re-edit it.
+            do NOT re-edit it. The workspace version (root Cargo.toml) and
+            CHANGELOG.md have also been pre-bumped — do not touch them.
 
           ## Validation commands (all three must pass)
 
@@ -478,6 +521,8 @@ jobs:
              (Cargo.lock regenerates only via 'cargo update -p googleads-rs').
           7. Do NOT edit crates/mcc-gaql-common/src/version.rs (pre-updated by
              the workflow).
+          8. Do NOT edit Cargo.toml workspace version or CHANGELOG.md
+             (pre-updated by the workflow).
 
           ## What you may edit
 
@@ -502,6 +547,7 @@ jobs:
           5. Do NOT edit .github/** or specs/**.\
           6. Do NOT edit the Cargo.toml googleads-rs rev pins or Cargo.lock.\
           7. Do NOT edit crates/mcc-gaql-common/src/version.rs (pre-updated).\
+          8. Do NOT edit Cargo.toml workspace version or CHANGELOG.md (pre-updated).\
           \
           WHAT TO DO:\
           - Fix compile errors and test failures caused by the API version upgrade.\
@@ -618,15 +664,22 @@ jobs:
           CUR_VER: ${{ steps.detect.outputs.cur_ver }}
           ISSUE: ${{ steps.tracking_issue.outputs.number }}
           MAJOR_BUMP: ${{ steps.detect.outputs.major_bump }}
+          MINOR_BUMP: ${{ steps.detect.outputs.minor_bump }}
+          NEW_WS_VER: ${{ steps.migrate.outputs.new_ws_ver }}
+          OLD_WS_VER: ${{ steps.migrate.outputs.old_ws_ver }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
           MAJOR="${LATEST_VER%%.*}"
           VERSION_NOTE=""
           RELEASE_LINE=""
+          WS_LINE=""
           if [ "$MAJOR_BUMP" == "true" ]; then
             VERSION_NOTE=" (GOOGLEADS_API_VERSION + RAG_BUNDLE_KEY)"
             RELEASE_LINE="Release notes: https://developers.google.com/google-ads/api/docs/release-notes/v${MAJOR}"
+          fi
+          if [ "$MINOR_BUMP" == "true" ]; then
+            WS_LINE="Workspace version bump: ${OLD_WS_VER} → ${NEW_WS_VER} (workspace minor tracks googleads-rs major/minor)."
           fi
           PR_URL="$(gh pr create --base main --head "$BRANCH" \
             --title "Feature: Upgrade to googleads-rs version ${LATEST_VER}" \
@@ -639,6 +692,7 @@ jobs:
           | now | \`${LATEST_SHA:0:9}\` | ${LATEST_VER} |
 
           Changes: 3× rev pins, \`cargo update -p googleads-rs\`, version.rs${VERSION_NOTE}.
+          ${WS_LINE}
           Upstream: https://github.com/mhuang74/googleads-rs/commit/${LATEST_SHA}
           ${RELEASE_LINE}
 
@@ -657,6 +711,8 @@ jobs:
           CUR_VER: ${{ steps.detect.outputs.cur_ver }}
           LATEST_VER: ${{ steps.detect.outputs.latest_ver }}
           MAJOR_BUMP: ${{ steps.detect.outputs.major_bump }}
+          NEW_WS_VER: ${{ steps.migrate.outputs.new_ws_ver }}
+          OLD_WS_VER: ${{ steps.migrate.outputs.old_ws_ver }}
           BRANCH: ${{ steps.detect.outputs.branch }}
           FIRST_FAILED: ${{ steps.first_validate.outputs.failed }}
           ISSUE: ${{ steps.tracking_issue.outputs.number }}
@@ -669,10 +725,14 @@ jobs:
             OUTCOME="No upgrade started (up to date / PR already open / docs-only drift)."
           elif [ -z "$FIRST_FAILED" ]; then
             OUTCOME="Run was cancelled/timed out during validation (likely cold cache plus job timeout). Branch was NOT pushed; next run retries fresh from main."
-          elif [ -n "$PR_URL" ] && [ "$FIRST_FAILED" == "false" ]; then
-            OUTCOME="PR opened for \`${BRANCH}\`: googleads-rs ${CUR_VER} → ${LATEST_VER} (major_bump=${MAJOR_BUMP})."
           elif [ -n "$PR_URL" ]; then
-            OUTCOME="PR opened for \`${BRANCH}\` after AI repair: googleads-rs ${CUR_VER} → ${LATEST_VER} (major_bump=${MAJOR_BUMP})."
+            WS_NOTE=""
+            [ -n "$NEW_WS_VER" ] && WS_NOTE=", ws=${OLD_WS_VER}→${NEW_WS_VER}"
+            if [ "$FIRST_FAILED" == "false" ]; then
+              OUTCOME="PR opened for \`${BRANCH}\`: googleads-rs ${CUR_VER} → ${LATEST_VER} (major_bump=${MAJOR_BUMP}${WS_NOTE})."
+            else
+              OUTCOME="PR opened for \`${BRANCH}\` after AI repair: googleads-rs ${CUR_VER} → ${LATEST_VER} (major_bump=${MAJOR_BUMP}${WS_NOTE})."
+            fi
           else
             OUTCOME="FAILED: upgrade not delivered (validation failed without repair success, or the push/PR step errored). Branch may be pushed for inspection; next run deletes it and retries fresh."
           fi
