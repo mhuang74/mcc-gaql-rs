@@ -19,6 +19,9 @@
 #                 PI_MAX_ATTEMPTS attempts; PR opened only if repair finally
 #                 passes validation.
 #
+# Toolchain is pinned (dtolnay@1.90) to match rust-toolchain.toml so the
+# rust-cache env hash stays stable across upstream stable releases; a
+# flapping hash caused the 2026-10-01 cold-cache timeouts.
 # Schedule: Thu 07:00 UTC — deliberately after googleads-rs's own Thursday
 # detect (04:30 UTC) + worker (05:00 UTC) cycle, so this repo consumes what
 # upstream produced this week. Commits landing later are caught next week;
@@ -77,7 +80,7 @@ jobs:
   upgrade:
     name: Detect, pin, validate, PR
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 240
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -194,7 +197,7 @@ jobs:
 
       - name: Install Rust toolchain
         if: steps.detect.outputs.changed == 'true'
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.90
 
       - name: Rust Cache
         if: steps.detect.outputs.changed == 'true'
@@ -644,6 +647,8 @@ jobs:
             OUTCOME="No upgrade started (up to date / PR already open / docs-only drift)."
           elif [ "$FIRST_FAILED" == "false" ]; then
             OUTCOME="PR opened for \`${BRANCH}\`: googleads-rs ${CUR_VER} → ${LATEST_VER} (major_bump=${MAJOR_BUMP})."
+          elif [ -z "$FIRST_FAILED" ]; then
+            OUTCOME="Run was cancelled/timed out during validation (likely cold cache plus job timeout). Branch was NOT pushed; next run retries fresh from main."
           elif [ "$REPAIR_SUCCEEDED" == "true" ]; then
             OUTCOME="PR opened for \`${BRANCH}\` after AI repair: googleads-rs ${CUR_VER} → ${LATEST_VER} (major_bump=${MAJOR_BUMP})."
           else
