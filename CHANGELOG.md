@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Upgrade googleads-rs to v26.0.0 (Google Ads API v26, rev a84d547d6)
+- Bump workspace version to 0.21.0
+
 ## [0.20.0] - 2026-09-02
 
 ### Features
