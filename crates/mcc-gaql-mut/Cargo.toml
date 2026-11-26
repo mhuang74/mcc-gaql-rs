@@ -17,7 +17,7 @@ log = { workspace = true }
 chrono = { workspace = true }
 clap = { version = "4", features = ["derive", "cargo"] }
 dialoguer = "0.11"
-googleads-rs = { git = "https://github.com/mhuang74/googleads-rs", rev = "a44a90f1648de80b6ed3006d881d261ccc2f1677" }
+googleads-rs = { git = "https://github.com/mhuang74/googleads-rs", rev = "6f0af69dce6043a06253ff33b29ca8b4729b76e1" }
 prost-reflect = "0.16"
 tonic = { version = "0.14", features = ["transport", "tls-ring", "tls-native-roots"] }
 
